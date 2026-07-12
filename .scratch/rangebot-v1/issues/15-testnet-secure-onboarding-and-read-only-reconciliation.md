@@ -4,7 +4,7 @@
 
 **Blocked by:** 13 — Paper profiles, audit log, and Help Center.
 
-**Status:** implemented — automated sanitized-reconciliation coverage complete; real credential validation is an external check in ticket 28.
+**Status:** in progress — sanitized adapter seam is covered; authenticated Gate.io v4 onboarding/reconciliation remains required.
 
 ## Acceptance criteria
 

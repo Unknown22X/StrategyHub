@@ -288,7 +288,11 @@ class RangeBotWindow(QWidget):
         rows = result if isinstance(result, list) else [result] if isinstance(result, dict) else []
         self.operator_table.setRowCount(len(rows))
         for row, item in enumerate(rows):
-            values = (item.get("created_at", item.get("recorded_at", "—")), item.get("event_type", item.get("title_ar", "حالة")), item.get("message_ar", item.get("body_ar", str(item))))
+            values = (
+                item.get("created_at", item.get("recorded_at", "—")),
+                item.get("event_type", item.get("title_ar", "حالة")),
+                item.get("message_ar", item.get("body_ar", "تفاصيل غير متاحة.")),
+            )
             for column, value in enumerate(values):
                 self.operator_table.setItem(row, column, QTableWidgetItem(str(value)))
 

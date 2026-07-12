@@ -13,6 +13,22 @@ class GateIoAdapter(Protocol):
     def reconcile(self, mode: TradingMode) -> ExchangeSnapshot: ...
 
 
+class UnavailableGateIoAdapter:
+    """Safe default: no exchange state is trusted until a real adapter is configured."""
+
+    def reconcile(self, mode: TradingMode) -> ExchangeSnapshot:
+        return ExchangeSnapshot(
+            mode=mode,
+            reconciled_at=datetime.now(UTC),
+            reconciliation_error="Gate.io adapter غير مهيأ؛ لم تُجرَ مصالحة.",
+            one_way_confirmed=False,
+            cross_margin_confirmed=False,
+            market_ready=False,
+            history_ready=False,
+            protection_ready=False,
+        )
+
+
 @dataclass(frozen=True)
 class GateIoV4Endpoints:
     """Deliberately explicit endpoints; Testnet/Live credentials stay in `.env`."""
@@ -50,6 +66,3 @@ def mode_state(mode: TradingMode, snapshot: ExchangeSnapshot | None, live_locked
     reasons = entry_blocks(snapshot, mode, live_locked, emergency_stop)
     return ModeState(mode=mode, live_locked=live_locked, emergency_stop=emergency_stop, can_enter=not reasons, blocked_reasons_ar=reasons, snapshot=snapshot)
 
-
-def snapshot_from_values(mode: TradingMode, values: dict[str, object]) -> ExchangeSnapshot:
-    return ExchangeSnapshot(mode=mode, reconciled_at=datetime.now(UTC), **values)

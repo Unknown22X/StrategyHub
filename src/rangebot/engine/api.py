@@ -61,11 +61,15 @@ from rangebot.domain.exchange import (
     LiveEntryRequest,
     ModeState,
     ProtectionChangeRequest,
-    ReconciliationRequest,
     TradingMode,
 )
 from rangebot.engine.database import apply_migrations, create_database_engine
-from rangebot.engine.exchange import entry_blocks, mode_state, snapshot_from_values
+from rangebot.engine.exchange import (
+    GateIoAdapter,
+    UnavailableGateIoAdapter,
+    entry_blocks,
+    mode_state,
+)
 from rangebot.engine.market import EmptyPublicMarketProvider, PublicMarketProvider
 from rangebot.engine.repository import (
     PaperAccountRepository,
@@ -76,7 +80,9 @@ from rangebot.engine.repository import (
 
 
 def create_app(
-    database_url: str, public_market_provider: PublicMarketProvider | None = None
+    database_url: str,
+    public_market_provider: PublicMarketProvider | None = None,
+    exchange_adapter: GateIoAdapter | None = None,
 ) -> FastAPI:
     """Create an engine API that exposes lifecycle state to the local UI."""
     database_engine = create_database_engine(database_url)
@@ -84,11 +90,14 @@ def create_app(
     paper_repository = PaperAccountRepository(database_engine)
     watchlist_repository = PaperWatchlistRepository(database_engine)
     exchange_repository = ExchangeModeRepository(database_engine)
+    gate_adapter = exchange_adapter or UnavailableGateIoAdapter()
     market_provider = public_market_provider or EmptyPublicMarketProvider()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         apply_migrations(database_url)
+        # A process/service/VPS restart always returns Live to its locked state.
+        exchange_repository.set_live_locked(True)
         repository.record_started()
         stop_heartbeat = asyncio.Event()
         heartbeat_task = asyncio.create_task(
@@ -117,9 +126,9 @@ def create_app(
         return _exchange_state(mode)
 
     @app.post("/v1/exchange/{mode}/reconcile", response_model=ModeState)
-    def reconcile_exchange(mode: TradingMode, request: ReconciliationRequest) -> ModeState:
-        """Persist a sanitized adapter result; no credentials or raw Gate payloads cross HTTP."""
-        snapshot = snapshot_from_values(mode, request.model_dump())
+    def reconcile_exchange(mode: TradingMode) -> ModeState:
+        """Only a configured adapter may supply authoritative exchange state."""
+        snapshot = gate_adapter.reconcile(mode)
         exchange_repository.save_snapshot(snapshot)
         return _exchange_state(mode)
 

@@ -4,7 +4,7 @@
 
 **Blocked by:** 20 — Testnet automatic trading, external changes, and recovery.
 
-**Status:** implemented — packages/configuration and durable Live Locked read-only state are covered automatically; VPS installation is external.
+**Status:** in progress — packages and durable Live Locked state are covered; authenticated Live read-only reconciliation remains required.
 
 ## Acceptance criteria
 

@@ -4,7 +4,7 @@
 
 **Blocked by:** 16 — Testnet market/account readiness gate; 17 — Testnet safe Manual Market Entry; 18 — Testnet protection and managed closure.
 
-**Status:** implemented through shared idempotent Limit lifecycle coverage; real Testnet partial-fill validation is external.
+**Status:** in progress — Paper lifecycle exists; Testnet adapter and partial-fill recovery remain required.
 
 ## Acceptance criteria
 

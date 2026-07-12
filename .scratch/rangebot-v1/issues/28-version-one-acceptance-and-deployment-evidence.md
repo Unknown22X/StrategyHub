@@ -4,7 +4,7 @@
 
 **Blocked by:** 21 — Testnet verification evidence; 27 — Live backup/restore operating procedure.
 
-**Status:** completed — automated evidence and final external checklist are recorded; no Live activation or Live order was performed.
+**Status:** in progress — automated evidence is recorded, but this acceptance ticket cannot close until the open Testnet/Live adapter tickets complete.
 
 ## Acceptance criteria
 

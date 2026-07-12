@@ -4,7 +4,7 @@
 
 **Blocked by:** 22 — Live deployment in locked state and read-only reconciliation; 25 — Live managed entry, TP/SL, and closing execution.
 
-**Status:** implemented — durable lock/emergency behavior is automated; WinSW/VPS exercise is external.
+**Status:** in progress — durable lock state is automated; managed emergency cancellation/closure and WinSW/VPS validation remain required.
 
 ## Acceptance criteria
 

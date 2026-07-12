@@ -4,7 +4,7 @@
 
 **Blocked by:** 17 — Testnet safe Manual Market Entry.
 
-**Status:** implemented through the shared managed-protection workflow and automated Paper safety coverage; real Testnet confirmation is external.
+**Status:** in progress — Paper workflow exists; Testnet managed protection and closure adapter work remains required.
 
 ## Acceptance criteria
 
