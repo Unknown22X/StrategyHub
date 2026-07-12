@@ -19,41 +19,35 @@ class FakeEngineClient:
             state_revision=7,
         )
 
+    def get(self, path: str) -> dict[str, Any]:
+        self.calls.append(("get", path, None))
+        if path.endswith("watchlist"):
+            return {"items": [{"symbol": "BTC_USDT", "direction": "both"}]}
+        return {"quantity": "0", "entry_price": "0"}
+
     def post(self, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         self.calls.append(("post", path, payload))
-        return {"path": path, "can_submit": True}
-
-    def get(self, path: str) -> dict[str, str]:
-        self.calls.append(("get", path, None))
-        return {"path": path}
-
-    def put(self, path: str, payload: dict[str, Any]) -> dict[str, str]:
-        self.calls.append(("put", path, payload))
-        return {"path": path}
+        return {}
 
     def delete(self, path: str) -> None:
         self.calls.append(("delete", path, None))
         return None
 
 
-def test_paper_trading_window_exposes_rtl_operator_sections() -> None:
+def test_operator_window_is_rtl_form_based_and_has_no_json_debug_surface() -> None:
     application = QApplication.instance() or QApplication([])
     client = FakeEngineClient()
-    window = RangeBotWindow(
-        client.fetch_runtime_state,
-        refresh_interval_ms=60_000,
-        engine_client=client,  # type: ignore[arg-type]
-    )
+    window = RangeBotWindow(client.fetch_runtime_state, refresh_interval_ms=60_000, engine_client=client)  # type: ignore[arg-type]
 
     assert window.layoutDirection() == Qt.LayoutDirection.RightToLeft
     assert window.tabs.count() == 7
-    assert "حساب Paper" == window.tabs.tabText(0)
-    assert "الملفات" in window.tabs.tabText(6)
+    assert window.tabs.tabText(0) == "الرئيسية"
+    assert window.tabs.tabText(3) == "دخول يدوي"
+    assert "JSON" not in window.findChild(type(window.preview_summary)).text()
 
-    window.create_preview()
+    window.load_watchlist()
 
-    assert client.calls[-1][1] == "/v1/paper/entry-preview"
-    assert "can_submit" in window.preview_output.toPlainText()
-
+    assert window.watchlist_table.rowCount() == 1
+    assert window.watchlist_table.item(0, 0).text() == "BTC_USDT"
     window.close()
     application.quit()
