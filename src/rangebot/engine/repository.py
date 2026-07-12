@@ -13,7 +13,11 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 from rangebot.domain.runtime import RuntimeState
-from rangebot.domain.exchange import ExchangeSnapshot, TradingMode
+from rangebot.domain.exchange import (
+    ExchangeRequestAudit,
+    ExchangeSnapshot,
+    TradingMode,
+)
 from rangebot.domain.paper import (
     PaperAccountChange,
     PaperAccountSnapshot,
@@ -93,6 +97,8 @@ class ExchangeModeStateRecord(Base):
     live_locked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     emergency_stop: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     snapshot_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    adapter_state_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    verification_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class ExchangeRequestRecord(Base):
@@ -1817,6 +1823,31 @@ class ExchangeModeRepository:
             record.snapshot_json = snapshot.model_dump_json()
             session.commit()
 
+    def invalidate_snapshot(self, mode: TradingMode) -> None:
+        with Session(self._database_engine) as session:
+            self._state(session, mode).snapshot_json = None
+            session.commit()
+
+    def save_adapter_state(self, mode: TradingMode, state: dict[str, object]) -> None:
+        with Session(self._database_engine) as session:
+            self._state(session, mode).adapter_state_json = json.dumps(state)
+            session.commit()
+
+    def adapter_state(self, mode: TradingMode) -> dict[str, object] | None:
+        with Session(self._database_engine) as session:
+            value = self._state(session, mode).adapter_state_json
+            return None if value is None else json.loads(value)
+
+    def save_verification(self, mode: TradingMode, value: dict[str, object]) -> None:
+        with Session(self._database_engine) as session:
+            self._state(session, mode).verification_json = json.dumps(value)
+            session.commit()
+
+    def verification(self, mode: TradingMode) -> dict[str, object] | None:
+        with Session(self._database_engine) as session:
+            value = self._state(session, mode).verification_json
+            return None if value is None else json.loads(value)
+
     def persist_intent(self, mode: TradingMode, client_request_id: str, kind: str, payload_json: str) -> None:
         with Session(self._database_engine) as session:
             existing = session.get(ExchangeRequestRecord, client_request_id)
@@ -1836,6 +1867,24 @@ class ExchangeModeRepository:
         with Session(self._database_engine) as session:
             record = session.get(ExchangeRequestRecord, client_request_id)
             return None if record is None else record.status
+
+    def request_audit(self, mode: TradingMode) -> list[ExchangeRequestAudit]:
+        with Session(self._database_engine) as session:
+            records = session.scalars(
+                select(ExchangeRequestRecord).where(
+                    ExchangeRequestRecord.mode == mode
+                )
+            )
+            return [
+                ExchangeRequestAudit(
+                    client_request_id=record.client_request_id,
+                    mode=mode,
+                    kind=record.kind,
+                    status=record.status,
+                    message_ar=f"عملية {record.kind}: {record.status}",
+                )
+                for record in records
+            ]
 
     def live_locked(self) -> bool:
         with Session(self._database_engine) as session:

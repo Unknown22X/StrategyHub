@@ -51,3 +51,26 @@ def test_operator_window_is_rtl_form_based_and_has_no_json_debug_surface() -> No
     assert window.watchlist_table.item(0, 0).text() == "BTC_USDT"
     window.close()
     application.quit()
+
+
+def test_exchange_mode_ui_uses_engine_preview_and_typed_protection_controls() -> None:
+    application = QApplication.instance() or QApplication([])
+    client = FakeEngineClient()
+    window = RangeBotWindow(
+        client.fetch_runtime_state,
+        refresh_interval_ms=60_000,
+        engine_client=client,  # type: ignore[arg-type]
+    )
+    window.mode_selector.setCurrentIndex(1)
+    window.create_preview()
+
+    assert client.calls[-1][1] == "/v1/exchange/testnet/market-guard-quote"
+
+    window.mode_selector.setCurrentIndex(2)
+    window.protection_confirmation.setText("DISABLE TP")
+    window.disable_live_tp()
+
+    assert client.calls[-1][1] == "/v1/live/protection"
+    assert client.calls[-1][2]["confirmation"] == "DISABLE TP"
+    window.close()
+    application.quit()

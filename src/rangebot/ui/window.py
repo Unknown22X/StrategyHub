@@ -39,6 +39,7 @@ class RangeBotWindow(QWidget):
         super().__init__()
         self._fetch_state = fetch_state
         self._client = engine_client
+        self._last_market_guard: dict[str, Any] | None = None
         self.is_connected = False
         self.setWindowTitle("RangeBot | التحكم بالتداول")
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
@@ -187,6 +188,19 @@ class RangeBotWindow(QWidget):
         self.position_summary.setObjectName("summaryPanel")
         self.position_summary.setWordWrap(True)
         layout.addWidget(self.position_summary)
+        protection_box = QGroupBox("تحكم حماية Live")
+        protection_form = QFormLayout(protection_box)
+        self.protection_confirmation = QLineEdit()
+        self.protection_confirmation.setPlaceholderText(
+            "DISABLE TP أو DISABLE SL"
+        )
+        disable_tp = QPushButton("تعطيل TP للمركز")
+        disable_tp.clicked.connect(self.disable_live_tp)
+        disable_sl = QPushButton("تعطيل SL للمركز")
+        disable_sl.clicked.connect(self.disable_live_sl)
+        protection_form.addRow("التأكيد المكتوب", self.protection_confirmation)
+        protection_form.addRow(disable_tp, disable_sl)
+        layout.addWidget(protection_box)
         return page
 
     def _risk_page(self) -> QWidget:
@@ -213,7 +227,7 @@ class RangeBotWindow(QWidget):
     def _operator_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.addWidget(self._action_box("السجل والمساعدة", (("السجل", self.load_audit), ("مركز المساعدة", self.load_help), ("تحقق Paper", self.record_verification), ("حالة التحقق", self.load_verification))))
+        layout.addWidget(self._action_box("السجل والمساعدة", (("السجل", self.load_audit), ("مركز المساعدة", self.load_help), ("تسجيل التحقق", self.record_verification), ("حالة التحقق", self.load_verification))))
         self.operator_table = self._table(["الوقت", "العملية", "التفسير"])
         layout.addWidget(self.operator_table)
         return page
@@ -253,10 +267,39 @@ class RangeBotWindow(QWidget):
         self._request("post", f"/v1/paper/watchlist/{self.symbol_input.text()}/active", success="تم تعيين العقد النشط وإيقاف التداول التلقائي حتى تأكيد البدء.")
 
     def start_automation(self) -> None:
-        self._confirm("بدء التداول التلقائي", "سيقيّم المحرك العقد النشط فقط وفق ضوابطه الحالية.", lambda: self._request("post", "/v1/paper/automatic-trading/start", success="تم طلب بدء التداول التلقائي."))
+        mode = self.mode_selector.currentData()
+        path = (
+            "/v1/paper/automatic-trading/start"
+            if mode == "paper"
+            else f"/v1/exchange/{mode}/automatic/start"
+        )
+        payload = None if mode == "paper" else {"active_contract": self.symbol_input.text()}
+        self._confirm(
+            "بدء التداول التلقائي",
+            "سيقيّم المحرك العقد النشط فقط وفق ضوابطه الحالية.",
+            lambda: self._request(
+                "post", path, payload, "تم طلب بدء التداول التلقائي."
+            ),
+        )
 
     def create_preview(self) -> None:
-        self.preview_summary.setText("المعاينة تتطلب بيانات سوق حديثة من المحرك. راجع العقد النشط والحالة قبل التأكيد.")
+        mode = self.mode_selector.currentData()
+        if mode == "paper":
+            self.preview_summary.setText("المعاينة تتطلب بيانات سوق حديثة من المحرك. راجع العقد النشط والحالة قبل التأكيد.")
+            return
+        result = self._request(
+            "post",
+            f"/v1/exchange/{mode}/market-guard-quote",
+            {
+                "direction": self.entry_direction.currentData(),
+                "quantity": self.entry_quantity.text(),
+            },
+        )
+        if isinstance(result, dict):
+            self._last_market_guard = result
+            self.preview_summary.setText(
+                "اكتملت لقطة التنفيذ الآمنة. ستُعاد مراجعة حداثتها والانحراف عند التأكيد."
+            )
 
     def submit_market_entry(self) -> None:
         mode = self.mode_selector.currentData()
@@ -274,6 +317,8 @@ class RangeBotWindow(QWidget):
                     "direction": self.entry_direction.currentData(),
                     "order_type": self.entry_type.currentText().lower(),
                     "quantity": self.entry_quantity.text(),
+                    "limit_price": self.entry_price.text() or None,
+                    "market_guard": self._last_market_guard,
                 },
                 "تم إرسال الطلب إلى المحرك؛ راجع حالة التنفيذ.",
             ),
@@ -291,9 +336,19 @@ class RangeBotWindow(QWidget):
                 self.watchlist_table.setItem(row, column, QTableWidgetItem(str(value)))
 
     def load_position(self) -> None:
-        result = self._request("get", "/v1/paper/position")
+        mode = self.mode_selector.currentData()
+        if mode == "paper":
+            result = self._request("get", "/v1/paper/position")
+        else:
+            state = self._request("get", f"/v1/exchange/{mode}/state")
+            result = state.get("snapshot") if isinstance(state, dict) else None
         if isinstance(result, dict):
-            self.position_summary.setText(f"الكمية: {result.get('quantity', '—')} | سعر الدخول: {result.get('entry_price', '—')}")
+            quantity = result.get("quantity", result.get("position_quantity", "—"))
+            entry = result.get("entry_price", "—")
+            liquidation = result.get("liquidation_price", "—")
+            self.position_summary.setText(
+                f"الكمية: {quantity} | سعر الدخول: {entry} | سعر التصفية من Gate.io: {liquidation}"
+            )
 
     def check_protection(self) -> None:
         mode = self.mode_selector.currentData()
@@ -301,6 +356,36 @@ class RangeBotWindow(QWidget):
             self.position_summary.setText("فحص الحماية يتم من محرك Paper عند وصول بيانات السوق الحديثة.")
             return
         self._request("post", f"/v1/exchange/{mode}/protection/check", success="تم طلب فحص الحماية المُدارة من المحرك.")
+
+    def disable_live_tp(self) -> None:
+        self._change_live_protection("tp", "DISABLE TP")
+
+    def disable_live_sl(self) -> None:
+        self._change_live_protection("sl", "DISABLE SL")
+
+    def _change_live_protection(self, protection: str, expected: str) -> None:
+        if self.mode_selector.currentData() != "live":
+            self.warning_banner.setText("هذا الإجراء مخصص لمركز Live فقط.")
+            return
+        result = self._request(
+            "post",
+            "/v1/live/protection",
+            {
+                "protection": protection,
+                "enabled": False,
+                "confirmation": self.protection_confirmation.text(),
+            },
+        )
+        if isinstance(result, dict):
+            snapshot = result.get("snapshot") or {}
+            if not snapshot.get("tp_enabled", True) and not snapshot.get(
+                "sl_enabled", True
+            ):
+                self.warning_banner.setText("NO AUTOMATIC EXIT PROTECTION")
+            else:
+                self.warning_banner.setText(
+                    f"تم تعطيل {expected.removeprefix('DISABLE ')}؛ تحذير مخاطر مرتفع."
+                )
 
     def close_position(self) -> None:
         mode = self.mode_selector.currentData()
@@ -353,16 +438,37 @@ class RangeBotWindow(QWidget):
         self._confirm("تأكيد تفعيل Live", "لا يفعّل المحرك Live إلا عند صحة LIVE وفحوصات الحساب الحالية. أدخل النص المطلوب فقط إن كنت مفوضاً بذلك.", lambda: self._request("post", "/v1/live/activate", {"confirmation": self.live_confirmation.text()}, "تم إرسال طلب التفعيل إلى المحرك."))
 
     def load_audit(self) -> None:
-        self._populate_operator("get", "/v1/paper-account/audit")
+        mode = self.mode_selector.currentData()
+        path = (
+            "/v1/paper-account/audit"
+            if mode == "paper"
+            else f"/v1/exchange/{mode}/operations"
+        )
+        self._populate_operator("get", path)
 
     def load_help(self) -> None:
         self._populate_operator("get", "/v1/paper/help")
 
     def record_verification(self) -> None:
-        self._request("post", "/v1/paper/verification", {"evidence": "مراجعة تشغيلية من واجهة التحكم"}, "سُجلت أدلة Paper كمعلومة استشارية.")
+        mode = self.mode_selector.currentData()
+        if mode == "paper":
+            self._request("post", "/v1/paper/verification", {"evidence": "مراجعة تشغيلية من واجهة التحكم"}, "سُجلت أدلة Paper كمعلومة استشارية.")
+            return
+        self._request(
+            "post",
+            f"/v1/exchange/{mode}/verification",
+            {"evidence": "تحقق آلي محلي باستخدام Mock؛ لا يوجد اتصال خارجي"},
+            "سُجلت أدلة التحقق الاستشارية لهذا النمط.",
+        )
 
     def load_verification(self) -> None:
-        self._populate_operator("get", "/v1/paper/verification")
+        mode = self.mode_selector.currentData()
+        path = (
+            "/v1/paper/verification"
+            if mode == "paper"
+            else f"/v1/exchange/{mode}/verification"
+        )
+        self._populate_operator("get", path)
 
     def _populate_operator(self, method: str, path: str) -> None:
         result = self._request(method, path)
@@ -371,7 +477,10 @@ class RangeBotWindow(QWidget):
         for row, item in enumerate(rows):
             values = (
                 item.get("created_at", item.get("recorded_at", "—")),
-                item.get("event_type", item.get("title_ar", "حالة")),
+                item.get(
+                    "event_type",
+                    item.get("title_ar", item.get("kind", "حالة")),
+                ),
                 item.get("message_ar", item.get("body_ar", "تفاصيل غير متاحة.")),
             )
             for column, value in enumerate(values):
@@ -441,14 +550,84 @@ class RangeBotWindow(QWidget):
     @staticmethod
     def _stylesheet() -> str:
         return """
-            QWidget { background: #0f172a; color: #e2e8f0; font-size: 14px; }
-            #appTitle { font-size: 26px; font-weight: 700; color: #f8fafc; }
-            #statusPill { background: #1e293b; padding: 8px 12px; border-radius: 12px; }
-            #warningBanner { background: #78350f; color: #fef3c7; padding: 12px; border-radius: 8px; }
-            #metricCard, #summaryPanel { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 14px; }
-            #metricTitle { color: #94a3b8; } #metricValue { font-size: 21px; font-weight: 700; }
-            QPushButton { background: #0f766e; padding: 9px 14px; border-radius: 6px; color: white; }
-            QPushButton:hover { background: #0d9488; } QLineEdit, QComboBox { background: #fff; color: #111827; padding: 8px; }
-            QTableWidget { background: #fff; color: #111827; gridline-color: #cbd5e1; }
-            QHeaderView::section { background: #e2e8f0; color: #0f172a; padding: 7px; }
+            QWidget {
+                background: #0b1220;
+                color: #e5edf6;
+                font-family: "Segoe UI", "Noto Sans Arabic";
+                font-size: 14px;
+            }
+            QLabel { background: transparent; }
+            #appTitle { font-size: 28px; font-weight: 800; color: #f8fafc; }
+            #statusPill {
+                background: #172337;
+                border: 1px solid #26364d;
+                padding: 9px 13px;
+                border-radius: 13px;
+            }
+            #warningBanner {
+                background: #6b3210;
+                border: 1px solid #a65316;
+                color: #fff4d6;
+                padding: 13px 16px;
+                border-radius: 9px;
+            }
+            #metricCard, #summaryPanel {
+                background: #152033;
+                border: 1px solid #2a3a52;
+                border-radius: 12px;
+                padding: 16px;
+            }
+            #metricTitle { color: #91a4ba; font-weight: 600; }
+            #metricValue { color: #f6fbff; font-size: 22px; font-weight: 800; }
+            QTabWidget::pane { border: 1px solid #26364d; background: #0e1727; }
+            QTabBar::tab {
+                background: #172337;
+                color: #aebed0;
+                border: 1px solid #26364d;
+                padding: 10px 16px;
+                min-width: 88px;
+            }
+            QTabBar::tab:selected { background: #0f766e; color: white; }
+            QGroupBox {
+                border: 1px solid #2a3a52;
+                border-radius: 10px;
+                margin-top: 14px;
+                padding: 18px 10px 10px 10px;
+                font-weight: 700;
+            }
+            QGroupBox::title { subcontrol-origin: margin; padding: 0 8px; color: #b7c7d9; }
+            QPushButton {
+                background: #0f766e;
+                border: 1px solid #15978c;
+                padding: 10px 15px;
+                border-radius: 7px;
+                color: white;
+                font-weight: 700;
+            }
+            QPushButton:hover { background: #11998e; }
+            QPushButton:pressed { background: #0a5f59; }
+            QLineEdit, QComboBox {
+                background: #f8fafc;
+                color: #111827;
+                border: 2px solid transparent;
+                border-radius: 7px;
+                padding: 9px;
+                selection-background-color: #0f766e;
+            }
+            QLineEdit:focus, QComboBox:focus { border-color: #2dd4bf; }
+            QTableWidget {
+                background: #f8fafc;
+                alternate-background-color: #eef3f7;
+                color: #111827;
+                gridline-color: #d5dee8;
+                border: 0;
+            }
+            QHeaderView::section {
+                background: #dbe5ee;
+                color: #0f172a;
+                border: 0;
+                border-bottom: 2px solid #9baebe;
+                padding: 9px;
+                font-weight: 800;
+            }
         """

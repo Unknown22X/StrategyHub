@@ -18,6 +18,7 @@ class ExchangeSnapshot(BaseModel):
     reconciled_at: datetime
     available_futures_balance: Decimal = Decimal("0")
     position_quantity: Decimal = Decimal("0")
+    liquidation_price: Decimal | None = None
     managed_order_ids: tuple[str, ...] = ()
     unmanaged_state: bool = False
     reconciliation_error: str | None = None
@@ -26,7 +27,12 @@ class ExchangeSnapshot(BaseModel):
     leverage_confirmed: int | None = None
     market_ready: bool = False
     history_ready: bool = False
+    risk_ready: bool = False
+    active_contract_ready: bool = False
+    daily_baseline_ready: bool = False
     protection_ready: bool = True
+    tp_enabled: bool = True
+    sl_enabled: bool = True
     subscription_confirmed: bool = False
     rest_snapshot_confirmed: bool = False
     websocket_price_updates: int = 0
@@ -129,3 +135,38 @@ class MarketEntryGuardResult(BaseModel):
     expected_price: Decimal | None = None
     deviation_percentage: Decimal | None = None
     reason_ar: str | None = None
+
+
+class MarketGuardQuoteRequest(BaseModel):
+    direction: Literal["long", "short"]
+    quantity: Decimal = Field(gt=0)
+
+
+class ExchangeVerificationRequest(BaseModel):
+    evidence: str = Field(min_length=1, max_length=2000)
+
+
+class ExchangeVerificationRecord(BaseModel):
+    mode: TradingMode
+    recorded_at: datetime
+    engine_build: str
+    safety_fingerprint: str
+    evidence: str
+    stale: bool = False
+
+
+class AutomaticStartRequest(BaseModel):
+    active_contract: str = Field(min_length=1, max_length=64)
+
+
+class AutomaticSignalRequest(BaseModel):
+    symbol: str = Field(min_length=1, max_length=64)
+    direction: Literal["long", "short"]
+
+
+class ExchangeRequestAudit(BaseModel):
+    client_request_id: str
+    mode: TradingMode
+    kind: str
+    status: str
+    message_ar: str

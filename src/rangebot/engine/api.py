@@ -1,8 +1,9 @@
 """Localhost-only FastAPI contract for the desktop control UI."""
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Literal
 from uuid import uuid4
 
@@ -58,11 +59,17 @@ from rangebot.domain.paper import (
 )
 from rangebot.domain.runtime import RuntimeState
 from rangebot.domain.exchange import (
+    AutomaticSignalRequest,
+    AutomaticStartRequest,
     ExchangeCloseRequest,
     ExchangeEntryRequest,
     ExchangeOperationResult,
+    ExchangeRequestAudit,
+    ExchangeVerificationRecord,
+    ExchangeVerificationRequest,
     MarketEntryGuardRequest,
     MarketEntryGuardResult,
+    MarketGuardQuoteRequest,
     LiveActivationRequest,
     LiveEntryRequest,
     ModeState,
@@ -72,6 +79,7 @@ from rangebot.domain.exchange import (
 from rangebot.engine.database import apply_migrations, create_database_engine
 from rangebot.engine.exchange import (
     GateIoAdapter,
+    MockGateIoAdapter,
     UnavailableGateIoAdapter,
     entry_blocks,
     guard_market_entry,
@@ -79,6 +87,7 @@ from rangebot.engine.exchange import (
 )
 from rangebot.engine.market import EmptyPublicMarketProvider, PublicMarketProvider
 from rangebot.engine.repository import (
+    ENGINE_BUILD_ID,
     PaperAccountRepository,
     PaperWatchlistRepository,
     ExchangeModeRepository,
@@ -90,6 +99,7 @@ def create_app(
     database_url: str,
     public_market_provider: PublicMarketProvider | None = None,
     exchange_adapter: GateIoAdapter | None = None,
+    restored_state: bool = False,
 ) -> FastAPI:
     """Create an engine API that exposes lifecycle state to the local UI."""
     database_engine = create_database_engine(database_url)
@@ -103,6 +113,15 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         apply_migrations(database_url)
+        if restored_state:
+            exchange_repository.invalidate_snapshot("testnet")
+            exchange_repository.invalidate_snapshot("live")
+        if isinstance(gate_adapter, MockGateIoAdapter):
+            for mode in ("testnet", "live"):
+                persisted = exchange_repository.adapter_state(mode)
+                if persisted is not None:
+                    restored = MockGateIoAdapter.from_state(persisted)
+                    gate_adapter.__dict__.update(restored.__dict__)
         # A process/service/VPS restart always returns Live to its locked state.
         exchange_repository.set_live_locked(True)
         repository.record_started()
@@ -128,15 +147,114 @@ def create_app(
             exchange_repository.emergency_stop(mode),
         )
 
+    def _persist_mock_state(mode: TradingMode) -> None:
+        if isinstance(gate_adapter, MockGateIoAdapter):
+            exchange_repository.save_adapter_state(mode, gate_adapter.export_state())
+
+    def _managed_operation(
+        mode: TradingMode, kind: str, operation: Callable[[], ExchangeOperationResult]
+    ) -> ExchangeOperationResult:
+        client_request_id = str(uuid4())
+        exchange_repository.persist_intent(
+            mode, client_request_id, kind, "{}"
+        )
+        try:
+            result = operation()
+        except Exception as error:
+            exchange_repository.mark_intent(client_request_id, "pending_unknown")
+            raise HTTPException(
+                status_code=503,
+                detail="نتيجة العملية غير معروفة؛ يلزم إجراء المصالحة.",
+            ) from error
+        exchange_repository.mark_intent(
+            client_request_id,
+            "accepted" if result.accepted else "rejected",
+        )
+        return result.model_copy(update={"client_request_id": client_request_id})
+
+    def _mock_adapter() -> MockGateIoAdapter:
+        if not isinstance(gate_adapter, MockGateIoAdapter):
+            raise HTTPException(
+                status_code=503,
+                detail="مسار التشغيل التلقائي المحلي متاح في Mock فقط.",
+            )
+        return gate_adapter
+
+    @app.post("/v1/exchange/{mode}/automatic/start", response_model=ModeState)
+    def start_exchange_automatic(
+        mode: TradingMode, request: AutomaticStartRequest
+    ) -> ModeState:
+        current = _exchange_state(mode)
+        if current.blocked_reasons_ar:
+            raise HTTPException(
+                status_code=409, detail=" ".join(current.blocked_reasons_ar)
+            )
+        adapter = _mock_adapter()
+        try:
+            adapter.start_automatic(request.active_contract)
+        except RuntimeError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        _persist_mock_state(mode)
+        exchange_repository.save_snapshot(adapter.reconcile(mode))
+        return _exchange_state(mode)
+
+    @app.post("/v1/exchange/{mode}/automatic/signal", response_model=ModeState)
+    def consume_exchange_signal(
+        mode: TradingMode, request: AutomaticSignalRequest
+    ) -> ModeState:
+        adapter = _mock_adapter()
+        try:
+            adapter.consume_automatic_signal(request.symbol, request.direction)
+        except RuntimeError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        _persist_mock_state(mode)
+        return _exchange_state(mode)
+
+    @app.post(
+        "/v1/exchange/{mode}/verification",
+        response_model=ExchangeVerificationRecord,
+    )
+    def record_exchange_verification(
+        mode: TradingMode, request: ExchangeVerificationRequest
+    ) -> ExchangeVerificationRecord:
+        record = ExchangeVerificationRecord(
+            mode=mode,
+            recorded_at=datetime.now(UTC),
+            engine_build=ENGINE_BUILD_ID,
+            safety_fingerprint="rangebot-default-safety-profile",
+            evidence=request.evidence,
+        )
+        exchange_repository.save_verification(mode, record.model_dump(mode="json"))
+        return record
+
+    @app.get(
+        "/v1/exchange/{mode}/verification",
+        response_model=ExchangeVerificationRecord | None,
+    )
+    def exchange_verification(mode: TradingMode) -> ExchangeVerificationRecord | None:
+        value = exchange_repository.verification(mode)
+        if value is None:
+            return None
+        record = ExchangeVerificationRecord.model_validate(value)
+        return record.model_copy(update={"stale": record.engine_build != ENGINE_BUILD_ID})
+
     @app.get("/v1/exchange/{mode}/state", response_model=ModeState)
     def exchange_state(mode: TradingMode) -> ModeState:
         return _exchange_state(mode)
+
+    @app.get(
+        "/v1/exchange/{mode}/operations",
+        response_model=list[ExchangeRequestAudit],
+    )
+    def exchange_operations(mode: TradingMode) -> list[ExchangeRequestAudit]:
+        return exchange_repository.request_audit(mode)
 
     @app.post("/v1/exchange/{mode}/reconcile", response_model=ModeState)
     def reconcile_exchange(mode: TradingMode) -> ModeState:
         """Only a configured adapter may supply authoritative exchange state."""
         snapshot = gate_adapter.reconcile(mode)
         exchange_repository.save_snapshot(snapshot)
+        _persist_mock_state(mode)
         return _exchange_state(mode)
 
     @app.post("/v1/live/activate", response_model=ModeState)
@@ -164,15 +282,34 @@ def create_app(
     @app.post("/v1/exchange/{mode}/emergency-stop", response_model=ModeState)
     def exchange_emergency_stop(mode: TradingMode) -> ModeState:
         # Only adapter-owned pending entries may be cancelled; unmanaged state is never touched.
-        gate_adapter.cancel_managed_entry(mode)
+        _managed_operation(
+            mode,
+            "emergency_cancel_entry",
+            lambda: gate_adapter.cancel_managed_entry(mode),
+        )
         exchange_repository.set_emergency_stop(mode, True)
+        _persist_mock_state(mode)
         return _exchange_state(mode)
 
     @app.post("/v1/exchange/{mode}/resume", response_model=ModeState)
     def exchange_resume(mode: TradingMode, confirmation: str) -> ModeState:
         if confirmation != "RESUME":
             raise HTTPException(status_code=422, detail="يلزم إدخال RESUME حرفياً.")
+        snapshot = gate_adapter.reconcile(mode)
+        exchange_repository.save_snapshot(snapshot)
+        if (
+            snapshot.reconciliation_error
+            or snapshot.unmanaged_state
+            or not snapshot.protection_ready
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="لا يمكن الاستئناف قبل اكتمال المصالحة والحماية.",
+            )
         exchange_repository.set_emergency_stop(mode, False)
+        if mode == "live":
+            exchange_repository.set_live_locked(True)
+        _persist_mock_state(mode)
         return _exchange_state(mode)
 
     @app.post("/v1/live/protection", response_model=ModeState)
@@ -181,14 +318,28 @@ def create_app(
             expected = "DISABLE TP" if request.protection == "tp" else "DISABLE SL"
             if request.confirmation != expected:
                 raise HTTPException(status_code=422, detail=f"يلزم إدخال {expected} حرفياً.")
-        result = gate_adapter.ensure_protection("live")
+        result = _managed_operation(
+            "live",
+            f"set_{request.protection}_protection",
+            lambda: gate_adapter.set_protection_enabled(
+                "live", request.protection, request.enabled
+            ),
+        )
         if not result.accepted:
             raise HTTPException(status_code=503, detail=result.message_ar)
+        snapshot = gate_adapter.reconcile("live")
+        exchange_repository.save_snapshot(snapshot)
+        _persist_mock_state("live")
         return _exchange_state("live")
 
     @app.post("/v1/exchange/{mode}/protection/check", response_model=ExchangeOperationResult)
     def check_exchange_protection(mode: TradingMode) -> ExchangeOperationResult:
-        return gate_adapter.ensure_protection(mode)
+        result = _managed_operation(
+            mode, "ensure_protection", lambda: gate_adapter.ensure_protection(mode)
+        )
+        exchange_repository.save_snapshot(gate_adapter.reconcile(mode))
+        _persist_mock_state(mode)
+        return result
 
     @app.post("/v1/live/entries", response_model=ModeState)
     def submit_live_entry(request: LiveEntryRequest) -> ModeState:
@@ -202,11 +353,32 @@ def create_app(
     def preview_market_entry_guard(request: MarketEntryGuardRequest) -> MarketEntryGuardResult:
         return guard_market_entry(request)
 
+    @app.post(
+        "/v1/exchange/{mode}/market-guard-quote",
+        response_model=MarketEntryGuardRequest,
+    )
+    def exchange_market_guard_quote(
+        mode: TradingMode, request: MarketGuardQuoteRequest
+    ) -> MarketEntryGuardRequest:
+        try:
+            return gate_adapter.market_guard_quote(mode, request)
+        except RuntimeError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
     def _submit_exchange_entry(mode: TradingMode, request: LiveEntryRequest) -> ModeState:
         state = _exchange_state(mode)
         if state.blocked_reasons_ar:
             raise HTTPException(status_code=409, detail=" ".join(state.blocked_reasons_ar))
-        if mode == "live" and not request.protections_enabled and request.confirmation != "UNPROTECTED POSITION":
+        globally_unprotected = bool(
+            state.snapshot
+            and not state.snapshot.tp_enabled
+            and not state.snapshot.sl_enabled
+        )
+        if (
+            mode == "live"
+            and (not request.protections_enabled or globally_unprotected)
+            and request.confirmation != "UNPROTECTED POSITION"
+        ):
             raise HTTPException(status_code=422, detail="يلزم إدخال UNPROTECTED POSITION حرفياً.")
         if request.order_type == "market":
             if request.market_guard is None:
@@ -238,13 +410,20 @@ def create_app(
             exchange_request.client_request_id,
             "accepted" if result.accepted else "pending_unknown",
         )
+        _persist_mock_state(mode)
         if not result.accepted:
             raise HTTPException(status_code=503, detail=result.message_ar)
+        exchange_repository.save_snapshot(gate_adapter.reconcile(mode))
         return _exchange_state(mode)
 
     @app.post("/v1/exchange/{mode}/cancel-entry", response_model=ExchangeOperationResult)
     def cancel_exchange_entry(mode: TradingMode) -> ExchangeOperationResult:
-        return gate_adapter.cancel_managed_entry(mode)
+        result = _managed_operation(
+            mode, "cancel_entry", lambda: gate_adapter.cancel_managed_entry(mode)
+        )
+        _persist_mock_state(mode)
+        exchange_repository.save_snapshot(gate_adapter.reconcile(mode))
+        return result
 
     @app.post("/v1/exchange/{mode}/close", response_model=ExchangeOperationResult)
     def close_exchange_position(
@@ -252,18 +431,36 @@ def create_app(
     ) -> ExchangeOperationResult:
         if request.confirmation != "CLOSE POSITION":
             raise HTTPException(status_code=422, detail="يلزم إدخال CLOSE POSITION حرفياً.")
-        return gate_adapter.close_managed_position(mode)
+        result = _managed_operation(
+            mode,
+            "manual_close",
+            lambda: gate_adapter.close_managed_position(mode),
+        )
+        _persist_mock_state(mode)
+        exchange_repository.save_snapshot(gate_adapter.reconcile(mode))
+        return result
 
     @app.post("/v1/exchange/{mode}/emergency-close", response_model=ExchangeOperationResult)
     def emergency_close_exchange(mode: TradingMode) -> ExchangeOperationResult:
         """Persist the stop first; close only after a current safe reconciliation state."""
-        gate_adapter.cancel_managed_entry(mode)
+        _managed_operation(
+            mode,
+            "emergency_cancel_entry",
+            lambda: gate_adapter.cancel_managed_entry(mode),
+        )
         exchange_repository.set_emergency_stop(mode, True)
         snapshot = gate_adapter.reconcile(mode)
         exchange_repository.save_snapshot(snapshot)
         if snapshot.reconciliation_error or snapshot.unmanaged_state:
             raise HTTPException(status_code=409, detail="تعذر الإغلاق الطارئ حتى تكتمل المصالحة الآمنة.")
-        return gate_adapter.close_managed_position(mode)
+        result = _managed_operation(
+            mode,
+            "emergency_close",
+            lambda: gate_adapter.close_managed_position(mode),
+        )
+        _persist_mock_state(mode)
+        exchange_repository.save_snapshot(gate_adapter.reconcile(mode))
+        return result
 
     @app.get("/health", response_model=RuntimeState)
     def health() -> RuntimeState:
