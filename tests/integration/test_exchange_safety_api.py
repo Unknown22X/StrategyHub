@@ -286,6 +286,21 @@ def test_mock_reconciliation_resizes_protection_after_external_reduction() -> No
     assert adapter.stop_loss_quantity == 0
 
 
+def test_mock_limit_lifecycle_expires_or_hands_partial_fill_to_protection() -> None:
+    adapter = MockGateIoAdapter()
+    limit = ExchangeEntryRequest(symbol="BTC_USDT", direction="long", order_type="limit", quantity="5", limit_price="99", client_request_id="limit-1")
+
+    adapter.submit_entry("testnet", limit)
+    expired = adapter.settle_limit(Decimal("0"))
+    adapter.submit_entry("testnet", limit.model_copy(update={"client_request_id": "limit-2"}))
+    partial = adapter.settle_limit(Decimal("2"), Decimal("99"))
+
+    assert expired == "expired"
+    assert partial == "partial_filled"
+    assert adapter.position_quantity == 2
+    assert (adapter.take_profit_quantity, adapter.stop_loss_quantity) == (2, 2)
+
+
 def test_market_entry_guard_uses_correct_side_vwap_and_rejects_stale_or_slippage() -> None:
     now = datetime.now(UTC)
     allowed = guard_market_entry(MarketEntryGuardRequest(direction="long", quantity="2", last_price="100", last_price_observed_at=now, asks=[OrderBookLevel(price="100.1", quantity="2", observed_at=now)]))

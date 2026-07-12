@@ -104,6 +104,7 @@ class MockGateIoAdapter:
     def __init__(self) -> None:
         self.position_quantity = Decimal("0")
         self.pending_request_id: str | None = None
+        self.pending_limit_price: Decimal | None = None
         self.protection_confirmed = True
         self.take_profit_quantity = Decimal("0")
         self.stop_loss_quantity = Decimal("0")
@@ -140,6 +141,14 @@ class MockGateIoAdapter:
             return prior
         if self.position_quantity != 0 or self.pending_request_id is not None:
             return ExchangeOperationResult(accepted=False, client_request_id=request.client_request_id, message_ar="يوجد مركز أو أمر دخول مُدار قائم.")
+        if request.order_type == "limit":
+            if request.limit_price is None:
+                return ExchangeOperationResult(accepted=False, client_request_id=request.client_request_id, message_ar="سعر Limit مطلوب.")
+            self.pending_request_id = request.client_request_id
+            self.pending_limit_price = request.limit_price
+            result = ExchangeOperationResult(accepted=True, client_request_id=request.client_request_id, order_id=f"mock-{request.client_request_id}", message_ar="تم تسجيل أمر Limit المُدار.")
+            self.submissions[request.client_request_id] = result
+            return result
         self.position_quantity = request.quantity
         self.protection_confirmed = request.protections_enabled
         self.take_profit_quantity = request.quantity if request.protections_enabled else Decimal("0")
@@ -147,6 +156,24 @@ class MockGateIoAdapter:
         result = ExchangeOperationResult(accepted=True, client_request_id=request.client_request_id, order_id=f"mock-{request.client_request_id}", message_ar="تمت تعبئة محاكاة الأمر المُدار.")
         self.submissions[request.client_request_id] = result
         return result
+
+    def settle_limit(self, quantity: Decimal, average_fill_price: Decimal | None = None) -> str:
+        """Apply expiry or a partial/full managed Limit fill in the local simulator."""
+        if self.pending_request_id is None:
+            raise LookupError("No managed Limit entry is pending.")
+        if quantity < 0:
+            raise ValueError("Limit fill quantity cannot be negative.")
+        if quantity == 0:
+            self.pending_request_id = None
+            self.pending_limit_price = None
+            return "expired"
+        self.position_quantity = quantity
+        self.take_profit_quantity = quantity
+        self.stop_loss_quantity = quantity
+        self.protection_confirmed = True
+        self.pending_request_id = None
+        self.pending_limit_price = None
+        return "partial_filled" if average_fill_price is not None else "filled"
 
     def apply_partial_fill(self, quantity: Decimal) -> None:
         if quantity <= 0 or quantity > self.position_quantity:
@@ -195,6 +222,7 @@ class MockGateIoAdapter:
 
     def cancel_managed_entry(self, mode: TradingMode) -> ExchangeOperationResult:
         self.pending_request_id = None
+        self.pending_limit_price = None
         return ExchangeOperationResult(accepted=True, client_request_id="cancel", message_ar="تم إلغاء أمر الدخول المُدار.")
 
     def close_managed_position(self, mode: TradingMode) -> ExchangeOperationResult:

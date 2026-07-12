@@ -223,6 +223,7 @@ def create_app(
                 direction=request.direction,
                 order_type=request.order_type,
                 quantity=request.quantity,
+                limit_price=request.limit_price,
                 client_request_id=client_request_id,
                 protections_enabled=request.protections_enabled,
             )

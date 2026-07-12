@@ -76,6 +76,7 @@ class LiveEntryRequest(BaseModel):
     direction: Literal["long", "short"]
     order_type: Literal["market", "limit"] = "market"
     quantity: Decimal = Field(gt=0)
+    limit_price: Decimal | None = None
     confirmation: str = ""
     protections_enabled: bool = True
     market_guard: "MarketEntryGuardRequest | None" = None
