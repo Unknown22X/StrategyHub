@@ -209,3 +209,15 @@ def test_mock_exchange_manages_partial_fill_protection_close_and_idempotency() -
     assert adapter.reconcile("testnet").position_quantity == 0
     assert protected.accepted is True
     assert closed.accepted is True
+
+
+def test_mock_exchange_requires_full_reconnect_before_automatic_recovery() -> None:
+    adapter = MockGateIoAdapter()
+    adapter.start_automatic()
+    adapter.begin_reconnect()
+
+    assert adapter.may_resume_automatic() is False
+
+    adapter.confirm_reconnect(websocket_updates=2)
+
+    assert adapter.may_resume_automatic() is True

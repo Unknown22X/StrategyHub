@@ -83,6 +83,7 @@ class MockGateIoAdapter:
         self.websocket_price_updates = 2
         self.market_observed_at = datetime.now(UTC)
         self.submissions: dict[str, ExchangeOperationResult] = {}
+        self.automatic_intent = False
 
     def reconcile(self, mode: TradingMode) -> ExchangeSnapshot:
         return ExchangeSnapshot(
@@ -121,6 +122,27 @@ class MockGateIoAdapter:
             raise ValueError("Partial fill must be within the managed position.")
         self.position_quantity = quantity
         self.protection_confirmed = True
+
+    def begin_reconnect(self) -> None:
+        self.subscription_confirmed = False
+        self.rest_snapshot_confirmed = False
+        self.websocket_price_updates = 0
+
+    def confirm_reconnect(self, websocket_updates: int = 2) -> None:
+        self.subscription_confirmed = True
+        self.rest_snapshot_confirmed = True
+        self.websocket_price_updates = websocket_updates
+        self.market_observed_at = datetime.now(UTC)
+
+    def start_automatic(self) -> None:
+        snapshot = self.reconcile("testnet")
+        if entry_blocks(snapshot, "testnet", False, False):
+            raise RuntimeError("Automatic trading cannot start until readiness is complete.")
+        self.automatic_intent = True
+
+    def may_resume_automatic(self) -> bool:
+        snapshot = self.reconcile("testnet")
+        return self.automatic_intent and not entry_blocks(snapshot, "testnet", False, False)
 
     def cancel_managed_entry(self, mode: TradingMode) -> ExchangeOperationResult:
         self.pending_request_id = None
