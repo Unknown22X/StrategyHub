@@ -1,5 +1,10 @@
 # عمليات النشر والاستعادة
 
+> The WinSW service starts with read-only exchange access. The order transport
+> boundary is implemented but remains off unless an authorized acceptance session
+> explicitly adds `--enable-order-submission`. That flag still does not unlock Live;
+> fresh reconciliation and the separate in-app `LIVE` confirmation remain mandatory.
+
 ## قواعد الأمان
 
 - Live يبدأ دائماً في **Live Locked**. لا تفك القفل تلقائياً ولا تضغط تفعيل Live

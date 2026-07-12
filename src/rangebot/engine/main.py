@@ -19,6 +19,11 @@ def parse_arguments() -> argparse.Namespace:
         default="sqlite:///runtime/rangebot.db",
         help="SQLAlchemy database URL for persisted runtime state.",
     )
+    parser.add_argument(
+        "--enable-order-submission",
+        action="store_true",
+        help="Enable the exchange order transport boundary; Live remains locked in-app.",
+    )
     parser.add_argument("--host", default=LOCALHOST)
     parser.add_argument("--port", default=8765, type=int)
     parser.add_argument(
@@ -56,6 +61,10 @@ def main() -> None:
         else configured_gate_adapter(
             arguments.mode,
             enable_network=arguments.enable_read_only_exchange,
+            enable_order_submission=(
+                arguments.enable_read_only_exchange
+                and arguments.enable_order_submission
+            ),
         )
     )
     uvicorn.run(

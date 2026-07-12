@@ -360,6 +360,32 @@ def test_unknown_exchange_outcome_blocks_retry_with_same_identity(tmp_path) -> N
     assert len(adapter.submitted) == 1
 
 
+def test_transport_exception_marks_unknown_and_blocks_duplicate_retry(tmp_path) -> None:
+    class TimeoutAdapter(FakeGateAdapter):
+        def submit_entry(
+            self, mode: str, request: ExchangeEntryRequest
+        ) -> ExchangeOperationResult:
+            self.submitted.append(request)
+            raise TimeoutError("simulated transport timeout")
+
+    database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
+    adapter = TimeoutAdapter(_ready_snapshot())
+    payload = {
+        "symbol": "BTC_USDT",
+        "direction": "long",
+        "quantity": "1",
+        "client_request_id": "timeout-request",
+    }
+    with TestClient(create_app(database_url, exchange_adapter=adapter)) as client:
+        client.post("/v1/exchange/testnet/reconcile")
+        first = client.post("/v1/exchange/testnet/entries", json=payload)
+        retry = client.post("/v1/exchange/testnet/entries", json=payload)
+
+    assert first.status_code == 503
+    assert retry.status_code == 409
+    assert len(adapter.submitted) == 1
+
+
 def test_known_exchange_rejection_is_audited_and_can_be_retried(tmp_path) -> None:
     class RejectedAdapter(FakeGateAdapter):
         def submit_entry(

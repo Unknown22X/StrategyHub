@@ -655,7 +655,7 @@ class HttpxGateTransport:
 
 
 def configured_gate_adapter(
-    mode: TradingMode, *, enable_network: bool
+    mode: TradingMode, *, enable_network: bool, enable_order_submission: bool = False
 ) -> GateIoAdapter:
     """Build a read-only-capable adapter; order submission always starts disabled."""
     try:
@@ -666,7 +666,7 @@ def configured_gate_adapter(
         configuration,
         transport=HttpxGateTransport() if enable_network else None,
         allow_network=enable_network,
-        allow_order_submission=False,
+        allow_order_submission=enable_order_submission,
     )
 
 

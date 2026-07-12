@@ -203,24 +203,22 @@ def create_app(
         adapter = _mock_adapter()
         try:
             adapter.consume_automatic_signal(request.symbol, request.direction)
-            result = adapter.submit_entry(
+            return _submit_exchange_entry(
                 mode,
-                ExchangeEntryRequest(
+                LiveEntryRequest(
                     symbol=request.symbol,
                     direction=request.direction,
                     order_type=request.order_type,
                     quantity=request.quantity,
                     limit_price=request.limit_price,
-                    client_request_id=f"auto-{uuid4()}",
+                    client_request_id=f"automatic-{uuid4()}",
                 ),
             )
-            if not result.accepted:
-                adapter.used_signals.discard((request.symbol, request.direction))
-                raise RuntimeError(result.message_ar)
-        except RuntimeError as error:
+        except (RuntimeError, HTTPException) as error:
+            adapter.used_signals.discard((request.symbol, request.direction))
+            if isinstance(error, HTTPException):
+                raise
             raise HTTPException(status_code=409, detail=str(error)) from error
-        _persist_mock_state(mode)
-        return _exchange_state(mode)
 
     @app.post(
         "/v1/exchange/{mode}/verification",
@@ -452,7 +450,16 @@ def create_app(
             "entry",
             exchange_request.model_dump_json(),
         )
-        result = gate_adapter.submit_entry(mode, exchange_request)
+        try:
+            result = gate_adapter.submit_entry(mode, exchange_request)
+        except Exception as error:
+            exchange_repository.mark_intent(
+                exchange_request.client_request_id, "pending_unknown"
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="نتيجة إرسال أمر الدخول غير معروفة؛ يلزم إجراء المصالحة.",
+            ) from error
         exchange_repository.mark_intent(
             exchange_request.client_request_id,
             (
@@ -516,14 +523,25 @@ def create_app(
             raise HTTPException(
                 status_code=409, detail="تعذر الإغلاق الطارئ حتى تكتمل المصالحة الآمنة."
             )
-        result = _managed_operation(
-            mode,
-            "emergency_close",
-            lambda: gate_adapter.close_managed_position(mode),
+        result = ExchangeOperationResult(
+            accepted=True,
+            client_request_id="emergency-close-empty",
+            message_ar="لا يوجد مركز مُدار مفتوح.",
         )
+        final_snapshot = snapshot
+        for _ in range(8):
+            if final_snapshot.position_quantity == 0:
+                break
+            result = _managed_operation(
+                mode,
+                "emergency_close",
+                lambda: gate_adapter.close_managed_position(mode),
+            )
+            if not result.accepted:
+                break
+            final_snapshot = gate_adapter.reconcile(mode)
+            exchange_repository.save_snapshot(final_snapshot)
         _persist_mock_state(mode)
-        final_snapshot = gate_adapter.reconcile(mode)
-        exchange_repository.save_snapshot(final_snapshot)
         if result.accepted and (
             final_snapshot.position_quantity != 0
             or bool(final_snapshot.managed_order_ids)
