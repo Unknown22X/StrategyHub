@@ -273,6 +273,19 @@ def test_mock_exchange_requires_full_reconnect_before_automatic_recovery() -> No
     assert adapter.may_resume_automatic() is True
 
 
+def test_mock_reconciliation_resizes_protection_after_external_reduction() -> None:
+    adapter = MockGateIoAdapter()
+    adapter.submit_entry("testnet", ExchangeEntryRequest(symbol="BTC_USDT", direction="long", quantity="4", client_request_id="managed-2"))
+
+    reduced = adapter.reconcile_external_position(Decimal("2"))
+    closed = adapter.reconcile_external_position(Decimal("0"))
+
+    assert reduced == "external_reduced"
+    assert closed == "external_closed"
+    assert adapter.take_profit_quantity == 0
+    assert adapter.stop_loss_quantity == 0
+
+
 def test_market_entry_guard_uses_correct_side_vwap_and_rejects_stale_or_slippage() -> None:
     now = datetime.now(UTC)
     allowed = guard_market_entry(MarketEntryGuardRequest(direction="long", quantity="2", last_price="100", last_price_observed_at=now, asks=[OrderBookLevel(price="100.1", quantity="2", observed_at=now)]))

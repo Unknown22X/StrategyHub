@@ -156,6 +156,22 @@ class MockGateIoAdapter:
         self.take_profit_quantity = quantity
         self.stop_loss_quantity = quantity
 
+    def reconcile_external_position(self, quantity: Decimal) -> str:
+        """Model external closure/reduction without adopting an unmanaged order."""
+        if quantity < 0 or quantity > self.position_quantity:
+            raise ValueError("External position quantity is invalid.")
+        if quantity == 0:
+            self.position_quantity = Decimal("0")
+            self.take_profit_quantity = Decimal("0")
+            self.stop_loss_quantity = Decimal("0")
+            self.protection_confirmed = True
+            return "external_closed"
+        self.position_quantity = quantity
+        self.take_profit_quantity = quantity
+        self.stop_loss_quantity = quantity
+        self.protection_confirmed = True
+        return "external_reduced"
+
     def begin_reconnect(self) -> None:
         self.subscription_confirmed = False
         self.rest_snapshot_confirmed = False
