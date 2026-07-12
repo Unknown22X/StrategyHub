@@ -2,8 +2,13 @@
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+import hashlib
+import hmac
+import json
 import os
-from typing import Protocol
+from time import time
+from typing import Any, Callable, Protocol
 
 from rangebot.domain.exchange import (
     ExchangeEntryRequest,
@@ -95,6 +100,76 @@ class GateIoConfiguration:
 
     def redacted_description(self) -> str:
         return f"{self.mode} Gate.io configuration ({self.key[:3]}…[REDACTED])"
+
+
+class GateIoV4Adapter:
+    """Signed Gate v4 futures adapter; network/order access is explicitly opt-in."""
+
+    def __init__(
+        self,
+        configuration: GateIoConfiguration,
+        transport: Callable[[str, str, dict[str, str], str], dict[str, Any]] | None = None,
+        allow_network: bool = False,
+        allow_order_submission: bool = False,
+    ) -> None:
+        self._configuration = configuration
+        self._transport = transport
+        self._allow_network = allow_network
+        self._allow_order_submission = allow_order_submission
+
+    def signed_headers(self, method: str, path: str, query: str, body: str, timestamp: str) -> dict[str, str]:
+        payload_hash = hashlib.sha512(body.encode("utf-8")).hexdigest()
+        signing_string = "\n".join((method.upper(), f"/api/v4{path}", query, payload_hash, timestamp))
+        signature = hmac.new(self._configuration.secret.encode("utf-8"), signing_string.encode("utf-8"), hashlib.sha512).hexdigest()
+        return {"Accept": "application/json", "Content-Type": "application/json", "KEY": self._configuration.key, "Timestamp": timestamp, "SIGN": signature}
+
+    def reconcile(self, mode: TradingMode) -> ExchangeSnapshot:
+        self._require_mode(mode)
+        account = self._request("GET", "/futures/usdt/accounts", "", "")
+        positions = self._request("GET", "/futures/usdt/positions", "", "")
+        orders = self._request("GET", "/futures/usdt/orders", "status=open", "")
+        position_quantity = sum(
+            (abs(Decimal(str(item.get("size", "0")))) for item in positions),
+            Decimal("0"),
+        )
+        return ExchangeSnapshot(
+            mode=mode,
+            reconciled_at=datetime.now(UTC),
+            available_futures_balance=str(account.get("available", "0")),
+            position_quantity=str(position_quantity),
+            managed_order_ids=tuple(str(item["id"]) for item in orders if str(item.get("text", "")).startswith("t-rangebot-")),
+            unmanaged_state=any(not str(item.get("text", "")).startswith("t-rangebot-") for item in orders),
+            one_way_confirmed=True,
+            cross_margin_confirmed=True,
+            leverage_confirmed=5,
+            market_ready=False,
+            history_ready=False,
+            protection_ready=True,
+        )
+
+    def submit_entry(self, mode: TradingMode, request: ExchangeEntryRequest) -> ExchangeOperationResult:
+        self._require_mode(mode)
+        if not self._allow_order_submission:
+            return ExchangeOperationResult(accepted=False, client_request_id=request.client_request_id, message_ar="إرسال أوامر Gate.io معطّل افتراضياً.")
+        payload = {"contract": request.symbol, "size": str(request.quantity), "price": "0" if request.order_type == "market" else str(request.limit_price), "tif": "ioc" if request.order_type == "market" else "gtc", "text": f"t-rangebot-{request.client_request_id}", "reduce_only": False}
+        result = self._request("POST", "/futures/usdt/orders", "", json.dumps(payload, separators=(",", ":")))
+        return ExchangeOperationResult(accepted=True, client_request_id=request.client_request_id, order_id=str(result.get("id")), message_ar="تم قبول أمر مُدار.")
+
+    def cancel_managed_entry(self, mode: TradingMode) -> ExchangeOperationResult:
+        return ExchangeOperationResult(accepted=False, client_request_id="cancel", message_ar="إلغاء Gate.io يتطلب مصالحة محددة بالمعرّف المُدار.")
+
+    def close_managed_position(self, mode: TradingMode) -> ExchangeOperationResult:
+        return ExchangeOperationResult(accepted=False, client_request_id="close", message_ar="الإغلاق Gate.io يتطلب مصالحة كمية حديثة.")
+
+    def _request(self, method: str, path: str, query: str, body: str) -> dict[str, Any]:
+        if not self._allow_network or self._transport is None:
+            raise RuntimeError("Gate.io network access is disabled.")
+        timestamp = str(int(time()))
+        return self._transport(method, path, self.signed_headers(method, path, query, body, timestamp), body)
+
+    def _require_mode(self, mode: TradingMode) -> None:
+        if mode != self._configuration.mode:
+            raise ValueError("Gate.io adapter mode mismatch.")
 
 
 def entry_blocks(snapshot: ExchangeSnapshot | None, mode: TradingMode, live_locked: bool, emergency_stop: bool) -> tuple[str, ...]:

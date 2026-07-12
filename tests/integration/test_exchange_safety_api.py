@@ -8,7 +8,7 @@ from rangebot.domain.exchange import (
     ExchangeSnapshot,
 )
 from rangebot.engine.api import create_app
-from rangebot.engine.exchange import GateIoConfiguration
+from rangebot.engine.exchange import GateIoConfiguration, GateIoV4Adapter
 
 
 def _ready_snapshot() -> dict[str, object]:
@@ -149,3 +149,24 @@ def test_gate_configuration_stays_engine_private_and_redacts_values(monkeypatch)
     assert configuration.base_url.startswith("https://fx-api-testnet")
     assert "do-not-show" not in configuration.redacted_description()
     assert "abc-secret-key" not in configuration.redacted_description()
+
+
+def test_gate_v4_adapter_signs_mocked_requests_and_refuses_orders_by_default(monkeypatch) -> None:
+    monkeypatch.setenv("GATE_TESTNET_KEY", "test-key")
+    monkeypatch.setenv("GATE_TESTNET_SECRET", "test-secret")
+    calls: list[tuple[str, str, dict[str, str], str]] = []
+
+    def transport(method: str, path: str, headers: dict[str, str], body: str) -> dict[str, object]:
+        calls.append((method, path, headers, body))
+        if path.endswith("accounts"):
+            return {"available": "1000"}
+        return []  # type: ignore[return-value]
+
+    adapter = GateIoV4Adapter(GateIoConfiguration.from_environment("testnet"), transport, allow_network=True)
+    snapshot = adapter.reconcile("testnet")
+    blocked = adapter.submit_entry("testnet", ExchangeEntryRequest(symbol="BTC_USDT", direction="long", quantity="1", client_request_id="request-1"))
+
+    assert snapshot.available_futures_balance == 1000
+    assert calls[0][2]["KEY"] == "test-key"
+    assert len(calls[0][2]["SIGN"]) == 128
+    assert blocked.accepted is False
