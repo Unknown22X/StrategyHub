@@ -264,25 +264,14 @@ class PaperProfileChange(BaseModel):
     def reject_runtime_or_secret_settings(
         cls, settings: dict[str, object]
     ) -> dict[str, JsonValue]:
-        forbidden_fragments = (
-            "credential",
-            "api_key",
-            "token",
-            "secret",
-            "signature",
-            "header",
-            "password",
-            "environment",
-            "position",
-            "order",
-            "cooldown",
-            "runtime",
-            "lock",
-        )
+        allowed = {
+            "theme", "language", "font_size", "layout", "leverage",
+            "maker_fee_rate", "taker_fee_rate", "daily_loss_limit",
+            "losing_trade_limit", "automatic_fill_limit", "cooldown_seconds",
+        }
         for key in settings:
-            lowered = key.lower()
-            if any(fragment in lowered for fragment in forbidden_fragments):
-                raise ValueError("Paper profiles cannot store secrets or runtime state.")
+            if key not in allowed:
+                raise ValueError("Paper profiles may contain only approved Paper settings.")
         return settings
 
 

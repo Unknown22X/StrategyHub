@@ -494,8 +494,6 @@ class RangeBotWindow(QWidget):
         return payload
 
     def _ensure_preview(self, request: dict[str, Any]) -> dict[str, Any] | None:
-        if self._last_preview is not None:
-            return self._last_preview
         result = self._call(self.preview_output, "post", "/v1/paper/entry-preview", request)
         if isinstance(result, dict):
             self._last_preview = result
