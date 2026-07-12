@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
@@ -8,7 +9,7 @@ from rangebot.domain.exchange import (
     ExchangeSnapshot,
 )
 from rangebot.engine.api import create_app
-from rangebot.engine.exchange import GateIoConfiguration, GateIoV4Adapter
+from rangebot.engine.exchange import GateIoConfiguration, GateIoV4Adapter, MockGateIoAdapter
 
 
 def _ready_snapshot() -> dict[str, object]:
@@ -192,3 +193,19 @@ def test_gate_v4_adapter_signs_mocked_requests_and_refuses_orders_by_default(mon
     assert calls[0][2]["KEY"] == "test-key"
     assert len(calls[0][2]["SIGN"]) == 128
     assert blocked.accepted is False
+
+
+def test_mock_exchange_manages_partial_fill_protection_close_and_idempotency() -> None:
+    adapter = MockGateIoAdapter()
+    request = ExchangeEntryRequest(symbol="BTC_USDT", direction="long", quantity="3", client_request_id="managed-1")
+
+    accepted = adapter.submit_entry("testnet", request)
+    duplicate = adapter.submit_entry("testnet", request)
+    adapter.apply_partial_fill(Decimal("1"))
+    protected = adapter.ensure_protection("testnet")
+    closed = adapter.close_managed_position("testnet")
+
+    assert accepted.order_id == duplicate.order_id
+    assert adapter.reconcile("testnet").position_quantity == 0
+    assert protected.accepted is True
+    assert closed.accepted is True

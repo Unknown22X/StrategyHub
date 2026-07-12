@@ -71,6 +71,71 @@ class UnavailableGateIoAdapter:
         )
 
 
+class MockGateIoAdapter:
+    """Deterministic local futures lifecycle simulator for automated safety tests."""
+
+    def __init__(self) -> None:
+        self.position_quantity = Decimal("0")
+        self.pending_request_id: str | None = None
+        self.protection_confirmed = True
+        self.subscription_confirmed = True
+        self.rest_snapshot_confirmed = True
+        self.websocket_price_updates = 2
+        self.market_observed_at = datetime.now(UTC)
+        self.submissions: dict[str, ExchangeOperationResult] = {}
+
+    def reconcile(self, mode: TradingMode) -> ExchangeSnapshot:
+        return ExchangeSnapshot(
+            mode=mode,
+            reconciled_at=datetime.now(UTC),
+            available_futures_balance=Decimal("1000"),
+            position_quantity=self.position_quantity,
+            managed_order_ids=(self.pending_request_id,) if self.pending_request_id else (),
+            unmanaged_state=False,
+            one_way_confirmed=True,
+            cross_margin_confirmed=True,
+            leverage_confirmed=5,
+            market_ready=True,
+            history_ready=True,
+            protection_ready=self.protection_confirmed,
+            subscription_confirmed=self.subscription_confirmed,
+            rest_snapshot_confirmed=self.rest_snapshot_confirmed,
+            websocket_price_updates=self.websocket_price_updates,
+            market_observed_at=self.market_observed_at,
+        )
+
+    def submit_entry(self, mode: TradingMode, request: ExchangeEntryRequest) -> ExchangeOperationResult:
+        prior = self.submissions.get(request.client_request_id)
+        if prior is not None:
+            return prior
+        if self.position_quantity != 0 or self.pending_request_id is not None:
+            return ExchangeOperationResult(accepted=False, client_request_id=request.client_request_id, message_ar="يوجد مركز أو أمر دخول مُدار قائم.")
+        self.position_quantity = request.quantity
+        self.protection_confirmed = request.protections_enabled
+        result = ExchangeOperationResult(accepted=True, client_request_id=request.client_request_id, order_id=f"mock-{request.client_request_id}", message_ar="تمت تعبئة محاكاة الأمر المُدار.")
+        self.submissions[request.client_request_id] = result
+        return result
+
+    def apply_partial_fill(self, quantity: Decimal) -> None:
+        if quantity <= 0 or quantity > self.position_quantity:
+            raise ValueError("Partial fill must be within the managed position.")
+        self.position_quantity = quantity
+        self.protection_confirmed = True
+
+    def cancel_managed_entry(self, mode: TradingMode) -> ExchangeOperationResult:
+        self.pending_request_id = None
+        return ExchangeOperationResult(accepted=True, client_request_id="cancel", message_ar="تم إلغاء أمر الدخول المُدار.")
+
+    def close_managed_position(self, mode: TradingMode) -> ExchangeOperationResult:
+        self.position_quantity = Decimal("0")
+        self.protection_confirmed = True
+        return ExchangeOperationResult(accepted=True, client_request_id="close", message_ar="تم إغلاق المركز المُدار بالكامل.")
+
+    def ensure_protection(self, mode: TradingMode) -> ExchangeOperationResult:
+        self.protection_confirmed = self.position_quantity == 0 or self.protection_confirmed
+        return ExchangeOperationResult(accepted=self.protection_confirmed, client_request_id="protection", message_ar="تم التحقق من حماية المركز المُدار.")
+
+
 @dataclass(frozen=True)
 class GateIoV4Endpoints:
     """Deliberately explicit endpoints; Testnet/Live credentials stay in `.env`."""
