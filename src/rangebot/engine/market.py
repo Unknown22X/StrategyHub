@@ -53,9 +53,10 @@ class GatePublicMarketAdapter:
 
     @staticmethod
     def map_last_price(payload: dict[str, object]) -> PublicMarketSnapshot:
+        last_price = payload["last"] if "last" in payload else payload["last_price"]
         return PublicMarketSnapshot(
             symbol=str(payload.get("contract", payload["name"])),
-            last_price=Decimal(str(payload["last"])),
+            last_price=Decimal(str(last_price)),
             observed_at=datetime.now(UTC),
         )
 

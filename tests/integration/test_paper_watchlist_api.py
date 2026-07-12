@@ -127,6 +127,9 @@ def test_public_adapter_maps_only_domain_contract_and_price_fields() -> None:
     snapshot = GatePublicMarketAdapter.map_last_price(
         {"name": "BTC_USDT", "last": "101.25", "signature": "secret"}
     )
+    single_contract_snapshot = GatePublicMarketAdapter.map_last_price(
+        {"name": "ETH_USDT", "last_price": "202.50", "signature": "secret"}
+    )
 
     assert contracts == [
         PublicContract(
@@ -137,6 +140,8 @@ def test_public_adapter_maps_only_domain_contract_and_price_fields() -> None:
     ]
     assert snapshot.symbol == "BTC_USDT"
     assert snapshot.last_price == Decimal("101.25")
+    assert single_contract_snapshot.symbol == "ETH_USDT"
+    assert single_contract_snapshot.last_price == Decimal("202.50")
 
 
 def test_gate_public_provider_fetches_read_only_contract_rules_and_snapshot() -> None:
