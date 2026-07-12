@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 
+import httpx
 from fastapi.testclient import TestClient
 
 from rangebot.domain.market import PublicContract, PublicMarketSnapshot
@@ -106,15 +107,25 @@ def test_public_adapter_maps_only_domain_contract_and_price_fields() -> None:
                 "private_key": "must not escape",
             },
             {
-                "name": "BTC_USDC",
-                "settle": "usdc",
+                "name": "AAPLX_USDT",
+                "contract_type": "stocks",
                 "quanto_multiplier": "0.001",
+                "order_size_min": 1,
+            },
+            {
+                "name": "ZERO_USDT",
+                "quanto_multiplier": "0.001",
+                "order_size_min": 0,
+            },
+            {
+                "name": "币安人生_USDT",
+                "quanto_multiplier": "1",
                 "order_size_min": 1,
             },
         ]
     )
     snapshot = GatePublicMarketAdapter.map_last_price(
-        {"contract": "BTC_USDT", "last": "101.25", "signature": "secret"}
+        {"name": "BTC_USDT", "last": "101.25", "signature": "secret"}
     )
 
     assert contracts == [
@@ -126,3 +137,48 @@ def test_public_adapter_maps_only_domain_contract_and_price_fields() -> None:
     ]
     assert snapshot.symbol == "BTC_USDT"
     assert snapshot.last_price == Decimal("101.25")
+
+
+def test_gate_public_provider_fetches_read_only_contract_rules_and_snapshot() -> None:
+    from rangebot.engine.market import GatePublicMarketProvider
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/contracts/BTC_USDT"):
+            return httpx.Response(
+                200,
+                json={
+                    "name": "BTC_USDT",
+                    "in_delisting": False,
+                    "quanto_multiplier": "0.0001",
+                    "order_size_min": 1,
+                    "last": "101.25",
+                    "contract_type": "",
+                },
+            )
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "name": "BTC_USDT",
+                    "in_delisting": False,
+                    "quanto_multiplier": "0.0001",
+                    "order_size_min": 1,
+                    "last": "101.25",
+                    "contract_type": "",
+                }
+            ],
+        )
+
+    provider = GatePublicMarketProvider(
+        base_url="https://example.test/futures/usdt",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert provider.eligible_contracts() == [
+        PublicContract(
+            symbol="BTC_USDT",
+            quantity_step=Decimal("0.0001"),
+            minimum_quantity=Decimal("0.0001"),
+        )
+    ]
+    assert provider.snapshot("BTC_USDT").last_price == Decimal("101.25")

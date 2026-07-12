@@ -22,7 +22,9 @@ def test_range_details_render_arabic_condition_text() -> None:
         blocking_reasons=[],
         conditions=[
             ConditionDetail(
-                name="history", passed=True, arabic_explanation="السجل جاهز"
+                name="history",
+                passed=True,
+                arabic_explanation="السجل جاهز",
             )
         ],
     )

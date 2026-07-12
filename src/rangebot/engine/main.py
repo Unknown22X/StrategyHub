@@ -5,6 +5,7 @@ import argparse
 import uvicorn
 
 from rangebot.engine.api import create_app
+from rangebot.engine.market import GatePublicMarketProvider
 
 
 LOCALHOST = "127.0.0.1"
@@ -27,7 +28,9 @@ def main() -> None:
     if arguments.host != LOCALHOST:
         raise SystemExit("RangeBot engine API must bind to 127.0.0.1 only.")
     uvicorn.run(
-        create_app(arguments.database_url),
+        create_app(
+            arguments.database_url, public_market_provider=GatePublicMarketProvider()
+        ),
         host=LOCALHOST,
         port=arguments.port,
         log_level="warning",

@@ -1,6 +1,6 @@
 """Explainable Decimal-safe Paper range analysis."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Literal
 
@@ -125,16 +125,16 @@ def evaluate_range(
         ConditionDetail(
             name="long_proximity",
             passed=long_passed,
-            arabic_explanation="قرب الشراء صالح"
-            if long_passed
-            else "قرب الشراء غير صالح",
+            arabic_explanation=(
+                "قرب الشراء صالح" if long_passed else "قرب الشراء غير صالح"
+            ),
         ),
         ConditionDetail(
             name="short_proximity",
             passed=short_passed,
-            arabic_explanation="قرب البيع صالح"
-            if short_passed
-            else "قرب البيع غير صالح",
+            arabic_explanation=(
+                "قرب البيع صالح" if short_passed else "قرب البيع غير صالح"
+            ),
         ),
         ConditionDetail(
             name="direction",
@@ -148,16 +148,16 @@ def evaluate_range(
         ConditionDetail(
             name="long_direction",
             passed=long_eligible,
-            arabic_explanation="إشارة الشراء صالحة"
-            if long_eligible
-            else "إشارة الشراء غير صالحة",
+            arabic_explanation=(
+                "إشارة الشراء صالحة" if long_eligible else "إشارة الشراء غير صالحة"
+            ),
         ),
         ConditionDetail(
             name="short_direction",
             passed=short_eligible,
-            arabic_explanation="إشارة البيع صالحة"
-            if short_eligible
-            else "إشارة البيع غير صالحة",
+            arabic_explanation=(
+                "إشارة البيع صالحة" if short_eligible else "إشارة البيع غير صالحة"
+            ),
         ),
     ]
     if "conflicting_signals" in blocking_reasons:
@@ -224,9 +224,7 @@ def _select_candles(
     return selected, "ready"
 
 
-def _one_minute():
-    from datetime import timedelta
-
+def _one_minute() -> timedelta:
     return timedelta(minutes=1)
 
 
