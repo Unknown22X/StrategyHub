@@ -4,12 +4,13 @@ from datetime import UTC, datetime
 
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, Integer, Numeric, String, select
+from sqlalchemy import Boolean, DateTime, Integer, Numeric, String, func, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 from rangebot.domain.runtime import RuntimeState
 from rangebot.domain.paper import PaperAccountChange, PaperAccountSnapshot, PaperAuditEntry
+from rangebot.domain.market import PaperWatchlist, WatchlistItem
 
 
 class Base(DeclarativeBase):
@@ -225,3 +226,94 @@ class PaperAccountRepository:
             last_change_reason=record.last_change_reason,
             revision=record.revision,
         )
+
+
+class PaperWatchlistRecord(Base):
+    __tablename__ = "paper_watchlist"
+
+    symbol: Mapped[str] = mapped_column(String(64), primary_key=True)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+
+class PaperAutomationStateRecord(Base):
+    __tablename__ = "paper_automation_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    automatic_trading_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+
+class PaperWatchlistRepository:
+    """Stores manual Paper watchlist membership, never exchange state."""
+
+    MAXIMUM_SIZE = 20
+
+    def __init__(self, database_engine: Engine) -> None:
+        self._database_engine = database_engine
+
+    def add(self, symbol: str) -> None:
+        with Session(self._database_engine) as session:
+            if session.get(PaperWatchlistRecord, symbol) is not None:
+                return
+            count = session.scalar(select(func.count()).select_from(PaperWatchlistRecord))
+            if count >= self.MAXIMUM_SIZE:
+                raise ValueError("Paper watchlist is limited to 20 contracts.")
+            highest_priority = session.scalar(select(PaperWatchlistRecord.priority).order_by(PaperWatchlistRecord.priority.desc()).limit(1))
+            session.add(PaperWatchlistRecord(symbol=symbol, priority=(highest_priority or 0) + 1, is_active=False))
+            session.commit()
+
+    def remove(self, symbol: str) -> None:
+        with Session(self._database_engine) as session:
+            record = session.get(PaperWatchlistRecord, symbol)
+            if record is None:
+                raise LookupError("Paper contract is not watched.")
+            was_active = record.is_active
+            session.delete(record)
+            if was_active:
+                self._automation_state(session).automatic_trading_enabled = False
+            session.commit()
+
+    def set_active(self, symbol: str) -> None:
+        with Session(self._database_engine) as session:
+            selected = session.get(PaperWatchlistRecord, symbol)
+            if selected is None:
+                raise LookupError("Active Auto-Trading Coin must be watched first.")
+            changed = not selected.is_active
+            for record in session.scalars(select(PaperWatchlistRecord)):
+                record.is_active = record.symbol == symbol
+            if changed:
+                self._automation_state(session).automatic_trading_enabled = False
+            session.commit()
+
+    def start_automation(self) -> None:
+        with Session(self._database_engine) as session:
+            active = session.scalar(select(PaperWatchlistRecord).where(PaperWatchlistRecord.is_active))
+            if active is None:
+                raise ValueError("Select an Active Auto-Trading Coin before starting automation.")
+            self._automation_state(session).automatic_trading_enabled = True
+            session.commit()
+
+    def get(self) -> PaperWatchlist:
+        with Session(self._database_engine) as session:
+            records = session.scalars(select(PaperWatchlistRecord).order_by(PaperWatchlistRecord.priority))
+            return PaperWatchlist(
+                items=[
+                    WatchlistItem(
+                        symbol=record.symbol,
+                        priority=record.priority,
+                        is_active=record.is_active,
+                        monitoring_only=not record.is_active,
+                    )
+                    for record in records
+                ],
+                automatic_trading_enabled=self._automation_state(session).automatic_trading_enabled,
+            )
+
+    @staticmethod
+    def _automation_state(session: Session) -> PaperAutomationStateRecord:
+        state = session.get(PaperAutomationStateRecord, 1)
+        if state is None:
+            state = PaperAutomationStateRecord(id=1, automatic_trading_enabled=False)
+            session.add(state)
+            session.flush()
+        return state
