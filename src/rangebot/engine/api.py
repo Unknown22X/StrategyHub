@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Literal
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
 
@@ -57,6 +58,9 @@ from rangebot.domain.paper import (
 )
 from rangebot.domain.runtime import RuntimeState
 from rangebot.domain.exchange import (
+    ExchangeCloseRequest,
+    ExchangeEntryRequest,
+    ExchangeOperationResult,
     LiveActivationRequest,
     LiveEntryRequest,
     ModeState,
@@ -145,6 +149,8 @@ def create_app(
 
     @app.post("/v1/exchange/{mode}/emergency-stop", response_model=ModeState)
     def exchange_emergency_stop(mode: TradingMode) -> ModeState:
+        # Only adapter-owned pending entries may be cancelled; unmanaged state is never touched.
+        gate_adapter.cancel_managed_entry(mode)
         exchange_repository.set_emergency_stop(mode, True)
         return _exchange_state(mode)
 
@@ -165,13 +171,44 @@ def create_app(
 
     @app.post("/v1/live/entries", response_model=ModeState)
     def submit_live_entry(request: LiveEntryRequest) -> ModeState:
-        state = _exchange_state("live")
+        return _submit_exchange_entry("live", request)
+
+    @app.post("/v1/exchange/{mode}/entries", response_model=ModeState)
+    def submit_exchange_entry(mode: TradingMode, request: LiveEntryRequest) -> ModeState:
+        return _submit_exchange_entry(mode, request)
+
+    def _submit_exchange_entry(mode: TradingMode, request: LiveEntryRequest) -> ModeState:
+        state = _exchange_state(mode)
         if state.blocked_reasons_ar:
             raise HTTPException(status_code=409, detail=" ".join(state.blocked_reasons_ar))
-        if not request.protections_enabled and request.confirmation != "UNPROTECTED POSITION":
+        if mode == "live" and not request.protections_enabled and request.confirmation != "UNPROTECTED POSITION":
             raise HTTPException(status_code=422, detail="يلزم إدخال UNPROTECTED POSITION حرفياً.")
-        # Actual Gateway submission is intentionally unavailable until a configured adapter is injected.
-        raise HTTPException(status_code=503, detail="لم يُضبط Gate.io adapter للتنفيذ؛ لم يُرسل أي أمر.")
+        result = gate_adapter.submit_entry(
+            mode,
+            ExchangeEntryRequest(
+                symbol=request.symbol,
+                direction=request.direction,
+                order_type=request.order_type,
+                quantity=request.quantity,
+                client_request_id=str(uuid4()),
+                protections_enabled=request.protections_enabled,
+            ),
+        )
+        if not result.accepted:
+            raise HTTPException(status_code=503, detail=result.message_ar)
+        return _exchange_state(mode)
+
+    @app.post("/v1/exchange/{mode}/cancel-entry", response_model=ExchangeOperationResult)
+    def cancel_exchange_entry(mode: TradingMode) -> ExchangeOperationResult:
+        return gate_adapter.cancel_managed_entry(mode)
+
+    @app.post("/v1/exchange/{mode}/close", response_model=ExchangeOperationResult)
+    def close_exchange_position(
+        mode: TradingMode, request: ExchangeCloseRequest
+    ) -> ExchangeOperationResult:
+        if request.confirmation != "CLOSE POSITION":
+            raise HTTPException(status_code=422, detail="يلزم إدخال CLOSE POSITION حرفياً.")
+        return gate_adapter.close_managed_position(mode)
 
     @app.get("/health", response_model=RuntimeState)
     def health() -> RuntimeState:

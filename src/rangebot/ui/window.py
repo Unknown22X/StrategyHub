@@ -87,11 +87,17 @@ class RangeBotWindow(QWidget):
         self.connection_label = self._status_label("الاتصال: جارٍ التحقق")
         self.lifecycle_label = self._status_label("المحرك: —")
         self.mode_label = self._status_label("النمط: Paper")
+        self.mode_selector = QComboBox()
+        self.mode_selector.addItem("Paper", "paper")
+        self.mode_selector.addItem("Gate.io Testnet", "testnet")
+        self.mode_selector.addItem("Live (مقفل)", "live")
+        self.mode_selector.currentIndexChanged.connect(self._mode_changed)
         refresh = QPushButton("تحديث")
         refresh.clicked.connect(self.refresh_all)
         layout.addWidget(self.connection_label)
         layout.addWidget(self.lifecycle_label)
         layout.addWidget(self.mode_label)
+        layout.addWidget(self.mode_selector)
         layout.addWidget(refresh)
         return container
 
@@ -186,6 +192,17 @@ class RangeBotWindow(QWidget):
         layout = QVBoxLayout(page)
         layout.addWidget(QLabel("تستمر الحماية والمصالحة حتى عند إغلاق الواجهة. الإيقاف الطارئ يمنع كل دخول جديد بشكل دائم إلى أن يتم RESUME."))
         layout.addWidget(self._action_box("إجراءات الأمان", (("عرض المخاطر", self.load_risk), ("إيقاف طارئ", self.emergency_stop), ("استئناف التداول", self.resume_emergency), ("إغلاق طارئ", self.emergency_close))))
+        live_box = QGroupBox("تفعيل Live عالي الخطورة")
+        live_form = QFormLayout(live_box)
+        self.live_confirmation = QLineEdit()
+        self.live_confirmation.setPlaceholderText("اكتب LIVE بعد مراجعة جميع التحذيرات")
+        activate_live = QPushButton("تفعيل Live")
+        activate_live.clicked.connect(self.activate_live)
+        reconcile = QPushButton("تحديث مصالحة Testnet / Live")
+        reconcile.clicked.connect(self.reconcile_selected_exchange)
+        live_form.addRow("التأكيد", self.live_confirmation)
+        live_form.addRow(reconcile, activate_live)
+        layout.addWidget(live_box)
         self.risk_summary = QLabel("المخاطر اليومية: —")
         self.risk_summary.setObjectName("summaryPanel")
         layout.addWidget(self.risk_summary)
@@ -210,6 +227,16 @@ class RangeBotWindow(QWidget):
         self.is_connected = True
         self.connection_label.setText("الاتصال: متصل")
         self.lifecycle_label.setText(f"المحرك: \u2066{state.lifecycle}\u2069")
+
+    def _mode_changed(self) -> None:
+        mode = self.mode_selector.currentData()
+        self.mode_label.setText(f"النمط: {self.mode_selector.currentText()}")
+        if mode == "live":
+            self.warning_banner.setText("وضع Live مقفل. لا يمكن فك القفل إلا من المحرك بعد إدخال LIVE وفحوصات المصالحة الحالية.")
+        elif mode == "testnet":
+            self.warning_banner.setText("Testnet يستخدم نفس ضوابط الحماية. لا ترسل الواجهة أي أمر إلى Gate.io مباشرة.")
+        else:
+            self.warning_banner.setText("Paper منفصل عن حساب Gate.io ولا يستخدم أي بيانات اعتماد.")
 
     def refresh_all(self) -> None:
         self.refresh()
@@ -270,6 +297,16 @@ class RangeBotWindow(QWidget):
 
     def emergency_close(self) -> None:
         self._confirm("إغلاق طارئ", "سيفعّل المحرك الإيقاف الطارئ أولاً ثم يغلق الكمية المتبقية بعد المصالحة.", lambda: self.position_summary.setText("تم طلب الإغلاق الطارئ من المحرك."))
+
+    def reconcile_selected_exchange(self) -> None:
+        mode = self.mode_selector.currentData()
+        if mode == "paper":
+            self.warning_banner.setText("Paper لا يحتاج مصالحة Gate.io.")
+            return
+        self._request("post", f"/v1/exchange/{mode}/reconcile", success="تم طلب مصالحة آمنة من المحرك؛ راجع حالة المنع قبل أي إجراء.")
+
+    def activate_live(self) -> None:
+        self._confirm("تأكيد تفعيل Live", "لا يفعّل المحرك Live إلا عند صحة LIVE وفحوصات الحساب الحالية. أدخل النص المطلوب فقط إن كنت مفوضاً بذلك.", lambda: self._request("post", "/v1/live/activate", {"confirmation": self.live_confirmation.text()}, "تم إرسال طلب التفعيل إلى المحرك."))
 
     def load_audit(self) -> None:
         self._populate_operator("get", "/v1/paper-account/audit")

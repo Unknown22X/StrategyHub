@@ -27,6 +27,10 @@ class ExchangeSnapshot(BaseModel):
     market_ready: bool = False
     history_ready: bool = False
     protection_ready: bool = True
+    subscription_confirmed: bool = False
+    rest_snapshot_confirmed: bool = False
+    websocket_price_updates: int = 0
+    market_observed_at: datetime | None = None
 
 
 class ReconciliationRequest(BaseModel):
@@ -74,3 +78,29 @@ class LiveEntryRequest(BaseModel):
     quantity: Decimal = Field(gt=0)
     confirmation: str = ""
     protections_enabled: bool = True
+
+
+class ExchangeEntryRequest(BaseModel):
+    """Validated command passed only from the engine to an exchange adapter."""
+
+    symbol: str
+    direction: Literal["long", "short"]
+    order_type: Literal["market", "limit"] = "market"
+    quantity: Decimal = Field(gt=0)
+    client_request_id: str
+    limit_price: Decimal | None = None
+    protections_enabled: bool = True
+
+
+class ExchangeOperationResult(BaseModel):
+    """Sanitized result of a mocked or real managed exchange operation."""
+
+    accepted: bool
+    client_request_id: str
+    message_ar: str
+    order_id: str | None = None
+    pending_unknown: bool = False
+
+
+class ExchangeCloseRequest(BaseModel):
+    confirmation: str
