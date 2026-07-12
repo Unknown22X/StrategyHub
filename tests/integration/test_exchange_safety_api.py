@@ -31,6 +31,17 @@ def _ready_snapshot() -> dict[str, object]:
     }
 
 
+def _market_guard_payload() -> dict[str, object]:
+    now = datetime.now(UTC).isoformat()
+    return {
+        "direction": "long",
+        "quantity": "1",
+        "last_price": "100",
+        "last_price_observed_at": now,
+        "asks": [{"price": "100.1", "quantity": "1", "observed_at": now}],
+    }
+
+
 class FakeGateAdapter:
     def __init__(self, values: dict[str, object]) -> None:
         self.values = values
@@ -99,7 +110,7 @@ def test_live_high_risk_confirmations_and_entry_uses_only_injected_adapter(tmp_p
         client.post("/v1/live/activate", json={"confirmation": "LIVE"})
         rejected = client.post("/v1/live/protection", json={"protection": "sl", "enabled": False, "confirmation": "no"})
         unprotected = client.post("/v1/live/entries", json={"symbol": "BTC_USDT", "direction": "long", "quantity": "1", "protections_enabled": False})
-        adapter_missing = client.post("/v1/live/entries", json={"symbol": "BTC_USDT", "direction": "long", "quantity": "1", "protections_enabled": False, "confirmation": "UNPROTECTED POSITION"})
+        adapter_missing = client.post("/v1/live/entries", json={"symbol": "BTC_USDT", "direction": "long", "quantity": "1", "protections_enabled": False, "confirmation": "UNPROTECTED POSITION", "market_guard": _market_guard_payload()})
 
     assert rejected.status_code == 422
     assert unprotected.status_code == 422
@@ -122,7 +133,7 @@ def test_testnet_execution_uses_engine_generated_identity_and_managed_actions(tm
     adapter = FakeGateAdapter(_ready_snapshot())
     with TestClient(create_app(database_url, exchange_adapter=adapter)) as client:
         client.post("/v1/exchange/testnet/reconcile")
-        entry = client.post("/v1/exchange/testnet/entries", json={"symbol": "BTC_USDT", "direction": "long", "quantity": "1"})
+        entry = client.post("/v1/exchange/testnet/entries", json={"symbol": "BTC_USDT", "direction": "long", "quantity": "1", "market_guard": _market_guard_payload()})
         cancelled = client.post("/v1/exchange/testnet/cancel-entry")
         closed = client.post("/v1/exchange/testnet/close", json={"confirmation": "CLOSE POSITION"})
         protection = client.post("/v1/exchange/testnet/protection/check")
@@ -144,7 +155,7 @@ def test_testnet_entry_requires_fresh_reconnect_stages(tmp_path) -> None:
     adapter = FakeGateAdapter(stale)
     with TestClient(create_app(database_url, exchange_adapter=adapter)) as client:
         state = client.post("/v1/exchange/testnet/reconcile")
-        entry = client.post("/v1/exchange/testnet/entries", json={"symbol": "BTC_USDT", "direction": "long", "quantity": "1"})
+        entry = client.post("/v1/exchange/testnet/entries", json={"symbol": "BTC_USDT", "direction": "long", "quantity": "1", "market_guard": _market_guard_payload()})
 
     assert state.json()["can_enter"] is False
     assert entry.status_code == 409
@@ -158,11 +169,25 @@ def test_existing_exchange_position_blocks_new_entry_even_when_ready(tmp_path) -
         state = client.post("/v1/exchange/testnet/reconcile")
         entry = client.post(
             "/v1/exchange/testnet/entries",
-            json={"symbol": "BTC_USDT", "direction": "long", "quantity": "1"},
+            json={"symbol": "BTC_USDT", "direction": "long", "quantity": "1", "market_guard": _market_guard_payload()},
         )
 
     assert state.json()["can_enter"] is False
     assert entry.status_code == 409
+
+
+def test_market_entry_cannot_submit_without_guard_payload(tmp_path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
+    adapter = FakeGateAdapter(_ready_snapshot())
+    with TestClient(create_app(database_url, exchange_adapter=adapter)) as client:
+        client.post("/v1/exchange/testnet/reconcile")
+        response = client.post(
+            "/v1/exchange/testnet/entries",
+            json={"symbol": "BTC_USDT", "direction": "long", "quantity": "1"},
+        )
+
+    assert response.status_code == 409
+    assert adapter.submitted == []
 
 
 def test_gate_configuration_stays_engine_private_and_redacts_values(monkeypatch) -> None:
@@ -204,10 +229,14 @@ def test_mock_exchange_manages_partial_fill_protection_close_and_idempotency() -
     accepted = adapter.submit_entry("testnet", request)
     duplicate = adapter.submit_entry("testnet", request)
     adapter.apply_partial_fill(Decimal("1"))
+    protected_quantity = (adapter.take_profit_quantity, adapter.stop_loss_quantity)
     protected = adapter.ensure_protection("testnet")
     closed = adapter.close_managed_position("testnet")
 
     assert accepted.order_id == duplicate.order_id
+    assert protected_quantity == (Decimal("1"), Decimal("1"))
+    assert adapter.take_profit_quantity == Decimal("0")
+    assert adapter.stop_loss_quantity == Decimal("0")
     assert adapter.reconcile("testnet").position_quantity == 0
     assert protected.accepted is True
     assert closed.accepted is True

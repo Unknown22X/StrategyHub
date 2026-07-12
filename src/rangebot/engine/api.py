@@ -208,6 +208,12 @@ def create_app(
             raise HTTPException(status_code=409, detail=" ".join(state.blocked_reasons_ar))
         if mode == "live" and not request.protections_enabled and request.confirmation != "UNPROTECTED POSITION":
             raise HTTPException(status_code=422, detail="يلزم إدخال UNPROTECTED POSITION حرفياً.")
+        if request.order_type == "market":
+            if request.market_guard is None:
+                raise HTTPException(status_code=409, detail="يلزم فحص تنفيذ Market حديث قبل الإرسال.")
+            guard = guard_market_entry(request.market_guard)
+            if not guard.allowed:
+                raise HTTPException(status_code=409, detail=guard.reason_ar)
         exchange_request = ExchangeEntryRequest(
                 symbol=request.symbol,
                 direction=request.direction,

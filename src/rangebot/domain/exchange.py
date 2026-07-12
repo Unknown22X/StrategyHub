@@ -78,6 +78,7 @@ class LiveEntryRequest(BaseModel):
     quantity: Decimal = Field(gt=0)
     confirmation: str = ""
     protections_enabled: bool = True
+    market_guard: "MarketEntryGuardRequest | None" = None
 
 
 class ExchangeEntryRequest(BaseModel):
