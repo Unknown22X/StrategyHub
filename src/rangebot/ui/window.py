@@ -296,7 +296,11 @@ class RangeBotWindow(QWidget):
             self.position_summary.setText(f"الكمية: {result.get('quantity', '—')} | سعر الدخول: {result.get('entry_price', '—')}")
 
     def check_protection(self) -> None:
-        self.position_summary.setText("فحص الحماية يتم من المحرك عند وصول بيانات السوق الحديثة.")
+        mode = self.mode_selector.currentData()
+        if mode == "paper":
+            self.position_summary.setText("فحص الحماية يتم من محرك Paper عند وصول بيانات السوق الحديثة.")
+            return
+        self._request("post", f"/v1/exchange/{mode}/protection/check", success="تم طلب فحص الحماية المُدارة من المحرك.")
 
     def close_position(self) -> None:
         mode = self.mode_selector.currentData()

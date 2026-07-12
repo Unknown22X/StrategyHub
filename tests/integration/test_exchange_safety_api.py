@@ -34,6 +34,7 @@ class FakeGateAdapter:
         self.submitted: list[ExchangeEntryRequest] = []
         self.cancelled_modes: list[str] = []
         self.closed_modes: list[str] = []
+        self.protected_modes: list[str] = []
 
     def reconcile(self, mode: str) -> ExchangeSnapshot:
         return ExchangeSnapshot(mode=mode, reconciled_at=datetime.now(UTC), **self.values)  # type: ignore[arg-type]
@@ -49,6 +50,10 @@ class FakeGateAdapter:
     def close_managed_position(self, mode: str) -> ExchangeOperationResult:
         self.closed_modes.append(mode)
         return ExchangeOperationResult(accepted=True, client_request_id="close", message_ar="تم طلب الإغلاق المُدار.")
+
+    def ensure_protection(self, mode: str) -> ExchangeOperationResult:
+        self.protected_modes.append(mode)
+        return ExchangeOperationResult(accepted=True, client_request_id="protection", message_ar="تم تأكيد الحماية المُدارة.")
 
 
 def test_live_is_locked_until_exact_confirmation_and_ready_reconciliation(tmp_path) -> None:
@@ -117,14 +122,17 @@ def test_testnet_execution_uses_engine_generated_identity_and_managed_actions(tm
         entry = client.post("/v1/exchange/testnet/entries", json={"symbol": "BTC_USDT", "direction": "long", "quantity": "1"})
         cancelled = client.post("/v1/exchange/testnet/cancel-entry")
         closed = client.post("/v1/exchange/testnet/close", json={"confirmation": "CLOSE POSITION"})
+        protection = client.post("/v1/exchange/testnet/protection/check")
         client.post("/v1/exchange/testnet/emergency-stop")
 
     assert entry.status_code == 200
     assert adapter.submitted[0].client_request_id
     assert cancelled.status_code == 200
     assert closed.status_code == 200
+    assert protection.status_code == 200
     assert adapter.cancelled_modes == ["testnet", "testnet"]
     assert adapter.closed_modes == ["testnet"]
+    assert adapter.protected_modes == ["testnet"]
 
 
 def test_testnet_entry_requires_fresh_reconnect_stages(tmp_path) -> None:

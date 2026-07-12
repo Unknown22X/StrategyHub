@@ -167,7 +167,14 @@ def create_app(
             expected = "DISABLE TP" if request.protection == "tp" else "DISABLE SL"
             if request.confirmation != expected:
                 raise HTTPException(status_code=422, detail=f"يلزم إدخال {expected} حرفياً.")
+        result = gate_adapter.ensure_protection("live")
+        if not result.accepted:
+            raise HTTPException(status_code=503, detail=result.message_ar)
         return _exchange_state("live")
+
+    @app.post("/v1/exchange/{mode}/protection/check", response_model=ExchangeOperationResult)
+    def check_exchange_protection(mode: TradingMode) -> ExchangeOperationResult:
+        return gate_adapter.ensure_protection(mode)
 
     @app.post("/v1/live/entries", response_model=ModeState)
     def submit_live_entry(request: LiveEntryRequest) -> ModeState:

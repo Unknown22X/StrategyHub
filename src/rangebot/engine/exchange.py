@@ -32,6 +32,8 @@ class GateIoAdapter(Protocol):
 
     def close_managed_position(self, mode: TradingMode) -> ExchangeOperationResult: ...
 
+    def ensure_protection(self, mode: TradingMode) -> ExchangeOperationResult: ...
+
 
 class UnavailableGateIoAdapter:
     """Safe default: no exchange state is trusted until a real adapter is configured."""
@@ -56,6 +58,9 @@ class UnavailableGateIoAdapter:
 
     def close_managed_position(self, mode: TradingMode) -> ExchangeOperationResult:
         return self._unavailable("close-managed-position")
+
+    def ensure_protection(self, mode: TradingMode) -> ExchangeOperationResult:
+        return self._unavailable("ensure-protection")
 
     @staticmethod
     def _unavailable(client_request_id: str) -> ExchangeOperationResult:
@@ -160,6 +165,9 @@ class GateIoV4Adapter:
 
     def close_managed_position(self, mode: TradingMode) -> ExchangeOperationResult:
         return ExchangeOperationResult(accepted=False, client_request_id="close", message_ar="الإغلاق Gate.io يتطلب مصالحة كمية حديثة.")
+
+    def ensure_protection(self, mode: TradingMode) -> ExchangeOperationResult:
+        return ExchangeOperationResult(accepted=False, client_request_id="protection", message_ar="حماية Gate.io تتطلب بيانات تعبئة فعلية.")
 
     def _request(self, method: str, path: str, query: str, body: str) -> dict[str, Any]:
         if not self._allow_network or self._transport is None:
