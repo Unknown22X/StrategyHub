@@ -1,0 +1,1 @@
+"""RangeBot applications."""

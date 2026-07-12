@@ -1,0 +1,34 @@
+[project]
+name = "rangebot"
+version = "0.1.0"
+description = "RangeBot local engine and control UI"
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.14,<2",
+    "fastapi>=0.115,<1",
+    "httpx>=0.28,<1",
+    "pydantic>=2.10,<3",
+    "PySide6-Essentials>=6.8,<7",
+    "SQLAlchemy>=2.0,<3",
+    "uvicorn>=0.32,<1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3,<9",
+    "ruff>=0.8,<1",
+]
+
+[build-system]
+requires = ["hatchling>=1.26,<2"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rangebot"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
