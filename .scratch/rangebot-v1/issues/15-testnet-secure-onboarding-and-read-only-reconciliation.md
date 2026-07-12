@@ -4,7 +4,7 @@
 
 **Blocked by:** 13 — Paper profiles, audit log, and Help Center.
 
-**Status:** implemented with mocks — private signed adapter boundary and read-only reconciliation contract are covered; real credential validation remains external.
+**Status:** in progress — signed adapter boundary exists, but managed/unmanaged position and protection reconciliation remains incomplete.
 
 ## Acceptance criteria
 

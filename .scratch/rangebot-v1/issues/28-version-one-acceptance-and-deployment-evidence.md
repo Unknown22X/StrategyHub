@@ -4,7 +4,7 @@
 
 **Blocked by:** 21 — Testnet verification evidence; 27 — Live backup/restore operating procedure.
 
-**Status:** completed — implementation/mocked evidence is recorded; final external Testnet/Live validation is explicitly separate and pending operator authority.
+**Status:** in progress — acceptance evidence cannot close while Testnet/Live lifecycle tickets remain incomplete.
 
 ## Acceptance criteria
 

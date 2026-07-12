@@ -4,7 +4,7 @@
 
 **Blocked by:** 16 — Testnet market/account readiness gate.
 
-**Status:** implemented with mocks — engine-generated identity and guarded adapter submission are covered; external Testnet submission is intentionally not performed.
+**Status:** in progress — adapter submission contract exists, but persistent intent and liquidity/slippage safeguards remain incomplete.
 
 ## Acceptance criteria
 

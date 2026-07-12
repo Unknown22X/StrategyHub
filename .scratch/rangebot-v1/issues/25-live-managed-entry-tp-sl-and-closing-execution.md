@@ -4,7 +4,7 @@
 
 **Blocked by:** 18 — Testnet protection and managed closure; 19 — Testnet Limit Entry and partial-fill recovery; 20 — Testnet automatic trading, external changes, and recovery; 23 — Live activation and advisory readiness warning; 24 — Live high-risk confirmations and protection controls.
 
-**Status:** implemented with mocks — guarded entry, close, cancellation, and protection contracts are covered; real Live orders remain forbidden pending final validation.
+**Status:** in progress — guarded contracts exist, but complete managed lifecycle remains incomplete; real Live orders remain forbidden.
 
 ## Acceptance criteria
 

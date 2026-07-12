@@ -140,6 +140,17 @@ def create_app(
     def activate_live(request: LiveActivationRequest) -> ModeState:
         state = _exchange_state("live")
         non_lock_reasons = entry_blocks(state.snapshot, "testnet", False, state.emergency_stop)
+        try:
+            paper_state = paper_repository.get()
+        except LookupError:
+            paper_state = None
+        testnet_snapshot = exchange_repository.get_snapshot("testnet")
+        if paper_state is not None and (
+            paper_state.position_quantity != 0 or paper_state.pending_entry
+        ):
+            non_lock_reasons += ("يوجد نشاط Paper قائم؛ لا يمكن تفعيل Live.",)
+        if testnet_snapshot is not None and testnet_snapshot.position_quantity != 0:
+            non_lock_reasons += ("يوجد مركز Testnet قائم؛ لا يمكن تفعيل Live.",)
         if request.confirmation != "LIVE":
             raise HTTPException(status_code=422, detail="يلزم إدخال LIVE حرفياً.")
         if non_lock_reasons:

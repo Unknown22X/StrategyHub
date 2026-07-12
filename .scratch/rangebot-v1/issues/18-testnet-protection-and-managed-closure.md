@@ -4,7 +4,7 @@
 
 **Blocked by:** 17 — Testnet safe Manual Market Entry.
 
-**Status:** implemented with mocks — managed close and protection adapter controls are covered; real exchange confirmation remains external.
+**Status:** in progress — mock controls exist, but complete managed protection and close lifecycle remains incomplete.
 
 ## Acceptance criteria
 

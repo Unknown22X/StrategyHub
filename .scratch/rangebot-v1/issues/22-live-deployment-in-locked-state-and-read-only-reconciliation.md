@@ -4,7 +4,7 @@
 
 **Blocked by:** 20 — Testnet automatic trading, external changes, and recovery.
 
-**Status:** implemented with mocks — packages, durable Live Locked state, and adapter read-only contract are covered; Live read-only validation remains external.
+**Status:** in progress — packaging and Live Locked state are complete; full read-only reconciliation remains incomplete.
 
 ## Acceptance criteria
 

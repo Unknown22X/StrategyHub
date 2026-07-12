@@ -148,6 +148,20 @@ def test_testnet_entry_requires_fresh_reconnect_stages(tmp_path) -> None:
     assert adapter.submitted == []
 
 
+def test_existing_exchange_position_blocks_new_entry_even_when_ready(tmp_path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
+    adapter = FakeGateAdapter(_ready_snapshot() | {"position_quantity": "1"})
+    with TestClient(create_app(database_url, exchange_adapter=adapter)) as client:
+        state = client.post("/v1/exchange/testnet/reconcile")
+        entry = client.post(
+            "/v1/exchange/testnet/entries",
+            json={"symbol": "BTC_USDT", "direction": "long", "quantity": "1"},
+        )
+
+    assert state.json()["can_enter"] is False
+    assert entry.status_code == 409
+
+
 def test_gate_configuration_stays_engine_private_and_redacts_values(monkeypatch) -> None:
     monkeypatch.setenv("GATE_TESTNET_KEY", "abc-secret-key")
     monkeypatch.setenv("GATE_TESTNET_SECRET", "do-not-show")

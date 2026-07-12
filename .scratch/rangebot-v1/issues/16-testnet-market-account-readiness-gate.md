@@ -4,7 +4,7 @@
 
 **Blocked by:** 15 — Testnet secure onboarding and read-only reconciliation.
 
-**Status:** implemented with mocks — freshness, REST/subscription, and two-update reconnect gates are covered; real WebSocket validation remains external.
+**Status:** in progress — coarse freshness/reconnect gates exist, but full account/configuration validation remains incomplete.
 
 ## Acceptance criteria
 

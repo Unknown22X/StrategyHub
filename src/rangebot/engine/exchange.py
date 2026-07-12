@@ -143,7 +143,11 @@ class GateIoV4Adapter:
             available_futures_balance=str(account.get("available", "0")),
             position_quantity=str(position_quantity),
             managed_order_ids=tuple(str(item["id"]) for item in orders if str(item.get("text", "")).startswith("t-rangebot-")),
-            unmanaged_state=any(not str(item.get("text", "")).startswith("t-rangebot-") for item in orders),
+            unmanaged_state=bool(positions)
+            or any(
+                not str(item.get("text", "")).startswith("t-rangebot-")
+                for item in orders
+            ),
             one_way_confirmed=True,
             cross_margin_confirmed=True,
             leverage_confirmed=5,
@@ -192,6 +196,8 @@ def entry_blocks(snapshot: ExchangeSnapshot | None, mode: TradingMode, live_lock
         return tuple(reasons)
     if snapshot.unmanaged_state:
         reasons.append("توجد حالة Exchange غير مُدارة؛ عالجها في Gate.io ثم حدّث المصالحة.")
+    if snapshot.position_quantity != Decimal("0"):
+        reasons.append("يوجد مركز قائم؛ يمنع ذلك أي دخول جديد.")
     if snapshot.reconciliation_error:
         reasons.append("توجد مشكلة مصالحة تمنع الدخول الجديد.")
     if not snapshot.one_way_confirmed:
