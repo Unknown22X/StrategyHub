@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 
+from rangebot.domain.analysis import RangeAnalysisRequest, RangeAnalysisResult, evaluate_range
 from rangebot.domain.market import PaperWatchlist, PublicContract
 from rangebot.domain.paper import PaperAccountChange, PaperAccountSnapshot, PaperAuditEntry
 from rangebot.domain.runtime import RuntimeState
@@ -126,6 +127,12 @@ def create_app(
     @app.get("/v1/paper/watchlist", response_model=PaperWatchlist)
     def paper_watchlist() -> PaperWatchlist:
         return watchlist_repository.get()
+
+    @app.post(
+        "/v1/paper/range-analysis/evaluate", response_model=RangeAnalysisResult
+    )
+    def evaluate_paper_range(request: RangeAnalysisRequest) -> RangeAnalysisResult:
+        return evaluate_range(request.config, request.candles, request.last_price)
 
     return app
 
