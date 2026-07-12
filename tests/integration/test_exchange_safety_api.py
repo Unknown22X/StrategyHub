@@ -8,6 +8,7 @@ from rangebot.domain.exchange import (
     ExchangeSnapshot,
 )
 from rangebot.engine.api import create_app
+from rangebot.engine.exchange import GateIoConfiguration
 
 
 def _ready_snapshot() -> dict[str, object]:
@@ -137,3 +138,14 @@ def test_testnet_entry_requires_fresh_reconnect_stages(tmp_path) -> None:
     assert state.json()["can_enter"] is False
     assert entry.status_code == 409
     assert adapter.submitted == []
+
+
+def test_gate_configuration_stays_engine_private_and_redacts_values(monkeypatch) -> None:
+    monkeypatch.setenv("GATE_TESTNET_KEY", "abc-secret-key")
+    monkeypatch.setenv("GATE_TESTNET_SECRET", "do-not-show")
+
+    configuration = GateIoConfiguration.from_environment("testnet")
+
+    assert configuration.base_url.startswith("https://fx-api-testnet")
+    assert "do-not-show" not in configuration.redacted_description()
+    assert "abc-secret-key" not in configuration.redacted_description()

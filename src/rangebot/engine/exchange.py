@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+import os
 from typing import Protocol
 
 from rangebot.domain.exchange import (
@@ -66,6 +67,34 @@ class GateIoV4Endpoints:
 
     testnet_base_url: str = "https://fx-api-testnet.gateio.ws/api/v4"
     live_base_url: str = "https://api.gateio.ws/api/v4"
+
+
+@dataclass(frozen=True)
+class GateIoConfiguration:
+    """Private engine configuration; UI/API models never expose these values."""
+
+    mode: TradingMode
+    key: str
+    secret: str
+    base_url: str
+
+    @classmethod
+    def from_environment(cls, mode: TradingMode) -> "GateIoConfiguration":
+        prefix = "GATE_TESTNET" if mode == "testnet" else "GATE_LIVE"
+        key = os.environ.get(f"{prefix}_KEY", "")
+        secret = os.environ.get(f"{prefix}_SECRET", "")
+        if not key or not secret:
+            raise ValueError(f"{prefix} credentials are not configured.")
+        endpoints = GateIoV4Endpoints()
+        return cls(
+            mode=mode,
+            key=key,
+            secret=secret,
+            base_url=endpoints.testnet_base_url if mode == "testnet" else endpoints.live_base_url,
+        )
+
+    def redacted_description(self) -> str:
+        return f"{self.mode} Gate.io configuration ({self.key[:3]}…[REDACTED])"
 
 
 def entry_blocks(snapshot: ExchangeSnapshot | None, mode: TradingMode, live_locked: bool, emergency_stop: bool) -> tuple[str, ...]:
