@@ -26,6 +26,7 @@ def test_range_analysis_api_returns_all_condition_details(tmp_path) -> None:
                 "config": {"timeframe_minutes": 5},
                 "candles": candles,
                 "last_price": "100",
+                "evaluated_at": "2026-07-12T12:04:00Z",
             },
         )
 
@@ -38,4 +39,6 @@ def test_range_analysis_api_returns_all_condition_details(tmp_path) -> None:
         "long_proximity",
         "short_proximity",
     }
-    assert any("جاهز" in condition["arabic_explanation"] for condition in payload["conditions"])
+    assert any(
+        "جاهز" in condition["arabic_explanation"] for condition in payload["conditions"]
+    )

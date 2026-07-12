@@ -9,7 +9,11 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 from rangebot.domain.runtime import RuntimeState
-from rangebot.domain.paper import PaperAccountChange, PaperAccountSnapshot, PaperAuditEntry
+from rangebot.domain.paper import (
+    PaperAccountChange,
+    PaperAccountSnapshot,
+    PaperAuditEntry,
+)
 from rangebot.domain.market import PaperWatchlist, WatchlistItem
 
 
@@ -101,7 +105,9 @@ class PaperAccountRecord(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     starting_balance: Mapped[Decimal] = mapped_column(Numeric(24, 8), nullable=False)
-    available_futures_balance: Mapped[Decimal] = mapped_column(Numeric(24, 8), nullable=False)
+    available_futures_balance: Mapped[Decimal] = mapped_column(
+        Numeric(24, 8), nullable=False
+    )
     position_quantity: Mapped[Decimal] = mapped_column(Numeric(24, 8), nullable=False)
     pending_entry: Mapped[bool] = mapped_column(Boolean, nullable=False)
     protection_state: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -115,7 +121,9 @@ class PaperAccountAuditRecord(Base):
     __tablename__ = "paper_account_audit"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     action: Mapped[str] = mapped_column(String(64), nullable=False)
     reason: Mapped[str] = mapped_column(String(500), nullable=False)
 
@@ -151,7 +159,9 @@ class PaperAccountRepository:
             if existing.position_quantity != Decimal("0") or existing.pending_entry:
                 self._audit(session, "reset_rejected", change.reason)
                 session.commit()
-                raise RuntimeError("Paper Account has an open position or pending entry.")
+                raise RuntimeError(
+                    "Paper Account has an open position or pending entry."
+                )
             replacement = self._new_record(change, revision=existing.revision + 1)
             session.delete(existing)
             session.flush()
@@ -187,7 +197,9 @@ class PaperAccountRepository:
             session.commit()
 
     @staticmethod
-    def _new_record(change: PaperAccountChange, revision: int = 1) -> PaperAccountRecord:
+    def _new_record(
+        change: PaperAccountChange, revision: int = 1
+    ) -> PaperAccountRecord:
         return PaperAccountRecord(
             id=1,
             starting_balance=change.starting_balance,
@@ -234,6 +246,7 @@ class PaperWatchlistRecord(Base):
     symbol: Mapped[str] = mapped_column(String(64), primary_key=True)
     priority: Mapped[int] = mapped_column(Integer, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    direction: Mapped[str] = mapped_column(String(16), nullable=False, default="both")
 
 
 class PaperAutomationStateRecord(Base):
@@ -255,11 +268,24 @@ class PaperWatchlistRepository:
         with Session(self._database_engine) as session:
             if session.get(PaperWatchlistRecord, symbol) is not None:
                 return
-            count = session.scalar(select(func.count()).select_from(PaperWatchlistRecord))
+            count = session.scalar(
+                select(func.count()).select_from(PaperWatchlistRecord)
+            )
             if count >= self.MAXIMUM_SIZE:
                 raise ValueError("Paper watchlist is limited to 20 contracts.")
-            highest_priority = session.scalar(select(PaperWatchlistRecord.priority).order_by(PaperWatchlistRecord.priority.desc()).limit(1))
-            session.add(PaperWatchlistRecord(symbol=symbol, priority=(highest_priority or 0) + 1, is_active=False))
+            highest_priority = session.scalar(
+                select(PaperWatchlistRecord.priority)
+                .order_by(PaperWatchlistRecord.priority.desc())
+                .limit(1)
+            )
+            session.add(
+                PaperWatchlistRecord(
+                    symbol=symbol,
+                    priority=(highest_priority or 0) + 1,
+                    is_active=False,
+                    direction="both",
+                )
+            )
             session.commit()
 
     def remove(self, symbol: str) -> None:
@@ -285,17 +311,46 @@ class PaperWatchlistRepository:
                 self._automation_state(session).automatic_trading_enabled = False
             session.commit()
 
+    def set_priority(self, symbol: str, priority: int) -> None:
+        with Session(self._database_engine) as session:
+            record = session.get(PaperWatchlistRecord, symbol)
+            if record is None:
+                raise LookupError("Paper contract is not watched.")
+            record.priority = priority
+            session.commit()
+
+    def set_direction(self, symbol: str, direction: str) -> None:
+        with Session(self._database_engine) as session:
+            record = session.get(PaperWatchlistRecord, symbol)
+            if record is None:
+                raise LookupError("Paper contract is not watched.")
+            record.direction = direction
+            session.commit()
+
+    def direction_for(self, symbol: str) -> str:
+        with Session(self._database_engine) as session:
+            record = session.get(PaperWatchlistRecord, symbol)
+            if record is None:
+                raise LookupError("Paper contract is not watched.")
+            return record.direction
+
     def start_automation(self) -> None:
         with Session(self._database_engine) as session:
-            active = session.scalar(select(PaperWatchlistRecord).where(PaperWatchlistRecord.is_active))
+            active = session.scalar(
+                select(PaperWatchlistRecord).where(PaperWatchlistRecord.is_active)
+            )
             if active is None:
-                raise ValueError("Select an Active Auto-Trading Coin before starting automation.")
+                raise ValueError(
+                    "Select an Active Auto-Trading Coin before starting automation."
+                )
             self._automation_state(session).automatic_trading_enabled = True
             session.commit()
 
     def get(self) -> PaperWatchlist:
         with Session(self._database_engine) as session:
-            records = session.scalars(select(PaperWatchlistRecord).order_by(PaperWatchlistRecord.priority))
+            records = session.scalars(
+                select(PaperWatchlistRecord).order_by(PaperWatchlistRecord.priority)
+            )
             return PaperWatchlist(
                 items=[
                     WatchlistItem(
@@ -303,10 +358,13 @@ class PaperWatchlistRepository:
                         priority=record.priority,
                         is_active=record.is_active,
                         monitoring_only=not record.is_active,
+                        direction=record.direction,
                     )
                     for record in records
                 ],
-                automatic_trading_enabled=self._automation_state(session).automatic_trading_enabled,
+                automatic_trading_enabled=self._automation_state(
+                    session
+                ).automatic_trading_enabled,
             )
 
     @staticmethod

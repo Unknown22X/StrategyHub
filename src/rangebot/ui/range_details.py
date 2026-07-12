@@ -13,6 +13,11 @@ class RangeDecisionDetailsWidget(QWidget):
         super().__init__()
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         layout = QVBoxLayout(self)
+        status = "السجل جاهز" if result.history_status == "ready" else "السجل غير جاهز"
+        self.history_label = QLabel(status)
+        self.history_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.history_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        layout.addWidget(self.history_label)
         self.condition_labels: list[QLabel] = []
         for condition in result.conditions:
             status = "✓" if condition.passed else "✗"

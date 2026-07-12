@@ -49,10 +49,27 @@ def test_preview_rejects_minimum_quantity_and_invalid_allocation_option() -> Non
         raise AssertionError("Unsupported allocation percentage was accepted.")
 
 
+def test_preview_defaults_to_ten_percent_safety_reserve() -> None:
+    request = EntryPreviewRequest(
+        available_futures_balance=Decimal("1000"),
+        allocation_percentage=Decimal("25"),
+        leverage=1,
+        expected_entry_price=Decimal("100"),
+        quantity_step=Decimal("0.001"),
+        minimum_quantity=Decimal("0.001"),
+        direction="long",
+        quote_revision="quote-1",
+    )
+
+    assert create_entry_preview(request).safety_reserve == Decimal("100")
+
+
 @given(
     balance=st.decimals(min_value="1", max_value="100000", places=2),
     price=st.decimals(min_value="1", max_value="100000", places=2),
-    allocation=st.sampled_from([Decimal("25"), Decimal("50"), Decimal("75"), Decimal("100")]),
+    allocation=st.sampled_from(
+        [Decimal("25"), Decimal("50"), Decimal("75"), Decimal("100")]
+    ),
 )
 def test_sizing_never_exceeds_available_futures_balance(
     balance: Decimal, price: Decimal, allocation: Decimal

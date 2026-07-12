@@ -47,15 +47,53 @@ def test_current_gate_candle_requires_interval_boundary() -> None:
         RangeAnalysisConfig(mode="current_gate_candle", timeframe_minutes=5),
         [candle],
         Decimal("100"),
+        evaluated_at=datetime(2026, 7, 12, 12, 12, tzinfo=UTC),
     )
     invalid = evaluate_range(
         RangeAnalysisConfig(mode="current_gate_candle", timeframe_minutes=5),
-        [candle.model_copy(update={"opened_at": candle.opened_at + timedelta(minutes=1)})],
+        [
+            candle.model_copy(
+                update={"opened_at": candle.opened_at + timedelta(minutes=1)}
+            )
+        ],
         Decimal("100"),
+        evaluated_at=datetime(2026, 7, 12, 12, 12, tzinfo=UTC),
     )
 
     assert valid.history_status == "ready"
     assert invalid.history_status == "history_gap"
+
+
+def test_current_gate_candle_rejects_a_prior_interval() -> None:
+    candle = _candles(1, datetime(2026, 7, 12, 12, 5, tzinfo=UTC))[0]
+
+    result = evaluate_range(
+        RangeAnalysisConfig(mode="current_gate_candle", timeframe_minutes=5),
+        [candle],
+        Decimal("100"),
+        evaluated_at=datetime(2026, 7, 12, 12, 12, tzinfo=UTC),
+    )
+
+    assert result.history_status == "history_gap"
+
+
+def test_gate_candle_adapter_orders_normalized_candles() -> None:
+    from rangebot.engine.market import GatePublicMarketAdapter
+
+    candles = GatePublicMarketAdapter.map_candles(
+        [
+            {
+                "timestamp": 120,
+                "open": "100",
+                "high": "101",
+                "low": "99",
+                "close": "100",
+            },
+            {"timestamp": 60, "open": "99", "high": "100", "low": "98", "close": "99"},
+        ]
+    )
+
+    assert [candle.opened_at.minute for candle in candles] == [1, 2]
 
 
 def test_conflicting_long_and_short_signal_is_rejected() -> None:

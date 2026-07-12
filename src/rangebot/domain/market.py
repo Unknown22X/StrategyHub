@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -35,6 +36,7 @@ class WatchlistItem(BaseModel):
     priority: int
     is_active: bool
     monitoring_only: bool
+    direction: Literal["long_only", "short_only", "both"] = "both"
     last_price: Decimal | None = None
 
 

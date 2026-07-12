@@ -52,6 +52,8 @@ class RangeAnalysisRequest(BaseModel):
     config: RangeAnalysisConfig
     candles: list[Candle]
     last_price: Decimal = Field(gt=0)
+    evaluated_at: datetime | None = None
+    symbol: str | None = None
 
 
 class RangeAnalysisResult(BaseModel):
@@ -75,12 +77,17 @@ class RangeAnalysisResult(BaseModel):
 
 
 def evaluate_range(
-    config: RangeAnalysisConfig, candles: list[Candle], last_price: Decimal
+    config: RangeAnalysisConfig,
+    candles: list[Candle],
+    last_price: Decimal,
+    evaluated_at: datetime | None = None,
 ) -> RangeAnalysisResult:
     """Evaluate current Paper conditions with no float arithmetic or side effects."""
-    selected, history_status = _select_candles(config, candles)
+    selected, history_status = _select_candles(config, candles, evaluated_at)
     if history_status != "ready":
-        explanation = "السجل غير مكتمل" if history_status == "warming_up" else "فجوة في السجل"
+        explanation = (
+            "السجل غير مكتمل" if history_status == "warming_up" else "فجوة في السجل"
+        )
         return _blocked_history_result(history_status, explanation)
 
     opening_price = selected[0].open
@@ -94,7 +101,9 @@ def evaluate_range(
     short_proximity = ((high - last_price) / high) * Decimal("100")
     range_passed = _range_passes(config, range_percentage)
     long_passed = long_proximity >= 0 and long_proximity <= config.proximity_percentage
-    short_passed = short_proximity >= 0 and short_proximity <= config.proximity_percentage
+    short_passed = (
+        short_proximity >= 0 and short_proximity <= config.proximity_percentage
+    )
     long_eligible = range_passed and long_passed and config.direction != "short_only"
     short_eligible = range_passed and short_passed and config.direction != "long_only"
     blocking_reasons: list[str] = []
@@ -116,12 +125,16 @@ def evaluate_range(
         ConditionDetail(
             name="long_proximity",
             passed=long_passed,
-            arabic_explanation="قرب الشراء صالح" if long_passed else "قرب الشراء غير صالح",
+            arabic_explanation="قرب الشراء صالح"
+            if long_passed
+            else "قرب الشراء غير صالح",
         ),
         ConditionDetail(
             name="short_proximity",
             passed=short_passed,
-            arabic_explanation="قرب البيع صالح" if short_passed else "قرب البيع غير صالح",
+            arabic_explanation="قرب البيع صالح"
+            if short_passed
+            else "قرب البيع غير صالح",
         ),
         ConditionDetail(
             name="direction",
@@ -131,6 +144,20 @@ def evaluate_range(
                 if long_eligible or short_eligible
                 else "لا توجد إشارة دخول صالحة"
             ),
+        ),
+        ConditionDetail(
+            name="long_direction",
+            passed=long_eligible,
+            arabic_explanation="إشارة الشراء صالحة"
+            if long_eligible
+            else "إشارة الشراء غير صالحة",
+        ),
+        ConditionDetail(
+            name="short_direction",
+            passed=short_eligible,
+            arabic_explanation="إشارة البيع صالحة"
+            if short_eligible
+            else "إشارة البيع غير صالحة",
         ),
     ]
     if "conflicting_signals" in blocking_reasons:
@@ -160,24 +187,32 @@ def evaluate_range(
 
 
 def _select_candles(
-    config: RangeAnalysisConfig, candles: list[Candle]
+    config: RangeAnalysisConfig, candles: list[Candle], evaluated_at: datetime | None
 ) -> tuple[list[Candle], Literal["ready", "warming_up", "history_gap"]]:
     ordered = sorted(candles, key=lambda candle: candle.opened_at)
     if config.mode == "current_gate_candle":
-        if len(ordered) != 1:
+        if len(ordered) != 1 or evaluated_at is None:
             return [], "history_gap"
         candle = ordered[0]
         if candle.opened_at.second or candle.opened_at.microsecond:
             return [], "history_gap"
         if candle.opened_at.minute % config.timeframe_minutes:
             return [], "history_gap"
+        current_start = evaluated_at.replace(
+            minute=(evaluated_at.minute // config.timeframe_minutes)
+            * config.timeframe_minutes,
+            second=0,
+            microsecond=0,
+        )
+        if candle.opened_at != current_start:
+            return [], "history_gap"
         return ordered, "ready"
 
     required_count = TIMEFRAME_CANDLE_COUNTS[config.timeframe_minutes]
     if len(ordered) < required_count:
-        if len(ordered) > 1 and ordered[-1].opened_at - ordered[0].opened_at > _one_minute() * (
-            len(ordered) - 1
-        ):
+        if len(ordered) > 1 and ordered[-1].opened_at - ordered[
+            0
+        ].opened_at > _one_minute() * (len(ordered) - 1):
             return [], "history_gap"
         return [], "warming_up"
     selected = ordered[-required_count:]
@@ -196,16 +231,22 @@ def _one_minute():
 
 
 def _valid_candle(candle: Candle) -> bool:
-    return candle.low <= min(candle.open, candle.close) and candle.high >= max(
-        candle.open, candle.close
-    ) and candle.high >= candle.low
+    return (
+        candle.low <= min(candle.open, candle.close)
+        and candle.high >= max(candle.open, candle.close)
+        and candle.high >= candle.low
+    )
 
 
 def _range_passes(config: RangeAnalysisConfig, range_percentage: Decimal) -> bool:
     if config.range_mode == "exact":
         difference = abs(range_percentage - config.target_range_percentage)
         return difference <= config.tolerance_percentage_points
-    return config.minimum_range_percentage <= range_percentage <= config.maximum_range_percentage
+    return (
+        config.minimum_range_percentage
+        <= range_percentage
+        <= config.maximum_range_percentage
+    )
 
 
 def _blocked_history_result(

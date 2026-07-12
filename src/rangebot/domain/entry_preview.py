@@ -18,13 +18,12 @@ class EntryPreviewRequest(BaseModel):
 
     available_futures_balance: Decimal = Field(gt=0)
     allocation_percentage: Decimal
-    safety_reserve_percentage: Decimal = Field(default=Decimal("0"), ge=0, le=100)
+    safety_reserve_percentage: Decimal = Field(default=Decimal("10"), ge=0, le=100)
     leverage: Literal[1, 5, 10]
     expected_entry_price: Decimal = Field(gt=0)
     quantity_step: Decimal = Field(gt=0)
     minimum_quantity: Decimal = Field(gt=0)
-    entry_fee_rate: Decimal | None = Field(default=None, ge=0)
-    exit_fee_rate: Decimal | None = Field(default=None, ge=0)
+    taker_fee_rate: Decimal | None = Field(default=None, ge=0)
     direction: Literal["long", "short"]
     quote_revision: str = Field(min_length=1, max_length=200)
 
@@ -68,18 +67,28 @@ class PreviewValidationRequest(BaseModel):
 
 def create_entry_preview(request: EntryPreviewRequest) -> EntryPreview:
     """Calculate a conservative Paper sizing preview using Decimal throughout."""
-    entry_fee_rate = request.entry_fee_rate or FALLBACK_FEE_RATE
-    exit_fee_rate = request.exit_fee_rate or FALLBACK_FEE_RATE
+    entry_fee_rate = request.taker_fee_rate or FALLBACK_FEE_RATE
+    exit_fee_rate = entry_fee_rate
     fee_source: Literal["configured", "fallback"] = (
-        "configured" if request.entry_fee_rate is not None and request.exit_fee_rate is not None else "fallback"
+        "configured" if request.taker_fee_rate is not None else "fallback"
     )
-    reserve = request.available_futures_balance * request.safety_reserve_percentage / Decimal("100")
-    allocation_budget = (request.available_futures_balance - reserve) * request.allocation_percentage / Decimal("100")
+    reserve = (
+        request.available_futures_balance
+        * request.safety_reserve_percentage
+        / Decimal("100")
+    )
+    allocation_budget = (
+        (request.available_futures_balance - reserve)
+        * request.allocation_percentage
+        / Decimal("100")
+    )
     allocated_margin_before_rounding = allocation_budget / (
         Decimal("1") + Decimal(request.leverage) * (entry_fee_rate + exit_fee_rate)
     )
     raw_quantity = (
-        allocated_margin_before_rounding * Decimal(request.leverage) / request.expected_entry_price
+        allocated_margin_before_rounding
+        * Decimal(request.leverage)
+        / request.expected_entry_price
     )
     quantity = _round_down(raw_quantity, request.quantity_step)
     notional_value = quantity * request.expected_entry_price
@@ -128,7 +137,9 @@ def create_entry_preview(request: EntryPreviewRequest) -> EntryPreview:
     )
 
 
-def preview_is_current(preview: EntryPreview, current_request: EntryPreviewRequest) -> bool:
+def preview_is_current(
+    preview: EntryPreview, current_request: EntryPreviewRequest
+) -> bool:
     """Reject a confirmation if any preview safety input changed."""
     return preview.safety_fingerprint == _safety_fingerprint(current_request)
 
@@ -170,5 +181,7 @@ def _protection_preview(
 
 
 def _safety_fingerprint(request: EntryPreviewRequest) -> str:
-    serialized = json.dumps(request.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+    serialized = json.dumps(
+        request.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
+    )
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()

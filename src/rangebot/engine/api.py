@@ -3,10 +3,15 @@
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 
-from rangebot.domain.analysis import RangeAnalysisRequest, RangeAnalysisResult, evaluate_range
+from rangebot.domain.analysis import (
+    RangeAnalysisRequest,
+    RangeAnalysisResult,
+    evaluate_range,
+)
 from rangebot.domain.entry_preview import (
     EntryPreview,
     EntryPreviewRequest,
@@ -14,8 +19,13 @@ from rangebot.domain.entry_preview import (
     create_entry_preview,
     preview_is_current,
 )
-from rangebot.domain.market import PaperWatchlist, PublicContract
-from rangebot.domain.paper import PaperAccountChange, PaperAccountSnapshot, PaperAuditEntry
+from rangebot.domain.market import PaperWatchlist, PublicContract, WatchlistItem
+from pydantic import BaseModel, Field
+from rangebot.domain.paper import (
+    PaperAccountChange,
+    PaperAccountSnapshot,
+    PaperAuditEntry,
+)
 from rangebot.domain.runtime import RuntimeState
 from rangebot.engine.database import apply_migrations, create_database_engine
 from rangebot.engine.market import EmptyPublicMarketProvider, PublicMarketProvider
@@ -78,7 +88,9 @@ def create_app(
     @app.post("/v1/paper-account/reset", response_model=PaperAccountSnapshot)
     def reset_paper_account(change: PaperAccountChange) -> PaperAccountSnapshot:
         if change.confirmation != "RESET PAPER ACCOUNT":
-            raise HTTPException(status_code=422, detail="Explicit reset confirmation required.")
+            raise HTTPException(
+                status_code=422, detail="Explicit reset confirmation required."
+            )
         try:
             return paper_repository.reset(change)
         except LookupError as error:
@@ -101,8 +113,12 @@ def create_app(
 
     @app.post("/v1/paper/watchlist/{symbol}", status_code=204)
     def add_paper_watchlist_contract(symbol: str) -> None:
-        if symbol not in {contract.symbol for contract in market_provider.eligible_contracts()}:
-            raise HTTPException(status_code=404, detail="Eligible Paper contract not found.")
+        if symbol not in {
+            contract.symbol for contract in market_provider.eligible_contracts()
+        }:
+            raise HTTPException(
+                status_code=404, detail="Eligible Paper contract not found."
+            )
         try:
             watchlist_repository.add(symbol)
         except ValueError as error:
@@ -123,6 +139,26 @@ def create_app(
         except LookupError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
+    @app.patch("/v1/paper/watchlist/{symbol}/priority", response_model=PaperWatchlist)
+    def set_paper_watchlist_priority(
+        symbol: str, request: "PriorityRequest"
+    ) -> PaperWatchlist:
+        try:
+            watchlist_repository.set_priority(symbol, request.priority)
+            return _watchlist_with_prices(watchlist_repository.get(), market_provider)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.patch("/v1/paper/watchlist/{symbol}/direction", response_model=PaperWatchlist)
+    def set_paper_watchlist_direction(
+        symbol: str, request: "DirectionRequest"
+    ) -> PaperWatchlist:
+        try:
+            watchlist_repository.set_direction(symbol, request.direction)
+            return _watchlist_with_prices(watchlist_repository.get(), market_provider)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
     @app.post("/v1/paper/automatic-trading/start", status_code=200)
     def start_paper_automatic_trading() -> PaperWatchlist:
         try:
@@ -133,13 +169,26 @@ def create_app(
 
     @app.get("/v1/paper/watchlist", response_model=PaperWatchlist)
     def paper_watchlist() -> PaperWatchlist:
-        return watchlist_repository.get()
+        return _watchlist_with_prices(watchlist_repository.get(), market_provider)
 
-    @app.post(
-        "/v1/paper/range-analysis/evaluate", response_model=RangeAnalysisResult
-    )
+    @app.post("/v1/paper/range-analysis/evaluate", response_model=RangeAnalysisResult)
     def evaluate_paper_range(request: RangeAnalysisRequest) -> RangeAnalysisResult:
-        return evaluate_range(request.config, request.candles, request.last_price)
+        config = request.config
+        if request.symbol is not None:
+            try:
+                config = config.model_copy(
+                    update={
+                        "direction": watchlist_repository.direction_for(request.symbol)
+                    }
+                )
+            except LookupError as error:
+                raise HTTPException(status_code=404, detail=str(error)) from error
+        return evaluate_range(
+            config,
+            request.candles,
+            request.last_price,
+            request.evaluated_at,
+        )
 
     @app.post("/v1/paper/entry-preview", response_model=EntryPreview)
     def paper_entry_preview(request: EntryPreviewRequest) -> EntryPreview:
@@ -152,6 +201,27 @@ def create_app(
         return request.preview
 
     return app
+
+
+class PriorityRequest(BaseModel):
+    priority: int = Field(ge=1)
+
+
+class DirectionRequest(BaseModel):
+    direction: Literal["long_only", "short_only", "both"]
+
+
+def _watchlist_with_prices(
+    watchlist: PaperWatchlist, market_provider: PublicMarketProvider
+) -> PaperWatchlist:
+    items: list[WatchlistItem] = []
+    for item in watchlist.items:
+        try:
+            last_price = market_provider.snapshot(item.symbol).last_price
+        except LookupError:
+            last_price = None
+        items.append(item.model_copy(update={"last_price": last_price}))
+    return watchlist.model_copy(update={"items": items})
 
 
 async def _persist_heartbeats(

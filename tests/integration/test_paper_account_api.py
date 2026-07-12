@@ -48,7 +48,9 @@ def test_paper_account_reset_requires_confirmation_and_safe_state(tmp_path) -> N
     assert [entry["action"] for entry in audit.json()] == ["initialized", "reset"]
 
 
-def test_paper_account_persists_after_restart_and_rejects_unsafe_reset(tmp_path) -> None:
+def test_paper_account_persists_after_restart_and_rejects_unsafe_reset(
+    tmp_path,
+) -> None:
     database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
     app = create_app(database_url)
 

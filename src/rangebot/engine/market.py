@@ -5,6 +5,7 @@ from decimal import Decimal
 from typing import Protocol
 
 from rangebot.domain.market import PublicContract, PublicMarketSnapshot
+from rangebot.domain.analysis import Candle
 
 
 class PublicMarketProvider(Protocol):
@@ -31,6 +32,8 @@ class GatePublicMarketAdapter:
             )
             for payload in payloads
             if not bool(payload.get("in_delisting", False))
+            and str(payload.get("settle", "usdt")).lower() == "usdt"
+            and str(payload.get("contract_type", "perpetual")).lower() == "perpetual"
         ]
 
     @staticmethod
@@ -39,6 +42,25 @@ class GatePublicMarketAdapter:
             symbol=str(payload["contract"]),
             last_price=Decimal(str(payload["last"])),
             observed_at=datetime.now(UTC),
+        )
+
+    @staticmethod
+    def map_candles(payloads: list[dict[str, object]]) -> list[Candle]:
+        """Map only normalized candle fields and preserve chronological order."""
+        return sorted(
+            [
+                Candle(
+                    opened_at=datetime.fromtimestamp(
+                        int(str(payload["timestamp"])), UTC
+                    ),
+                    open=Decimal(str(payload["open"])),
+                    high=Decimal(str(payload["high"])),
+                    low=Decimal(str(payload["low"])),
+                    close=Decimal(str(payload["close"])),
+                )
+                for payload in payloads
+            ],
+            key=lambda candle: candle.opened_at,
         )
 
 

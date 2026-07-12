@@ -27,6 +27,8 @@ def test_entry_preview_widget_shows_paper_estimates_and_blocks() -> None:
     assert widget.layoutDirection() == Qt.LayoutDirection.RightToLeft
     assert "تقدير التصفية" in widget.liquidation_label.text()
     assert "TP" in widget.protection_label.text()
+    assert "الرصيد المتاح" in widget.budget_label.text()
+    assert "رسوم الدخول" in widget.fees_label.text()
 
     widget.close()
     application.quit()

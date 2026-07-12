@@ -30,7 +30,9 @@ class FakePublicMarketProvider:
         )
 
 
-def test_paper_watchlist_is_limited_and_active_change_stops_automation(tmp_path) -> None:
+def test_paper_watchlist_is_limited_and_active_change_stops_automation(
+    tmp_path,
+) -> None:
     database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
     app = create_app(database_url, public_market_provider=FakePublicMarketProvider())
 
@@ -42,10 +44,14 @@ def test_paper_watchlist_is_limited_and_active_change_stops_automation(tmp_path)
         client.post("/v1/paper/watchlist/BTC_USDT/active")
         client.post("/v1/paper/automatic-trading/start")
         changed = client.post("/v1/paper/watchlist/ETH_USDT/active")
+        priority = client.patch(
+            "/v1/paper/watchlist/BTC_USDT/priority", json={"priority": 0 + 1}
+        )
         watchlist = client.get("/v1/paper/watchlist")
 
     assert contracts.json()[0]["symbol"] == "BTC_USDT"
     assert changed.status_code == 200
+    assert priority.status_code == 200
     assert watchlist.json()["automatic_trading_enabled"] is False
     assert [item["symbol"] for item in watchlist.json()["items"]] == [
         "BTC_USDT",
@@ -53,6 +59,7 @@ def test_paper_watchlist_is_limited_and_active_change_stops_automation(tmp_path)
     ]
     assert watchlist.json()["items"][1]["is_active"] is True
     assert watchlist.json()["items"][0]["monitoring_only"] is True
+    assert watchlist.json()["items"][0]["last_price"] == "100"
 
 
 def test_public_adapter_maps_only_domain_contract_and_price_fields() -> None:
@@ -66,7 +73,13 @@ def test_public_adapter_maps_only_domain_contract_and_price_fields() -> None:
                 "quanto_multiplier": "0.001",
                 "order_size_min": 1,
                 "private_key": "must not escape",
-            }
+            },
+            {
+                "name": "BTC_USDC",
+                "settle": "usdc",
+                "quanto_multiplier": "0.001",
+                "order_size_min": 1,
+            },
         ]
     )
     snapshot = GatePublicMarketAdapter.map_last_price(
