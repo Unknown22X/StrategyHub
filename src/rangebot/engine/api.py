@@ -7,6 +7,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 
 from rangebot.domain.analysis import RangeAnalysisRequest, RangeAnalysisResult, evaluate_range
+from rangebot.domain.entry_preview import (
+    EntryPreview,
+    EntryPreviewRequest,
+    PreviewValidationRequest,
+    create_entry_preview,
+    preview_is_current,
+)
 from rangebot.domain.market import PaperWatchlist, PublicContract
 from rangebot.domain.paper import PaperAccountChange, PaperAccountSnapshot, PaperAuditEntry
 from rangebot.domain.runtime import RuntimeState
@@ -133,6 +140,16 @@ def create_app(
     )
     def evaluate_paper_range(request: RangeAnalysisRequest) -> RangeAnalysisResult:
         return evaluate_range(request.config, request.candles, request.last_price)
+
+    @app.post("/v1/paper/entry-preview", response_model=EntryPreview)
+    def paper_entry_preview(request: EntryPreviewRequest) -> EntryPreview:
+        return create_entry_preview(request)
+
+    @app.post("/v1/paper/entry-preview/validate", response_model=EntryPreview)
+    def validate_paper_entry_preview(request: PreviewValidationRequest) -> EntryPreview:
+        if not preview_is_current(request.preview, request.current_request):
+            raise HTTPException(status_code=409, detail="Paper Entry Preview is stale.")
+        return request.preview
 
     return app
 
