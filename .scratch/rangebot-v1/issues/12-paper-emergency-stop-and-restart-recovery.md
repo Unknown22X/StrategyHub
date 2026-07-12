@@ -4,7 +4,7 @@
 
 **Blocked by:** 08 — Paper close and cancellation controls; 10 — Paper Limit Entry lifecycle; 11 — Paper automatic Market Entry and Used Signals.
 
-**Status:** ready-for-agent
+**Status:** completed — manual/UAT pending final project verification.
 
 ## Acceptance criteria
 

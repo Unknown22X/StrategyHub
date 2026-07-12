@@ -29,6 +29,7 @@ from rangebot.domain.paper import (
     PaperAutomaticSignalRequest,
     PaperCloseRequest,
     PaperCloseResult,
+    PaperDirectionalResetRequest,
     PaperEmergencyState,
     PaperEmergencyStopRequest,
     PaperMarketEntryRequest,
@@ -411,10 +412,14 @@ def create_app(
         return paper_repository.used_signals()
 
     @app.post("/v1/paper/used-signals/{symbol}/{direction}/reset", response_model=list[PaperUsedSignal])
-    def reset_paper_signal(symbol: str, direction: str) -> list[PaperUsedSignal]:
+    def reset_paper_signal(
+        symbol: str, direction: str, request: PaperDirectionalResetRequest
+    ) -> list[PaperUsedSignal]:
         if direction not in {"long", "short"}:
             raise HTTPException(status_code=422, detail="Direction must be long or short.")
-        return paper_repository.directional_reset(_normalize_contract_symbol(symbol), direction)
+        return paper_repository.directional_reset(
+            _normalize_contract_symbol(symbol), direction, request
+        )
 
     @app.get("/v1/paper/emergency-stop", response_model=PaperEmergencyState)
     def paper_emergency_state() -> PaperEmergencyState:

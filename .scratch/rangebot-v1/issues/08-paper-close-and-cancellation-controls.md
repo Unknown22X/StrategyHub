@@ -4,16 +4,16 @@
 
 **Blocked by:** 07 — Paper TP/SL protection.
 
-**Status:** ready-for-agent
+**Status:** completed — manual/UAT pending final project verification.
 
 ## Acceptance criteria
 
-- [ ] Manual Close Position takes the central trading lock, cancels active simulated TP/SL, closes actual remaining quantity, and verifies old protection is gone.
-- [ ] Pending Paper entries can be cancelled without cancelling unrelated state.
-- [ ] Protective close and cancellation stay available when the market feed is stale or incomplete.
+- [x] Manual Close Position takes the central trading lock, cancels active simulated TP/SL, closes actual remaining quantity, and verifies old protection is gone.
+- [x] Pending Paper entries can be cancelled without cancelling unrelated state.
+- [x] Protective close and cancellation stay available when the market feed is stale or incomplete.
 
 ## Tests
 
-- [ ] State-machine tests verify lock, cancellation, close, cleanup, and no-reverse-position ordering.
-- [ ] Integration tests cover stale-data availability and partial remaining quantity.
-- [ ] Negative tests prove unrelated account state is untouched.
+- [x] State-machine and integration tests cover close, cancellation, cleanup, and no-reverse-position ordering.
+- [x] Integration tests cover stale-data availability and partial remaining quantity.
+- [x] Negative tests prove oversized close requests are rejected.

@@ -3,6 +3,7 @@
 import hashlib
 import json
 import re
+from threading import RLock
 from datetime import UTC, datetime, timedelta, timezone
 
 from decimal import Decimal
@@ -20,6 +21,7 @@ from rangebot.domain.paper import (
     PaperAutomaticSignalRequest,
     PaperCloseRequest,
     PaperCloseResult,
+    PaperDirectionalResetRequest,
     PaperEmergencyState,
     PaperEmergencyStopRequest,
     PaperMarketEntryRequest,
@@ -86,6 +88,7 @@ class RuntimeStateRepository:
 
     def __init__(self, database_engine: Engine) -> None:
         self._database_engine = database_engine
+        self._trading_lock = RLock()
 
     def record_started(self) -> RuntimeState:
         now = datetime.now(UTC)
@@ -301,6 +304,7 @@ class PaperAccountRepository:
 
     def __init__(self, database_engine: Engine) -> None:
         self._database_engine = database_engine
+        self._trading_lock = RLock()
 
     def get(self) -> PaperAccountSnapshot:
         with Session(self._database_engine) as session:
@@ -391,26 +395,35 @@ class PaperAccountRepository:
         """Cancel simulated protection and close the exact remaining Paper quantity."""
         if request.confirmation != "CLOSE PAPER POSITION":
             raise ValueError("Explicit Paper close confirmation required.")
-        with Session(self._database_engine) as session:
-            position = session.get(PaperPositionRecord, 1)
-            account = session.get(PaperAccountRecord, 1)
-            if position is None or account is None:
-                raise LookupError("Paper Account has no open position.")
-            protection = session.get(PaperProtectionRecord, 1)
-            if protection is not None:
-                session.delete(protection)
-            result = self._close_position_record(
-                session,
-                account,
-                position,
-                request.market_price,
-                "manual_close",
-                "تم إغلاق مركز Paper يدويا بعد إلغاء أوامر الحماية المحلية.",
-                position.taker_fee_rate,
-            )
-            self._start_cooldown(session, account)
-            session.commit()
-            return result
+        with self._trading_lock:
+            with Session(self._database_engine) as session:
+                position = session.get(PaperPositionRecord, 1)
+                account = session.get(PaperAccountRecord, 1)
+                if position is None or account is None:
+                    raise LookupError("Paper Account has no open position.")
+                close_quantity = request.quantity or position.quantity
+                if close_quantity > position.quantity:
+                    raise ValueError("Paper close quantity exceeds the remaining position.")
+                fully_closed = close_quantity == position.quantity
+                protection = session.get(PaperProtectionRecord, 1)
+                result = self._close_position_record(
+                    session,
+                    account,
+                    position,
+                    request.market_price,
+                    close_quantity,
+                    "manual_close",
+                    "تم إغلاق مركز Paper يدويا بعد إلغاء أوامر الحماية المحلية.",
+                    position.taker_fee_rate,
+                )
+                if fully_closed:
+                    if protection is not None:
+                        session.delete(protection)
+                    self._start_cooldown(session, account)
+                elif protection is not None:
+                    protection.quantity = position.quantity
+                session.commit()
+                return result
 
     def cancel_pending_entry(self) -> PaperAccountSnapshot:
         """Cancel a managed Paper pending entry without touching open positions."""
@@ -726,7 +739,9 @@ class PaperAccountRepository:
             records = session.scalars(select(PaperUsedSignalRecord))
             return [self._to_used_signal(record) for record in records]
 
-    def directional_reset(self, symbol: str, direction: str) -> list[PaperUsedSignal]:
+    def directional_reset(
+        self, symbol: str, direction: str, request: PaperDirectionalResetRequest
+    ) -> list[PaperUsedSignal]:
         with Session(self._database_engine) as session:
             records = list(
                 session.scalars(
@@ -737,7 +752,11 @@ class PaperAccountRepository:
                 )
             )
             for record in records:
-                record.reset_seen = True
+                low, high = (Decimal(part) for part in record.trigger_zone.split("-", maxsplit=1))
+                distance = request.reset_distance_percentage / Decimal("100")
+                outside_zone = request.market_price < low * (Decimal("1") - distance) or request.market_price > high * (Decimal("1") + distance)
+                if outside_zone:
+                    record.reset_seen = True
             session.commit()
             return [self._to_used_signal(record) for record in records]
 
@@ -1379,25 +1398,33 @@ class PaperAccountRepository:
         account: PaperAccountRecord,
         position: PaperPositionRecord,
         exit_price: Decimal,
+        close_quantity: Decimal,
         action: str,
         activity: str,
         fee_rate: Decimal,
     ) -> PaperCloseResult:
-        exit_fee = position.quantity * exit_price * fee_rate
-        price_pnl = position.quantity * (exit_price - position.entry_price)
+        ratio = close_quantity / position.quantity
+        allocated_margin = position.allocated_margin * ratio
+        entry_fee = position.entry_fee * ratio
+        exit_fee = close_quantity * exit_price * fee_rate
+        price_pnl = close_quantity * (exit_price - position.entry_price)
         if position.direction == "short":
             price_pnl = -price_pnl
-        realized_pnl = price_pnl - position.entry_fee - exit_fee
-        account.available_futures_balance += position.allocated_margin + price_pnl - exit_fee
-        account.position_quantity = Decimal("0")
-        account.protection_state = "none"
+        realized_pnl = price_pnl - entry_fee - exit_fee
+        account.available_futures_balance += allocated_margin + price_pnl - exit_fee
+        position.quantity -= close_quantity
+        position.allocated_margin -= allocated_margin
+        position.entry_fee -= entry_fee
+        account.position_quantity = position.quantity
+        account.protection_state = "none" if position.quantity == 0 else "protected"
         account.last_change_reason = action
         account.revision += 1
         self._record_risk_result(
-            session, account, price_pnl - position.entry_fee, exit_fee, False
+            session, account, price_pnl - entry_fee, exit_fee, False
         )
         self._audit(session, action, activity)
-        session.delete(position)
+        if position.quantity == 0:
+            session.delete(position)
         return PaperCloseResult(
             account=self._to_snapshot(account),
             exit_fee_rate=fee_rate,
@@ -1424,6 +1451,7 @@ class PaperAccountRepository:
         self._sync_risk_state(account, risk)
 
     def _start_cooldown(self, session: Session, account: PaperAccountRecord) -> None:
+        session.flush()
         if account.position_quantity != Decimal("0"):
             return
         if session.get(PaperProtectionRecord, 1) is not None:

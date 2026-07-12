@@ -4,7 +4,7 @@
 
 **Blocked by:** 12 — Paper Emergency Stop and restart recovery.
 
-**Status:** ready-for-agent
+**Status:** completed — manual/UAT pending final project verification.
 
 ## Acceptance criteria
 

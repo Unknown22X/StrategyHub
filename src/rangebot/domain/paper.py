@@ -125,6 +125,7 @@ class PaperProtectionTriggerResult(BaseModel):
 class PaperCloseRequest(BaseModel):
     market_price: Decimal = Field(gt=0)
     confirmation: str
+    quantity: Decimal | None = Field(default=None, gt=0)
 
 
 class PaperCloseResult(BaseModel):
@@ -229,6 +230,11 @@ class PaperUsedSignal(BaseModel):
     trigger_zone: str
     used_at: datetime
     reset_seen: bool
+
+
+class PaperDirectionalResetRequest(BaseModel):
+    market_price: Decimal = Field(gt=0)
+    reset_distance_percentage: Decimal = Field(default=Decimal("1"), gt=0)
 
 
 class PaperEmergencyStopRequest(BaseModel):

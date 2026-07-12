@@ -4,7 +4,7 @@
 
 **Blocked by:** 13 — Paper profiles, audit log, and Help Center.
 
-**Status:** ready-for-agent
+**Status:** completed — manual/UAT pending final project verification.
 
 ## Acceptance criteria
 
