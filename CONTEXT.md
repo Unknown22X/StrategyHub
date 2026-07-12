@@ -15,6 +15,10 @@ _Avoid_: Demo account, virtual Gate.io account
 The user-selected USDT balance from which a new or reset Paper Account begins.
 _Avoid_: Real balance, Gate.io balance
 
+**Paper Fee Schedule**:
+Persistent local Maker and Taker fee rates used only for Paper Trading. Both
+default to 0.10%; no real Gate.io account is queried, displayed, or changed.
+
 **Available Futures Balance**:
 The USDT balance currently available to fund a new futures trade before the
 safety reserve, allocation percentage, and estimated round-trip fees are

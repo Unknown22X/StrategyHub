@@ -343,6 +343,9 @@ Quantity must be calculated from the expected entry price, rounded according to 
 * Use Taker fees for both entry and exit when sizing conservatively.
 * Fallback Maker rate: 0.10% per side.
 * Fallback Taker rate: 0.10% per side.
+* Paper Trading persists its own local Maker/Taker fee schedule, initially
+  0.10% for each rate. It must never query, display, use, or alter a real
+  Gate.io account to obtain Paper fee rates.
 
 ### Daily limits
 

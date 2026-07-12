@@ -4,7 +4,7 @@
 
 **Blocked by:** 05 — Paper entry preview and Allocation Budget.
 
-**Status:** ready-for-agent
+**Status:** completed
 
 ## Acceptance criteria
 

@@ -4,7 +4,14 @@
 
 **Blocked by:** 06 — Paper manual Market Entry.
 
-**Status:** ready-for-agent
+**Status:** completed
+
+## Approved Paper fee model
+
+Paper persists an isolated local fee schedule. Maker and Taker rates default to
+0.10%, are validated as non-negative Decimal rates, and are never obtained from
+or applied to a real Gate.io account. TP uses Maker; Market entry and SL use
+Taker. Future Paper Limit fills use Maker unless marketable.
 
 ## Acceptance criteria
 

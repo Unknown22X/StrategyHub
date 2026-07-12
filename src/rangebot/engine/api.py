@@ -25,6 +25,34 @@ from rangebot.domain.paper import (
     PaperAccountChange,
     PaperAccountSnapshot,
     PaperAuditEntry,
+    PaperAutomaticLimitRequest,
+    PaperAutomaticSignalRequest,
+    PaperCloseRequest,
+    PaperCloseResult,
+    PaperEmergencyState,
+    PaperEmergencyStopRequest,
+    PaperMarketEntryRequest,
+    PaperMarketEntryResult,
+    PaperLimitCheck,
+    PaperLimitCheckResult,
+    PaperLimitEntryRequest,
+    PaperPendingEntry,
+    PaperPosition,
+    PaperProfile,
+    PaperProfileApplyResult,
+    PaperProfileChange,
+    PaperProtection,
+    PaperProtectionCheck,
+    PaperProtectionTriggerResult,
+    PaperFeeSchedule,
+    PaperResumeRequest,
+    PaperRiskAdjustment,
+    PaperRiskSettings,
+    PaperRiskSnapshot,
+    PaperUsedSignal,
+    PaperVerificationRecord,
+    PaperVerificationRequest,
+    PaperHelpTopic,
 )
 from rangebot.domain.runtime import RuntimeState
 from rangebot.engine.database import apply_migrations, create_database_engine
@@ -171,7 +199,10 @@ def create_app(
     @app.post("/v1/paper/automatic-trading/start", status_code=200)
     def start_paper_automatic_trading() -> PaperWatchlist:
         try:
+            if paper_repository.emergency_state().active:
+                raise ValueError("Paper Emergency Stop blocks automatic trading.")
             watchlist_repository.start_automation()
+            paper_repository.confirm_automatic_restart()
             return watchlist_repository.get()
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
@@ -210,6 +241,265 @@ def create_app(
         if not preview_is_current(request.preview, request.current_request):
             raise HTTPException(status_code=409, detail="Paper Entry Preview is stale.")
         return request.preview
+
+    @app.post("/v1/paper/market-entry", response_model=PaperMarketEntryResult)
+    def paper_market_entry(request: PaperMarketEntryRequest) -> PaperMarketEntryResult:
+        try:
+            return paper_repository.enter_market(request)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except RuntimeError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.get("/v1/paper/position", response_model=PaperPosition)
+    def paper_position() -> PaperPosition:
+        try:
+            return paper_repository.position()
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.get("/v1/paper/position/protection", response_model=PaperProtection)
+    def paper_protection() -> PaperProtection:
+        try:
+            return paper_repository.protection()
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.get("/v1/paper/fee-schedule", response_model=PaperFeeSchedule)
+    def paper_fee_schedule() -> PaperFeeSchedule:
+        return paper_repository.fee_schedule()
+
+    @app.put("/v1/paper/fee-schedule", response_model=PaperFeeSchedule)
+    def update_paper_fee_schedule(schedule: PaperFeeSchedule) -> PaperFeeSchedule:
+        return paper_repository.update_fee_schedule(schedule)
+
+    @app.post(
+        "/v1/paper/position/protection/check", response_model=PaperProtectionTriggerResult
+    )
+    def check_paper_protection(
+        request: PaperProtectionCheck,
+    ) -> PaperProtectionTriggerResult:
+        try:
+            return paper_repository.check_protection(request)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.post("/v1/paper/position/close", response_model=PaperCloseResult)
+    def close_paper_position(request: PaperCloseRequest) -> PaperCloseResult:
+        try:
+            return paper_repository.close_position(request)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except (RuntimeError, ValueError) as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.delete("/v1/paper/pending-entry", response_model=PaperAccountSnapshot)
+    def cancel_paper_pending_entry() -> PaperAccountSnapshot:
+        try:
+            return paper_repository.cancel_pending_entry()
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.get("/v1/paper/pending-entry", response_model=PaperPendingEntry)
+    def paper_pending_entry() -> PaperPendingEntry:
+        try:
+            return paper_repository.pending_entry()
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.post("/v1/paper/limit-entry", response_model=PaperLimitCheckResult)
+    def create_paper_limit_entry(request: PaperLimitEntryRequest) -> PaperLimitCheckResult:
+        try:
+            return paper_repository.create_limit_entry(request)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except RuntimeError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.post("/v1/paper/limit-entry/check", response_model=PaperLimitCheckResult)
+    def check_paper_limit_entry(request: PaperLimitCheck) -> PaperLimitCheckResult:
+        try:
+            return paper_repository.check_limit_entry(request)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.get("/v1/paper/risk", response_model=PaperRiskSnapshot)
+    def paper_risk() -> PaperRiskSnapshot:
+        try:
+            return paper_repository.risk_snapshot()
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.put("/v1/paper/risk/settings", response_model=PaperRiskSnapshot)
+    def update_paper_risk(settings: PaperRiskSettings) -> PaperRiskSnapshot:
+        try:
+            return paper_repository.update_risk_settings(settings)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.post("/v1/paper/risk/adjust", response_model=PaperRiskSnapshot)
+    def adjust_paper_risk(adjustment: PaperRiskAdjustment) -> PaperRiskSnapshot:
+        try:
+            return paper_repository.adjust_risk(adjustment)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.post("/v1/paper/automatic-market-entry", response_model=PaperMarketEntryResult)
+    def automatic_paper_market_entry(
+        request: PaperAutomaticSignalRequest,
+    ) -> PaperMarketEntryResult:
+        watchlist = watchlist_repository.get()
+        normalized_symbol = _normalize_contract_symbol(request.symbol)
+        active = next((item for item in watchlist.items if item.is_active), None)
+        if (
+            not watchlist.automatic_trading_enabled
+            or active is None
+            or active.symbol != normalized_symbol
+            or paper_repository.emergency_state().automatic_trading_requires_restart
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Automatic Paper trading requires the active contract and explicit start.",
+            )
+        try:
+            return paper_repository.automatic_market_entry(
+                request.model_copy(update={"symbol": normalized_symbol})
+            )
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except RuntimeError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.post("/v1/paper/automatic-limit-entry", response_model=PaperLimitCheckResult)
+    def automatic_paper_limit_entry(
+        request: PaperAutomaticLimitRequest,
+    ) -> PaperLimitCheckResult:
+        watchlist = watchlist_repository.get()
+        normalized_symbol = _normalize_contract_symbol(request.symbol)
+        active = next((item for item in watchlist.items if item.is_active), None)
+        if (
+            not watchlist.automatic_trading_enabled
+            or active is None
+            or active.symbol != normalized_symbol
+            or paper_repository.emergency_state().automatic_trading_requires_restart
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Automatic Paper trading requires the active contract and explicit start.",
+            )
+        try:
+            return paper_repository.automatic_limit_entry(
+                request.model_copy(update={"symbol": normalized_symbol})
+            )
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except RuntimeError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.get("/v1/paper/used-signals", response_model=list[PaperUsedSignal])
+    def paper_used_signals() -> list[PaperUsedSignal]:
+        return paper_repository.used_signals()
+
+    @app.post("/v1/paper/used-signals/{symbol}/{direction}/reset", response_model=list[PaperUsedSignal])
+    def reset_paper_signal(symbol: str, direction: str) -> list[PaperUsedSignal]:
+        if direction not in {"long", "short"}:
+            raise HTTPException(status_code=422, detail="Direction must be long or short.")
+        return paper_repository.directional_reset(_normalize_contract_symbol(symbol), direction)
+
+    @app.get("/v1/paper/emergency-stop", response_model=PaperEmergencyState)
+    def paper_emergency_state() -> PaperEmergencyState:
+        return paper_repository.emergency_state()
+
+    @app.post("/v1/paper/emergency-stop", response_model=PaperEmergencyState)
+    def emergency_stop(request: PaperEmergencyStopRequest) -> PaperEmergencyState:
+        try:
+            state = paper_repository.activate_emergency_stop(request)
+            watchlist_repository.stop_automation()
+            return state
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.post("/v1/paper/emergency-stop/resume", response_model=PaperEmergencyState)
+    def resume_paper_trading(request: PaperResumeRequest) -> PaperEmergencyState:
+        try:
+            state = paper_repository.resume_after_emergency(request)
+            watchlist_repository.stop_automation()
+            return state
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.post("/v1/paper/emergency-close", response_model=PaperCloseResult)
+    def emergency_close_paper_position(request: PaperCloseRequest) -> PaperCloseResult:
+        try:
+            return paper_repository.emergency_close_position(request)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.get("/v1/paper/profiles", response_model=list[PaperProfile])
+    def paper_profiles() -> list[PaperProfile]:
+        return paper_repository.profiles()
+
+    @app.post("/v1/paper/profiles", response_model=PaperProfile)
+    def save_paper_profile(change: PaperProfileChange) -> PaperProfile:
+        return paper_repository.save_profile(change)
+
+    @app.post("/v1/paper/profiles/{profile_id}/duplicate", response_model=PaperProfile)
+    def duplicate_paper_profile(profile_id: int, change: PaperProfileChange) -> PaperProfile:
+        try:
+            return paper_repository.duplicate_profile(profile_id, change)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.put("/v1/paper/profiles/{profile_id}", response_model=PaperProfile)
+    def update_paper_profile(profile_id: int, change: PaperProfileChange) -> PaperProfile:
+        try:
+            return paper_repository.update_profile(profile_id, change)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.delete("/v1/paper/profiles/{profile_id}", status_code=204)
+    def delete_paper_profile(profile_id: int) -> None:
+        try:
+            paper_repository.delete_profile(profile_id)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.post("/v1/paper/profiles/{profile_id}/apply", response_model=PaperProfileApplyResult)
+    def apply_paper_profile(
+        profile_id: int, change: PaperProfileChange
+    ) -> PaperProfileApplyResult:
+        try:
+            return paper_repository.apply_profile(profile_id, change)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.get("/v1/paper/help", response_model=list[PaperHelpTopic])
+    def paper_help() -> list[PaperHelpTopic]:
+        return paper_repository.help_topics()
+
+    @app.post("/v1/paper/verification", response_model=PaperVerificationRecord)
+    def record_paper_verification(
+        request: PaperVerificationRequest,
+    ) -> PaperVerificationRecord:
+        return paper_repository.record_verification(request)
+
+    @app.get("/v1/paper/verification", response_model=PaperVerificationRecord)
+    def paper_verification() -> PaperVerificationRecord:
+        return paper_repository.verification()
 
     return app
 
