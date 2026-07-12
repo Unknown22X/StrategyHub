@@ -111,51 +111,60 @@ def create_app(
             if normalized_query in contract.symbol
         ]
 
-    @app.post("/v1/paper/watchlist/{symbol}", status_code=204)
+    @app.post("/v1/paper/watchlist/{symbol:path}/active", status_code=200)
+    def set_active_paper_contract(symbol: str) -> PaperWatchlist:
+        normalized_symbol = _normalize_contract_symbol(symbol)
+        try:
+            watchlist_repository.set_active(normalized_symbol)
+            return watchlist_repository.get()
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.patch(
+        "/v1/paper/watchlist/{symbol:path}/priority", response_model=PaperWatchlist
+    )
+    def set_paper_watchlist_priority(
+        symbol: str, request: "PriorityRequest"
+    ) -> PaperWatchlist:
+        normalized_symbol = _normalize_contract_symbol(symbol)
+        try:
+            watchlist_repository.set_priority(normalized_symbol, request.priority)
+            return _watchlist_with_prices(watchlist_repository.get(), market_provider)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.patch(
+        "/v1/paper/watchlist/{symbol:path}/direction", response_model=PaperWatchlist
+    )
+    def set_paper_watchlist_direction(
+        symbol: str, request: "DirectionRequest"
+    ) -> PaperWatchlist:
+        normalized_symbol = _normalize_contract_symbol(symbol)
+        try:
+            watchlist_repository.set_direction(normalized_symbol, request.direction)
+            return _watchlist_with_prices(watchlist_repository.get(), market_provider)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.post("/v1/paper/watchlist/{symbol:path}", status_code=204)
     def add_paper_watchlist_contract(symbol: str) -> None:
-        if symbol not in {
+        normalized_symbol = _normalize_contract_symbol(symbol)
+        if normalized_symbol not in {
             contract.symbol for contract in market_provider.eligible_contracts()
         }:
             raise HTTPException(
                 status_code=404, detail="Eligible Paper contract not found."
             )
         try:
-            watchlist_repository.add(symbol)
+            watchlist_repository.add(normalized_symbol)
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
-    @app.delete("/v1/paper/watchlist/{symbol}", status_code=204)
+    @app.delete("/v1/paper/watchlist/{symbol:path}", status_code=204)
     def remove_paper_watchlist_contract(symbol: str) -> None:
+        normalized_symbol = _normalize_contract_symbol(symbol)
         try:
-            watchlist_repository.remove(symbol)
-        except LookupError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-
-    @app.post("/v1/paper/watchlist/{symbol}/active", status_code=200)
-    def set_active_paper_contract(symbol: str) -> PaperWatchlist:
-        try:
-            watchlist_repository.set_active(symbol)
-            return watchlist_repository.get()
-        except LookupError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-
-    @app.patch("/v1/paper/watchlist/{symbol}/priority", response_model=PaperWatchlist)
-    def set_paper_watchlist_priority(
-        symbol: str, request: "PriorityRequest"
-    ) -> PaperWatchlist:
-        try:
-            watchlist_repository.set_priority(symbol, request.priority)
-            return _watchlist_with_prices(watchlist_repository.get(), market_provider)
-        except LookupError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-
-    @app.patch("/v1/paper/watchlist/{symbol}/direction", response_model=PaperWatchlist)
-    def set_paper_watchlist_direction(
-        symbol: str, request: "DirectionRequest"
-    ) -> PaperWatchlist:
-        try:
-            watchlist_repository.set_direction(symbol, request.direction)
-            return _watchlist_with_prices(watchlist_repository.get(), market_provider)
+            watchlist_repository.remove(normalized_symbol)
         except LookupError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
@@ -178,7 +187,9 @@ def create_app(
             try:
                 config = config.model_copy(
                     update={
-                        "direction": watchlist_repository.direction_for(request.symbol)
+                        "direction": watchlist_repository.direction_for(
+                            _normalize_contract_symbol(request.symbol)
+                        )
                     }
                 )
             except LookupError as error:
@@ -209,6 +220,10 @@ class PriorityRequest(BaseModel):
 
 class DirectionRequest(BaseModel):
     direction: Literal["long_only", "short_only", "both"]
+
+
+def _normalize_contract_symbol(symbol: str) -> str:
+    return symbol.strip().upper().replace("/", "_")
 
 
 def _watchlist_with_prices(
