@@ -1,0 +1,55 @@
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Test and tooling caches
+.pytest_cache/
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+.cache/
+
+# Local logs
+logs/
+*.log
+
+# Runtime data
+runtime/
+data/runtime/
+
+# PostgreSQL data
+postgres-data/
+postgresql-data/
+pgdata/
+
+# PyInstaller output
+build/
+dist/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.code-workspace
+*.suo
+*.user
+*.userossc
+*.rsuser
+
+# Keep repository planning and documentation artifacts trackable
+!.scratch/
+!docs/
+!AGENTS.md
