@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 — Paper watchlist and public market feed.
 
-**Status:** ready-for-agent
+**Status:** completed — covered by automated calculation/API/UI tests; final operator UAT is tracked in ticket 28.
 
 ## Acceptance criteria
 

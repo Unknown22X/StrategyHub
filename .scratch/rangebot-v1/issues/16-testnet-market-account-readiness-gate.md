@@ -4,7 +4,7 @@
 
 **Blocked by:** 15 — Testnet secure onboarding and read-only reconciliation.
 
-**Status:** ready-for-agent
+**Status:** implemented — automated readiness and block-state coverage complete; real WebSocket validation is external.
 
 ## Acceptance criteria
 

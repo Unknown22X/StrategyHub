@@ -4,7 +4,7 @@
 
 **Blocked by:** 21 — Testnet verification evidence; 27 — Live backup/restore operating procedure.
 
-**Status:** ready-for-agent
+**Status:** completed — automated evidence and final external checklist are recorded; no Live activation or Live order was performed.
 
 ## Acceptance criteria
 

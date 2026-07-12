@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — Engine/UI heartbeat.
 
-**Status:** ready-for-agent
+**Status:** completed — covered by automated persistence tests; final operator UAT is tracked in ticket 28.
 
 ## Acceptance criteria
 

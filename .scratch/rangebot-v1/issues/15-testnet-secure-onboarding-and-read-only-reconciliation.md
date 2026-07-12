@@ -4,7 +4,7 @@
 
 **Blocked by:** 13 — Paper profiles, audit log, and Help Center.
 
-**Status:** ready-for-agent
+**Status:** implemented — automated sanitized-reconciliation coverage complete; real credential validation is an external check in ticket 28.
 
 ## Acceptance criteria
 

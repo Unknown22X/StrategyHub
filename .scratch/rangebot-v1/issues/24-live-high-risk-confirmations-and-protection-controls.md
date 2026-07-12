@@ -4,7 +4,7 @@
 
 **Blocked by:** 23 — Live activation and advisory readiness warning.
 
-**Status:** ready-for-agent
+**Status:** implemented — typed high-risk confirmation guards are covered automatically.
 
 ## Acceptance criteria
 

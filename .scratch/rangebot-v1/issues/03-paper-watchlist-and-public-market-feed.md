@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 — Paper Account lifecycle.
 
-**Status:** ready-for-agent
+**Status:** completed — covered by automated API/UI tests; final operator UAT is tracked in ticket 28.
 
 ## Acceptance criteria
 

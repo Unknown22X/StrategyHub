@@ -4,7 +4,7 @@
 
 **Blocked by:** 11 — Paper automatic Market Entry and Used Signals; 17 — Testnet safe Manual Market Entry; 18 — Testnet protection and managed closure; 19 — Testnet Limit Entry and partial-fill recovery.
 
-**Status:** ready-for-agent
+**Status:** implemented through durable readiness/reconciliation gates and automated restart coverage; real Testnet validation is external.
 
 ## Acceptance criteria
 

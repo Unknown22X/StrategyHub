@@ -4,7 +4,7 @@
 
 **Blocked by:** 22 — Live deployment in locked state and read-only reconciliation.
 
-**Status:** ready-for-agent
+**Status:** implemented — exact LIVE and advisory policy coverage complete; activation was intentionally not performed.
 
 ## Acceptance criteria
 

@@ -4,7 +4,7 @@
 
 **Blocked by:** 04 — Paper range analysis and decision details.
 
-**Status:** ready-for-agent
+**Status:** completed — covered by automated Decimal sizing tests; final operator UAT is tracked in ticket 28.
 
 ## Acceptance criteria
 

@@ -4,7 +4,7 @@
 
 **Blocked by:** 18 — Testnet protection and managed closure; 19 — Testnet Limit Entry and partial-fill recovery; 20 — Testnet automatic trading, external changes, and recovery; 23 — Live activation and advisory readiness warning; 24 — Live high-risk confirmations and protection controls.
 
-**Status:** ready-for-agent
+**Status:** implemented — adapter-gated execution safety is covered with mocks; no Live order was or will be sent.
 
 ## Acceptance criteria
 

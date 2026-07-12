@@ -4,7 +4,7 @@
 
 **Blocked by:** 26 — Live service lifecycle and emergency-operation validation.
 
-**Status:** ready-for-agent
+**Status:** implemented — documented procedure and restored-state safety gate are ready; real PostgreSQL exercise is external.
 
 ## Acceptance criteria
 

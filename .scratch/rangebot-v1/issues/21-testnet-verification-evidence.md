@@ -4,7 +4,7 @@
 
 **Blocked by:** 14 — Paper verification record; 20 — Testnet automatic trading, external changes, and recovery.
 
-**Status:** ready-for-agent
+**Status:** implemented — advisory verification record and UI state are covered automatically; evidence capture is external.
 
 ## Acceptance criteria
 

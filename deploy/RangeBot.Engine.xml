@@ -1,0 +1,9 @@
+<service>
+  <id>RangeBotEngine</id>
+  <name>RangeBot Engine</name>
+  <description>Local RangeBot engine; UI closure never stops this service.</description>
+  <executable>%BASE%\..\engine\bot-engine.exe</executable>
+  <arguments>--mode live --database-url %RANGEBOT_DATABASE_URL% --host 127.0.0.1 --port 8765</arguments>
+  <log mode="roll-by-size-time"><sizeThreshold>10485760</sizeThreshold><keepFiles>10</keepFiles></log>
+  <onfailure action="restart" delay="10 sec" />
+</service>
