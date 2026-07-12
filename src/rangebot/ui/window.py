@@ -159,11 +159,13 @@ class RangeBotWindow(QWidget):
         self.entry_type.addItems(("Market", "Limit"))
         self.entry_price = QLineEdit()
         self.entry_price.setPlaceholderText("السعر للـ Limit فقط")
+        self.entry_quantity = QLineEdit("0.001")
         self.entry_allocation = QComboBox()
         self.entry_allocation.addItems(("25%", "50%", "75%", "100%"))
         form.addRow("الاتجاه", self.entry_direction)
         form.addRow("نوع الأمر", self.entry_type)
         form.addRow("السعر", self.entry_price)
+        form.addRow("الكمية", self.entry_quantity)
         form.addRow("التخصيص", self.entry_allocation)
         preview = QPushButton("عرض المعاينة المالية")
         preview.clicked.connect(self.create_preview)
@@ -257,7 +259,25 @@ class RangeBotWindow(QWidget):
         self.preview_summary.setText("المعاينة تتطلب بيانات سوق حديثة من المحرك. راجع العقد النشط والحالة قبل التأكيد.")
 
     def submit_market_entry(self) -> None:
-        self._confirm("تأكيد الدخول اليدوي", "سيُرسل المحرك الطلب فقط إن اجتازت المعاينة وكل ضوابط الأمان.", lambda: self.preview_summary.setText("تم إرسال طلب التأكيد للمحرك. راجع السجل لمعرفة النتيجة."))
+        mode = self.mode_selector.currentData()
+        if mode == "paper":
+            self._confirm("تأكيد الدخول اليدوي", "سيُرسل المحرك الطلب فقط إن اجتازت المعاينة وكل ضوابط الأمان.", lambda: self.preview_summary.setText("راجع معاينة Paper ثم أكد العملية من المحرك."))
+            return
+        self._confirm(
+            "تأكيد الدخول اليدوي",
+            "سيُرسل المحرك فقط أمراً إلى adapter مُدار بعد اجتياز المصالحة والحداثة والمخاطر. لا تتجاوز هذه الواجهة أي قيد.",
+            lambda: self._request(
+                "post",
+                f"/v1/exchange/{mode}/entries",
+                {
+                    "symbol": self.symbol_input.text(),
+                    "direction": self.entry_direction.currentData(),
+                    "order_type": self.entry_type.currentText().lower(),
+                    "quantity": self.entry_quantity.text(),
+                },
+                "تم إرسال الطلب إلى المحرك؛ راجع حالة التنفيذ.",
+            ),
+        )
 
     def load_watchlist(self) -> None:
         result = self._request("get", "/v1/paper/watchlist")
@@ -279,7 +299,11 @@ class RangeBotWindow(QWidget):
         self.position_summary.setText("فحص الحماية يتم من المحرك عند وصول بيانات السوق الحديثة.")
 
     def close_position(self) -> None:
-        self._confirm("إغلاق المركز", "سيُلغي المحرك حماية المركز ثم يصالح الكمية ويغلق المتبقي فقط.", lambda: self.position_summary.setText("تم طلب إغلاق محمي من المحرك."))
+        mode = self.mode_selector.currentData()
+        if mode == "paper":
+            self.position_summary.setText("يتطلب إغلاق Paper معاينة سعر حالية من المحرك.")
+            return
+        self._confirm("إغلاق المركز", "سيُلغي المحرك حماية المركز ثم يصالح الكمية ويغلق المتبقي فقط.", lambda: self._request("post", f"/v1/exchange/{mode}/close", {"confirmation": "CLOSE POSITION"}, "تم طلب إغلاق محمي من المحرك."))
 
     def cancel_pending(self) -> None:
         self._confirm("إلغاء أمر الدخول", "يُلغي هذا الإجراء أمر الدخول المُدار فقط.", lambda: self._request("delete", "/v1/paper/pending-entry", success="تم طلب إلغاء أمر الدخول."))
