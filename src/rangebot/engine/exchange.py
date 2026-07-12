@@ -14,9 +14,36 @@ from rangebot.domain.exchange import (
     ExchangeEntryRequest,
     ExchangeOperationResult,
     ExchangeSnapshot,
+    MarketEntryGuardRequest,
+    MarketEntryGuardResult,
     ModeState,
     TradingMode,
 )
+
+
+def guard_market_entry(request: MarketEntryGuardRequest) -> MarketEntryGuardResult:
+    """Reject stale, thin, or >0.30% adverse market execution before submission."""
+    now = datetime.now(UTC)
+    levels = request.asks if request.direction == "long" else request.bids
+    if now - request.last_price_observed_at > timedelta(seconds=1):
+        return MarketEntryGuardResult(allowed=False, reason_ar="سعر Last أقدم من ثانية واحدة.")
+    if not levels or any(now - level.observed_at > timedelta(seconds=1) for level in levels):
+        return MarketEntryGuardResult(allowed=False, reason_ar="لقطة دفتر الأوامر قديمة أو غير متاحة.")
+    remaining = request.quantity
+    total = Decimal("0")
+    for level in levels:
+        taken = min(remaining, level.quantity)
+        total += taken * level.price
+        remaining -= taken
+        if remaining == 0:
+            break
+    if remaining != 0:
+        return MarketEntryGuardResult(allowed=False, reason_ar="سيولة دفتر الأوامر غير كافية.")
+    expected = total / request.quantity
+    deviation = abs(expected - request.last_price) / request.last_price * Decimal("100")
+    if deviation > Decimal("0.30"):
+        return MarketEntryGuardResult(allowed=False, expected_price=expected, deviation_percentage=deviation, reason_ar="الانحراف المتوقع يتجاوز 0.30٪.")
+    return MarketEntryGuardResult(allowed=True, expected_price=expected, deviation_percentage=deviation)
 
 
 class GateIoAdapter(Protocol):

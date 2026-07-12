@@ -104,3 +104,25 @@ class ExchangeOperationResult(BaseModel):
 
 class ExchangeCloseRequest(BaseModel):
     confirmation: str
+
+
+class OrderBookLevel(BaseModel):
+    price: Decimal = Field(gt=0)
+    quantity: Decimal = Field(gt=0)
+    observed_at: datetime
+
+
+class MarketEntryGuardRequest(BaseModel):
+    direction: Literal["long", "short"]
+    quantity: Decimal = Field(gt=0)
+    last_price: Decimal = Field(gt=0)
+    last_price_observed_at: datetime
+    asks: list[OrderBookLevel] = Field(default_factory=list)
+    bids: list[OrderBookLevel] = Field(default_factory=list)
+
+
+class MarketEntryGuardResult(BaseModel):
+    allowed: bool
+    expected_price: Decimal | None = None
+    deviation_percentage: Decimal | None = None
+    reason_ar: str | None = None

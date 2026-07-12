@@ -61,6 +61,8 @@ from rangebot.domain.exchange import (
     ExchangeCloseRequest,
     ExchangeEntryRequest,
     ExchangeOperationResult,
+    MarketEntryGuardRequest,
+    MarketEntryGuardResult,
     LiveActivationRequest,
     LiveEntryRequest,
     ModeState,
@@ -72,6 +74,7 @@ from rangebot.engine.exchange import (
     GateIoAdapter,
     UnavailableGateIoAdapter,
     entry_blocks,
+    guard_market_entry,
     mode_state,
 )
 from rangebot.engine.market import EmptyPublicMarketProvider, PublicMarketProvider
@@ -194,6 +197,10 @@ def create_app(
     @app.post("/v1/exchange/{mode}/entries", response_model=ModeState)
     def submit_exchange_entry(mode: TradingMode, request: LiveEntryRequest) -> ModeState:
         return _submit_exchange_entry(mode, request)
+
+    @app.post("/v1/exchange/market-entry-guard", response_model=MarketEntryGuardResult)
+    def preview_market_entry_guard(request: MarketEntryGuardRequest) -> MarketEntryGuardResult:
+        return guard_market_entry(request)
 
     def _submit_exchange_entry(mode: TradingMode, request: LiveEntryRequest) -> ModeState:
         state = _exchange_state(mode)

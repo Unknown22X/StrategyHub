@@ -7,9 +7,11 @@ from rangebot.domain.exchange import (
     ExchangeEntryRequest,
     ExchangeOperationResult,
     ExchangeSnapshot,
+    MarketEntryGuardRequest,
+    OrderBookLevel,
 )
 from rangebot.engine.api import create_app
-from rangebot.engine.exchange import GateIoConfiguration, GateIoV4Adapter, MockGateIoAdapter
+from rangebot.engine.exchange import GateIoConfiguration, GateIoV4Adapter, MockGateIoAdapter, guard_market_entry
 
 
 def _ready_snapshot() -> dict[str, object]:
@@ -221,3 +223,14 @@ def test_mock_exchange_requires_full_reconnect_before_automatic_recovery() -> No
     adapter.confirm_reconnect(websocket_updates=2)
 
     assert adapter.may_resume_automatic() is True
+
+
+def test_market_entry_guard_uses_correct_side_vwap_and_rejects_stale_or_slippage() -> None:
+    now = datetime.now(UTC)
+    allowed = guard_market_entry(MarketEntryGuardRequest(direction="long", quantity="2", last_price="100", last_price_observed_at=now, asks=[OrderBookLevel(price="100.1", quantity="2", observed_at=now)]))
+    rejected = guard_market_entry(MarketEntryGuardRequest(direction="short", quantity="1", last_price="100", last_price_observed_at=now, bids=[OrderBookLevel(price="99", quantity="1", observed_at=now)]))
+    stale = guard_market_entry(MarketEntryGuardRequest(direction="long", quantity="1", last_price="100", last_price_observed_at=datetime(2020, 1, 1, tzinfo=UTC), asks=[OrderBookLevel(price="100", quantity="1", observed_at=now)]))
+
+    assert allowed.allowed is True
+    assert rejected.allowed is False
+    assert stale.allowed is False
