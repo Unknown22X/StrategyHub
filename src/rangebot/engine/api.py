@@ -62,6 +62,8 @@ from rangebot.domain.exchange import (
     AutomaticSignalRequest,
     AutomaticStartRequest,
     ExchangeCloseRequest,
+    ExchangeCredentialRequest,
+    ExchangeCredentialStatus,
     ExchangeEntryRequest,
     ExchangeOperationResult,
     ExchangeRequestAudit,
@@ -77,11 +79,11 @@ from rangebot.domain.exchange import (
     TradingMode,
 )
 from rangebot.engine.database import apply_migrations, create_database_engine
+from rangebot.engine.credentials import load_gate_credentials, save_gate_credentials
 from rangebot.engine.exchange import (
     GateIoAdapter,
     MockGateIoAdapter,
     UnavailableGateIoAdapter,
-    entry_blocks,
     guard_market_entry,
     mode_state,
 )
@@ -271,30 +273,29 @@ def create_app(
 
     @app.post("/v1/live/activate", response_model=ModeState)
     def activate_live(request: LiveActivationRequest) -> ModeState:
-        state = _exchange_state("live")
-        non_lock_reasons = entry_blocks(
-            state.snapshot, "testnet", False, state.emergency_stop
-        )
-        try:
-            paper_state = paper_repository.get()
-        except LookupError:
-            paper_state = None
-        testnet_snapshot = exchange_repository.get_snapshot("testnet")
-        if paper_state is not None and (
-            paper_state.position_quantity != 0 or paper_state.pending_entry
-        ):
-            non_lock_reasons += ("يوجد نشاط Paper قائم؛ لا يمكن تفعيل Live.",)
-        if testnet_snapshot is not None and (
-            testnet_snapshot.position_quantity != 0
-            or bool(testnet_snapshot.managed_order_ids)
-        ):
-            non_lock_reasons += ("يوجد مركز Testnet قائم؛ لا يمكن تفعيل Live.",)
         if request.confirmation != "LIVE":
             raise HTTPException(status_code=422, detail="يلزم إدخال LIVE حرفياً.")
-        if non_lock_reasons:
-            raise HTTPException(status_code=409, detail=" ".join(non_lock_reasons))
         exchange_repository.set_live_locked(False)
         return _exchange_state("live")
+
+    @app.post("/v1/exchange/credentials", response_model=ExchangeCredentialStatus)
+    def store_exchange_credentials(
+        request: ExchangeCredentialRequest,
+    ) -> ExchangeCredentialStatus:
+        try:
+            save_gate_credentials(request.mode, request.api_key, request.api_secret)
+        except (OSError, RuntimeError, ValueError) as error:
+            raise HTTPException(
+                status_code=503,
+                detail="تعذر حفظ بيانات الحساب في مخزن Windows الآمن.",
+            ) from error
+        return ExchangeCredentialStatus(mode=request.mode, configured=True)
+
+    @app.get("/v1/exchange/{mode}/credentials", response_model=ExchangeCredentialStatus)
+    def exchange_credential_status(mode: TradingMode) -> ExchangeCredentialStatus:
+        return ExchangeCredentialStatus(
+            mode=mode, configured=load_gate_credentials(mode) is not None
+        )
 
     @app.post("/v1/exchange/{mode}/emergency-stop", response_model=ModeState)
     def exchange_emergency_stop(mode: TradingMode) -> ModeState:
@@ -400,6 +401,14 @@ def create_app(
             raise HTTPException(
                 status_code=409, detail=" ".join(state.blocked_reasons_ar)
             )
+        if (
+            state.snapshot is not None
+            and state.snapshot.leverage_confirmed != request.leverage
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="الرافعة المختارة لا تطابق رافعة الحساب المصالَحة.",
+            )
         globally_unprotected = bool(
             state.snapshot
             and not state.snapshot.tp_enabled
@@ -443,6 +452,9 @@ def create_app(
             limit_price=request.limit_price,
             client_request_id=client_request_id,
             protections_enabled=request.protections_enabled,
+            leverage=request.leverage,
+            take_profit_percentage=request.take_profit_percentage,
+            stop_loss_percentage=request.stop_loss_percentage,
         )
         exchange_repository.persist_intent(
             mode,

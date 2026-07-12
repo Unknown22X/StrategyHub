@@ -1,7 +1,7 @@
 from typing import Any
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QPushButton
 
 from rangebot.domain.runtime import RuntimeState
 from rangebot.ui.window import RangeBotWindow
@@ -19,10 +19,28 @@ class FakeEngineClient:
             state_revision=7,
         )
 
-    def get(self, path: str) -> dict[str, Any]:
+    def get(self, path: str) -> Any:
         self.calls.append(("get", path, None))
         if path.endswith("watchlist"):
-            return {"items": [{"symbol": "BTC_USDT", "direction": "both"}]}
+            return {
+                "items": [
+                    {
+                        "symbol": "BTC_USDT",
+                        "direction": "both",
+                        "last_price": "64000",
+                    }
+                ]
+            }
+        if path == "/v1/paper-account":
+            return {"available_futures_balance": "1000"}
+        if path.startswith("/v1/paper/contracts"):
+            return [
+                {
+                    "symbol": "BTC_USDT",
+                    "quantity_step": "0.001",
+                    "minimum_quantity": "0.001",
+                }
+            ]
         return {"quantity": "0", "entry_price": "0"}
 
     def post(self, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -31,7 +49,6 @@ class FakeEngineClient:
 
     def delete(self, path: str) -> None:
         self.calls.append(("delete", path, None))
-        return None
 
 
 def test_operator_window_is_rtl_form_based_and_has_no_json_debug_surface() -> None:
@@ -45,12 +62,13 @@ def test_operator_window_is_rtl_form_based_and_has_no_json_debug_surface() -> No
     assert window.tabs.count() == 7
     assert window.tabs.tabText(0) == "الرئيسية"
     assert window.tabs.tabText(3) == "دخول يدوي"
-    assert "JSON" not in window.findChild(type(window.preview_summary)).text()
+    assert "JSON" not in window.preview_summary.text()
 
     window.load_watchlist()
 
     assert window.watchlist_table.rowCount() == 1
     assert window.watchlist_table.item(0, 0).text() == "BTC_USDT"
+    assert window.contract_input.placeholderText() == "ابحث عن عقد مثل BTC_USDT"
     window.close()
     application.quit()
 
@@ -74,5 +92,63 @@ def test_exchange_mode_ui_uses_engine_preview_and_typed_protection_controls() ->
 
     assert client.calls[-1][1] == "/v1/live/protection"
     assert client.calls[-1][2]["confirmation"] == "DISABLE TP"
+    window.close()
+    application.quit()
+
+
+def test_dashboard_has_obvious_first_action_and_separate_manual_sides() -> None:
+    application = QApplication.instance() or QApplication([])
+    client = FakeEngineClient()
+    window = RangeBotWindow(
+        client.fetch_runtime_state,
+        refresh_interval_ms=60_000,
+        engine_client=client,  # type: ignore[arg-type]
+    )
+
+    button_labels = {button.text() for button in window.findChildren(QPushButton)}
+    assert "اختر عملة للبدء" in button_labels
+    assert "بدء المراقبة" in button_labels
+    assert "شراء / Long" in button_labels
+    assert "بيع / Short" in button_labels
+    assert window.auto_toggle.text().startswith("تداول تلقائي")
+
+    window.contract_input.setText("BTC_USDT")
+    window.choose_contract()
+    calls_before_monitoring = len(client.calls)
+    window.start_monitoring()
+    assert len(client.calls) == calls_before_monitoring
+
+    window.create_preview()
+    assert client.calls[-1][1] == "/v1/paper/entry-preview"
+    assert client.calls[-1][2]["leverage"] == 5
+    assert client.calls[-1][2]["take_profit_percentage"] == "10"
+
+    window.close()
+    application.quit()
+
+
+def test_transport_details_are_logged_but_not_shown_to_user(caplog) -> None:
+    import httpx
+
+    class FailingClient(FakeEngineClient):
+        def get(self, path: str) -> dict[str, Any]:
+            raise httpx.ConnectError("http://127.0.0.1:8765/internal")
+
+    application = QApplication.instance() or QApplication([])
+    client = FailingClient()
+    window = RangeBotWindow(
+        client.fetch_runtime_state,
+        refresh_interval_ms=60_000,
+        engine_client=client,  # type: ignore[arg-type]
+    )
+
+    with caplog.at_level("WARNING"):
+        window.load_watchlist()
+
+    assert "ConnectError" in caplog.text
+    assert "127.0.0.1" not in caplog.text
+    assert "127.0.0.1" not in window.warning_banner.text()
+    assert "المحرك غير متصل" in window.warning_banner.text()
+
     window.close()
     application.quit()

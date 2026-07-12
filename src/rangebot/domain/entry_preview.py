@@ -26,6 +26,8 @@ class EntryPreviewRequest(BaseModel):
     taker_fee_rate: Decimal | None = Field(default=None, ge=0)
     direction: Literal["long", "short"]
     quote_revision: str = Field(min_length=1, max_length=200)
+    take_profit_percentage: Decimal = Field(default=Decimal("30"), gt=0)
+    stop_loss_percentage: Decimal = Field(default=Decimal("10"), gt=0)
 
     @field_validator("allocation_percentage")
     @classmethod
@@ -111,6 +113,8 @@ def create_entry_preview(request: EntryPreviewRequest) -> EntryPreview:
         allocated_margin,
         entry_fee,
         exit_fee_rate,
+        request.take_profit_percentage,
+        request.stop_loss_percentage,
     )
     if take_profit_price is None or stop_loss_price is None:
         blocking_reasons.append("invalid_protection_preview")
@@ -162,11 +166,13 @@ def _protection_preview(
     allocated_margin: Decimal,
     entry_fee: Decimal,
     exit_fee_rate: Decimal,
+    take_profit_percentage: Decimal,
+    stop_loss_percentage: Decimal,
 ) -> tuple[Decimal | None, Decimal | None]:
     if quantity == 0:
         return None, None
-    target = allocated_margin * Decimal("0.30")
-    maximum_loss = allocated_margin * Decimal("0.10")
+    target = allocated_margin * take_profit_percentage / Decimal("100")
+    maximum_loss = allocated_margin * stop_loss_percentage / Decimal("100")
     if direction == "long":
         denominator = quantity * (Decimal("1") - exit_fee_rate)
         take_profit = (target + entry_fee + quantity * entry_price) / denominator

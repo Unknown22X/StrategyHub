@@ -5,7 +5,12 @@ project_root = Path(SPECPATH).parent
 a = Analysis(
     [str(project_root / "src" / "rangebot" / "ui" / "main.py")],
     pathex=[str(project_root / "src")],
-    datas=[],
+    datas=[
+        (
+            str(project_root / "src" / "rangebot" / "assets" / "fonts"),
+            "rangebot/assets/fonts",
+        )
+    ],
 )
 pyz = PYZ(a.pure)
 exe = EXE(

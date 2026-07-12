@@ -23,6 +23,7 @@ from rangebot.domain.exchange import (
     OrderBookLevel,
     TradingMode,
 )
+from rangebot.engine.credentials import load_gate_credentials
 
 
 def guard_market_entry(request: MarketEntryGuardRequest) -> MarketEntryGuardResult:
@@ -152,6 +153,8 @@ class MockGateIoAdapter:
         self.sl_enabled = True
         self.take_profit_quantity = Decimal("0")
         self.stop_loss_quantity = Decimal("0")
+        self.take_profit_price: Decimal | None = None
+        self.stop_loss_price: Decimal | None = None
         self.subscription_confirmed = True
         self.rest_snapshot_confirmed = True
         self.websocket_price_updates = 2
@@ -210,6 +213,7 @@ class MockGateIoAdapter:
                     "trigger_source": "last_price",
                     "reduce_only": True,
                     "quantity": str(self.take_profit_quantity),
+                    "price": str(self.take_profit_price),
                 }
             )
         if self.sl_enabled and self.stop_loss_quantity:
@@ -220,6 +224,7 @@ class MockGateIoAdapter:
                     "trigger_source": "mark_price",
                     "reduce_only": True,
                     "quantity": str(self.stop_loss_quantity),
+                    "price": str(self.stop_loss_price),
                 }
             )
         return tuple(orders)
@@ -246,6 +251,12 @@ class MockGateIoAdapter:
             "sl_enabled": self.sl_enabled,
             "take_profit_quantity": str(self.take_profit_quantity),
             "stop_loss_quantity": str(self.stop_loss_quantity),
+            "take_profit_price": (
+                str(self.take_profit_price) if self.take_profit_price else None
+            ),
+            "stop_loss_price": (
+                str(self.stop_loss_price) if self.stop_loss_price else None
+            ),
             "automatic_intent": self.automatic_intent,
             "active_contract": self.active_contract,
             "risk_ready": self.risk_ready,
@@ -276,6 +287,16 @@ class MockGateIoAdapter:
         adapter.sl_enabled = bool(state.get("sl_enabled", True))
         adapter.take_profit_quantity = Decimal(state["take_profit_quantity"])
         adapter.stop_loss_quantity = Decimal(state["stop_loss_quantity"])
+        adapter.take_profit_price = (
+            Decimal(str(state["take_profit_price"]))
+            if state.get("take_profit_price")
+            else None
+        )
+        adapter.stop_loss_price = (
+            Decimal(str(state["stop_loss_price"]))
+            if state.get("stop_loss_price")
+            else None
+        )
         adapter.automatic_intent = bool(state["automatic_intent"])
         adapter.active_contract = state["active_contract"]
         adapter.risk_ready = bool(state.get("risk_ready", True))
@@ -333,6 +354,15 @@ class MockGateIoAdapter:
             if request.protections_enabled and self.sl_enabled
             else Decimal("0")
         )
+        entry_price = Decimal("100")
+        tp_delta = request.take_profit_percentage / Decimal("100")
+        sl_delta = request.stop_loss_percentage / Decimal("100")
+        if request.direction == "long":
+            self.take_profit_price = entry_price * (Decimal("1") + tp_delta)
+            self.stop_loss_price = entry_price * (Decimal("1") - sl_delta)
+        else:
+            self.take_profit_price = entry_price * (Decimal("1") - tp_delta)
+            self.stop_loss_price = entry_price * (Decimal("1") + sl_delta)
         result = ExchangeOperationResult(
             accepted=True,
             client_request_id=request.client_request_id,
@@ -661,7 +691,19 @@ def configured_gate_adapter(
     try:
         configuration = GateIoConfiguration.from_environment(mode)
     except ValueError:
-        return UnavailableGateIoAdapter()
+        stored = load_gate_credentials(mode)
+        if stored is None:
+            return UnavailableGateIoAdapter()
+        configuration = GateIoConfiguration(
+            mode=mode,
+            key=stored.api_key,
+            secret=stored.api_secret,
+            base_url=(
+                "https://fx-api-testnet.gateio.ws/api/v4"
+                if mode == "testnet"
+                else "https://api.gateio.ws/api/v4"
+            ),
+        )
     return GateIoV4Adapter(
         configuration,
         transport=HttpxGateTransport() if enable_network else None,

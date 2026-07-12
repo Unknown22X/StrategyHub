@@ -2,7 +2,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from rangebot.domain.runtime import RuntimeState
-from rangebot.ui.window import RangeBotWindow
+from rangebot.ui.window import RangeBotWindow, load_arabic_font
 
 
 def test_arabic_rtl_window_renders_mixed_direction_status_without_mutation() -> None:
@@ -21,4 +21,10 @@ def test_arabic_rtl_window_renders_mixed_direction_status_without_mutation() -> 
     assert state.state_revision == 7
 
     window.close()
+    application.quit()
+
+
+def test_bundled_arabic_font_loads() -> None:
+    application = QApplication.instance() or QApplication([])
+    assert "thmanyah" in load_arabic_font().lower()
     application.quit()

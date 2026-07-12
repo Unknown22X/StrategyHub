@@ -119,13 +119,16 @@ def test_live_is_locked_until_exact_confirmation_and_ready_reconciliation(
     adapter = FakeGateAdapter(_ready_snapshot())
     with TestClient(create_app(database_url, exchange_adapter=adapter)) as client:
         initial = client.get("/v1/exchange/live/state")
-        missing = client.post("/v1/live/activate", json={"confirmation": "LIVE"})
+        opened_before_reconciliation = client.post(
+            "/v1/live/activate", json={"confirmation": "LIVE"}
+        )
         client.post("/v1/exchange/live/reconcile")
         wrong = client.post("/v1/live/activate", json={"confirmation": "live"})
         activated = client.post("/v1/live/activate", json={"confirmation": "LIVE"})
 
     assert initial.json()["live_locked"] is True
-    assert missing.status_code == 409
+    assert opened_before_reconciliation.status_code == 200
+    assert opened_before_reconciliation.json()["can_enter"] is False
     assert wrong.status_code == 422
     assert activated.json()["live_locked"] is False
 
@@ -198,6 +201,42 @@ def test_live_relocks_on_engine_restart(tmp_path) -> None:
         )
     with TestClient(create_app(database_url, exchange_adapter=adapter)) as restarted:
         assert restarted.get("/v1/exchange/live/state").json()["live_locked"] is True
+
+
+def test_live_unlock_is_independent_from_paper_and_testnet_activity(tmp_path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
+    adapter = FakeGateAdapter(_ready_snapshot() | {"position_quantity": "1"})
+    with TestClient(create_app(database_url, exchange_adapter=adapter)) as client:
+        client.post("/v1/exchange/testnet/reconcile")
+        opened = client.post("/v1/live/activate", json={"confirmation": "LIVE"})
+
+    assert opened.status_code == 200
+    assert opened.json()["live_locked"] is False
+
+
+def test_credential_endpoint_never_returns_or_logs_secrets(
+    tmp_path, monkeypatch
+) -> None:
+    saved: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        "rangebot.engine.api.save_gate_credentials",
+        lambda mode, key, secret: saved.append((mode, key, secret)),
+    )
+    database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
+    with TestClient(create_app(database_url)) as client:
+        response = client.post(
+            "/v1/exchange/credentials",
+            json={
+                "mode": "live",
+                "api_key": "dummy-key",
+                "api_secret": "dummy-secret",
+            },
+        )
+
+    assert response.json() == {"mode": "live", "configured": True}
+    assert "dummy-key" not in response.text
+    assert "dummy-secret" not in response.text
+    assert saved == [("live", "dummy-key", "dummy-secret")]
 
 
 def test_testnet_execution_uses_engine_generated_identity_and_managed_actions(

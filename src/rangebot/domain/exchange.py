@@ -69,6 +69,17 @@ class LiveActivationRequest(BaseModel):
     confirmation: str
 
 
+class ExchangeCredentialRequest(BaseModel):
+    mode: TradingMode
+    api_key: str = Field(min_length=1, max_length=512)
+    api_secret: str = Field(min_length=1, max_length=512)
+
+
+class ExchangeCredentialStatus(BaseModel):
+    mode: TradingMode
+    configured: bool
+
+
 class ProtectionChangeRequest(BaseModel):
     protection: Literal["tp", "sl"]
     enabled: bool
@@ -85,6 +96,9 @@ class LiveEntryRequest(BaseModel):
     limit_price: Decimal | None = None
     confirmation: str = ""
     protections_enabled: bool = True
+    leverage: Literal[1, 5, 10] = 5
+    take_profit_percentage: Decimal = Field(default=Decimal("30"), gt=0)
+    stop_loss_percentage: Decimal = Field(default=Decimal("10"), gt=0)
     market_guard: "MarketEntryGuardRequest | None" = None
     client_request_id: str | None = None
 
@@ -99,6 +113,9 @@ class ExchangeEntryRequest(BaseModel):
     client_request_id: str
     limit_price: Decimal | None = None
     protections_enabled: bool = True
+    leverage: Literal[1, 5, 10] = 5
+    take_profit_percentage: Decimal = Field(default=Decimal("30"), gt=0)
+    stop_loss_percentage: Decimal = Field(default=Decimal("10"), gt=0)
 
 
 class ExchangeOperationResult(BaseModel):

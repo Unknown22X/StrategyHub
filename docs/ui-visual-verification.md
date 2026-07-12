@@ -1,16 +1,25 @@
 # Arabic RTL visual verification
 
-The desktop interface was rendered offscreen at 1200×820 after the final stylesheet
-pass. The review confirmed:
+The final native PySide6 interface was rendered offscreen at 1440×900 and reviewed
+against the supplied HTML reference and screenshot. The implementation copies no HTML;
+it uses standard Qt layouts and controls throughout.
 
-- right-to-left navigation and seven-page hierarchy;
-- persistent mode/connection/safety header and warning banner;
-- six balanced dashboard cards with readable spacing;
-- high-contrast tables, forms, focus borders, buttons, and confirmation groups;
-- no JSON editor/output surface in the normal UI;
-- centralized font family configuration and isolated LTR lifecycle content.
+Verified visually:
 
-The offscreen Windows test environment exposed no installed font families, so its
-screenshot could validate geometry, hierarchy, contrast, and clipping but not Arabic
-glyph shapes. Final glyph/font review is therefore retained in the external checklist;
-the layout does not require redesign when a custom Arabic font is selected.
+- calm charcoal/teal palette, restrained amber warnings, and a fixed right sidebar;
+- one obvious first-use CTA: **اختر عملة للبدء**;
+- compact status metrics without oversized empty cards;
+- a prominent trade panel containing amount, leverage, TP/SL, Market/Limit, and separate
+  green Long and red Short actions;
+- monitoring and automatic trading presented separately;
+- watchlist, position/protection, recent activity, safety state, and emergency action
+  visible from the dashboard;
+- correct Arabic-first hierarchy with isolated LTR contract, number, and English-token
+  content;
+- no JSON, raw HTTP URL, stack trace, or technical transport error in the user surface.
+
+Typography uses the bundled Thmanyah Sans Regular, Medium, and Bold files through
+`QFontDatabase.addApplicationFont`, with Segoe UI as the safe fallback. The three font
+files are also included in the PyInstaller UI bundle.
+
+Visual evidence: `artifacts/ui-dashboard-ar.png`.

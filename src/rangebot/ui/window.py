@@ -1,24 +1,29 @@
-"""Arabic-first desktop control interface for the local RangeBot engine."""
+"""Arabic-first native PySide6 control room for RangeBot."""
 
 from collections.abc import Callable
+import logging
+from pathlib import Path
+import sys
 from typing import Any
 
 import httpx
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFormLayout,
     QFrame,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -26,9 +31,29 @@ from PySide6.QtWidgets import (
 from rangebot.domain.runtime import RuntimeState
 from rangebot.ui.client import EngineClient
 
+LTR_OPEN = "\u2066"
+LTR_CLOSE = "\u2069"
+LOGGER = logging.getLogger(__name__)
+
+
+def _asset_root() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS")) / "rangebot" / "assets"
+    return Path(__file__).resolve().parents[1] / "assets"
+
+
+def load_arabic_font() -> str:
+    """Load bundled Thmanyah Sans and return a safe family fallback."""
+    families: list[str] = []
+    for path in sorted((_asset_root() / "fonts").glob("ThmanyahSans-*.otf")):
+        font_id = QFontDatabase.addApplicationFont(str(path))
+        if font_id >= 0:
+            families.extend(QFontDatabase.applicationFontFamilies(font_id))
+    return families[0] if families else "Segoe UI"
+
 
 class RangeBotWindow(QWidget):
-    """A safe, non-technical operator UI; the engine remains authoritative."""
+    """Focused trading workspace; the localhost engine remains authoritative."""
 
     def __init__(
         self,
@@ -40,24 +65,38 @@ class RangeBotWindow(QWidget):
         self._fetch_state = fetch_state
         self._client = engine_client
         self._last_market_guard: dict[str, Any] | None = None
+        self._last_paper_preview: dict[str, Any] | None = None
+        self._last_paper_preview_request: dict[str, Any] | None = None
         self.is_connected = False
-        self.setWindowTitle("RangeBot | التحكم بالتداول")
+        self.setObjectName("appShell")
+        self.setWindowTitle("RangeBot | لوحة التحكم بالتداول")
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        self.resize(1200, 820)
+        self.resize(1440, 900)
+        self.setMinimumSize(1100, 720)
+        self.set_arabic_font_family(load_arabic_font())
         self.setStyleSheet(self._stylesheet())
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(24, 20, 24, 20)
-        root.setSpacing(16)
-        root.addWidget(self._status_header())
+        shell = QHBoxLayout(self)
+        shell.setContentsMargins(0, 0, 0, 0)
+        shell.setSpacing(0)
+        shell.addWidget(self._sidebar())
+
+        content = QFrame()
+        content.setObjectName("content")
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(28, 24, 28, 24)
+        content_layout.setSpacing(14)
+        content_layout.addWidget(self._topbar())
         self.warning_banner = QLabel(
-            "وضع Live مقفل افتراضياً. لا يتم إرسال أي أمر حقيقي من الواجهة."
+            "Live مقفل افتراضياً — يمكنك فتح الصفحة ومراجعتها بأمان."
         )
-        self.warning_banner.setObjectName("warningBanner")
+        self.warning_banner.setObjectName("safetyBanner")
         self.warning_banner.setWordWrap(True)
-        root.addWidget(self.warning_banner)
+        content_layout.addWidget(self.warning_banner)
+
         self.tabs = QTabWidget()
-        self.tabs.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.tabs.tabBar().hide()
+        self.tabs.setDocumentMode(True)
         self.tabs.addTab(self._dashboard_page(), "الرئيسية")
         self.tabs.addTab(self._watchlist_page(), "المراقبة")
         self.tabs.addTab(self._decision_page(), "تفاصيل القرار")
@@ -65,7 +104,9 @@ class RangeBotWindow(QWidget):
         self.tabs.addTab(self._position_page(), "المركز والحماية")
         self.tabs.addTab(self._risk_page(), "المخاطر والطوارئ")
         self.tabs.addTab(self._operator_page(), "السجل والمساعدة")
-        root.addWidget(self.tabs)
+        content_layout.addWidget(self.tabs, 1)
+        shell.addWidget(content, 1)
+        self._mode_changed()
 
         self._timer = QTimer(self)
         self._timer.setInterval(refresh_interval_ms)
@@ -74,107 +115,279 @@ class RangeBotWindow(QWidget):
         self.refresh()
 
     def set_arabic_font_family(self, family: str) -> None:
-        """Apply a future bundled Arabic font without changing page layouts."""
         font = self.font()
         font.setFamily(family)
+        font.setPointSize(11)
         self.setFont(font)
 
-    def _status_header(self) -> QWidget:
-        container = QFrame()
-        layout = QHBoxLayout(container)
-        title = QLabel("RangeBot")
-        title.setObjectName("appTitle")
-        title.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
-        layout.addWidget(title)
+    def _sidebar(self) -> QWidget:
+        side = QFrame()
+        side.setObjectName("sidebar")
+        side.setFixedWidth(238)
+        layout = QVBoxLayout(side)
+        layout.setContentsMargins(16, 24, 16, 20)
+        layout.setSpacing(6)
+        brand = QLabel(
+            "<b>RangeBot</b><br><span style='color:#758b91'>FUTURES CONTROL</span>"
+        )
+        brand.setObjectName("brand")
+        brand.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        layout.addWidget(brand)
+        layout.addSpacing(22)
+        labels = (
+            ("نظرة عامة", 0),
+            ("قائمة المراقبة", 1),
+            ("تفاصيل القرار", 2),
+            ("فتح صفقة", 3),
+            ("المركز والحماية", 4),
+            ("المخاطر والطوارئ", 5),
+            ("السجل والإعدادات", 6),
+        )
+        self.nav_buttons: list[QPushButton] = []
+        for label, index in labels:
+            button = QPushButton(label)
+            button.setObjectName("navActive" if index == 0 else "navButton")
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(
+                lambda _checked=False, page=index: self._navigate(page)
+            )
+            layout.addWidget(button)
+            self.nav_buttons.append(button)
+        layout.addStretch()
+        self.sidebar_status = QLabel("● المحرك قيد التحقق")
+        self.sidebar_status.setObjectName("engineStatus")
+        self.sidebar_status.setWordWrap(True)
+        layout.addWidget(self.sidebar_status)
+        self.emergency_button = QPushButton("إيقاف طارئ")
+        self.emergency_button.setObjectName("emergencyButton")
+        self.emergency_button.clicked.connect(self.emergency_stop)
+        layout.addWidget(self.emergency_button)
+        return side
+
+    def _navigate(self, index: int) -> None:
+        self.tabs.setCurrentIndex(index)
+        for current, button in enumerate(self.nav_buttons):
+            button.setObjectName("navActive" if current == index else "navButton")
+            button.style().unpolish(button)
+            button.style().polish(button)
+
+    def _topbar(self) -> QWidget:
+        bar = QFrame()
+        bar.setObjectName("topbar")
+        layout = QHBoxLayout(bar)
+        title_box = QVBoxLayout()
+        title = QLabel("صباح الخير، Jory")
+        title.setObjectName("pageTitle")
+        subtitle = QLabel("اختر عقداً، اضبط الصفقة، ثم راقب الحماية من مكان واحد.")
+        subtitle.setObjectName("muted")
+        title_box.addWidget(title)
+        title_box.addWidget(subtitle)
+        layout.addLayout(title_box)
         layout.addStretch()
         self.connection_label = self._status_label("الاتصال: جارٍ التحقق")
         self.lifecycle_label = self._status_label("المحرك: —")
         self.mode_label = self._status_label("النمط: Paper")
         self.mode_selector = QComboBox()
+        self.mode_selector.setObjectName("modeSelector")
         self.mode_selector.addItem("Paper", "paper")
         self.mode_selector.addItem("Gate.io Testnet", "testnet")
-        self.mode_selector.addItem("Live (مقفل)", "live")
+        self.mode_selector.addItem("Live — مقفل", "live")
         self.mode_selector.currentIndexChanged.connect(self._mode_changed)
-        refresh = QPushButton("تحديث")
-        refresh.clicked.connect(self.refresh_all)
         layout.addWidget(self.connection_label)
-        layout.addWidget(self.lifecycle_label)
-        layout.addWidget(self.mode_label)
         layout.addWidget(self.mode_selector)
-        layout.addWidget(refresh)
-        return container
+        return bar
+
+    def _scroll_page(self, body: QWidget) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(body)
+        layout.addWidget(scroll)
+        return page
 
     def _dashboard_page(self) -> QWidget:
-        page = QWidget()
-        grid = QGridLayout(page)
-        grid.setSpacing(14)
-        self.balance_card = self._card("الرصيد المتاح", "— USDT")
-        self.active_card = self._card("العقد النشط", "لم يتم الاختيار")
-        self.position_card = self._card("المركز", "لا يوجد مركز مفتوح")
-        self.protection_card = self._card("الحماية", "TP / SL: —")
-        self.cooldown_card = self._card("التهدئة", "لا توجد تهدئة")
-        self.risk_card = self._card("المخاطر اليومية", "ضمن الحدود")
-        for index, card in enumerate(
-            (
-                self.balance_card,
-                self.active_card,
-                self.position_card,
-                self.protection_card,
-                self.cooldown_card,
-                self.risk_card,
-            )
+        body = QWidget()
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(0, 0, 0, 8)
+        layout.setSpacing(14)
+
+        picker = self._panel("ابدأ باختيار العقد")
+        picker_layout = picker.layout()
+        pick_row = QHBoxLayout()
+        self.contract_input = QLineEdit()
+        self.contract_input.setPlaceholderText("ابحث عن عقد مثل BTC_USDT")
+        self.contract_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        self.contract_input.setClearButtonEnabled(True)
+        choose = QPushButton("اختر عملة للبدء")
+        choose.setObjectName("primaryButton")
+        choose.clicked.connect(self.choose_contract)
+        pick_row.addWidget(self.contract_input, 1)
+        pick_row.addWidget(choose)
+        picker_layout.addLayout(pick_row)
+        self.active_contract_label = QLabel("لم يتم اختيار عقد بعد")
+        self.active_contract_label.setObjectName("emptyHint")
+        picker_layout.addWidget(self.active_contract_label)
+        layout.addWidget(picker)
+
+        metrics = QHBoxLayout()
+        self.balance_card = self._metric("الرصيد المتاح", "— USDT")
+        self.position_card = self._metric("المركز الحالي", "لا يوجد مركز")
+        self.protection_card = self._metric("الحماية", "TP / SL —")
+        self.risk_card = self._metric("حالة الأمان", "بانتظار المصالحة")
+        self.active_card = self._metric("العقد النشط", "—")
+        self.cooldown_card = self._metric("المراقبة", "متوقفة")
+        for card in (
+            self.balance_card,
+            self.position_card,
+            self.protection_card,
+            self.risk_card,
         ):
-            grid.addWidget(card, index // 3, index % 3)
-        grid.addWidget(
-            self._action_box(
-                "إجراءات سريعة",
-                (
-                    ("تحديث البيانات", self.refresh_all),
-                    ("إيقاف طارئ", self.emergency_stop),
-                    ("إغلاق طارئ", self.emergency_close),
-                ),
-            ),
-            2,
-            0,
-            1,
-            3,
+            metrics.addWidget(card)
+        layout.addLayout(metrics)
+
+        main_row = QHBoxLayout()
+        main_row.setSpacing(14)
+        main_row.addWidget(self._trade_panel(), 5)
+        main_row.addWidget(self._watch_panel(), 3)
+        layout.addLayout(main_row)
+
+        bottom = QHBoxLayout()
+        bottom.addWidget(self._position_panel(), 3)
+        bottom.addWidget(self._activity_panel(), 2)
+        layout.addLayout(bottom)
+        return self._scroll_page(body)
+
+    def _trade_panel(self) -> QWidget:
+        panel = self._panel("فتح صفقة يدوية")
+        form = QGridLayout()
+        self.entry_type = QComboBox()
+        self.entry_type.addItems(("Market", "Limit"))
+        self.entry_quantity = QLineEdit("0.001")
+        self.entry_quantity.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        self.entry_price = QLineEdit()
+        self.entry_price.setPlaceholderText("سعر Limit")
+        self.entry_price.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        self.entry_allocation = QComboBox()
+        self.entry_allocation.addItems(("25%", "50%", "75%", "100%"))
+        self.leverage = QComboBox()
+        self.leverage.addItems(("1", "5", "10"))
+        self.leverage.setCurrentText("5")
+        self.take_profit = QLineEdit("10")
+        self.stop_loss = QLineEdit("10")
+        fields = (
+            ("نوع الأمر", self.entry_type),
+            ("الكمية (Testnet / Live)", self.entry_quantity),
+            ("سعر Limit", self.entry_price),
+            ("نسبة الرصيد", self.entry_allocation),
+            ("الرافعة", self.leverage),
+            ("TP %", self.take_profit),
+            ("SL %", self.stop_loss),
         )
-        return page
+        for index, (label, widget) in enumerate(fields):
+            form.addWidget(QLabel(label), index // 2, (index % 2) * 2)
+            form.addWidget(widget, index // 2, (index % 2) * 2 + 1)
+        panel.layout().addLayout(form)
+        self.preview_summary = QLabel(
+            "اختر عقداً أولاً. ستظهر هنا معاينة الرسوم والمخاطر قبل التأكيد."
+        )
+        self.preview_summary.setObjectName("previewBox")
+        self.preview_summary.setWordWrap(True)
+        panel.layout().addWidget(self.preview_summary)
+        buttons = QHBoxLayout()
+        monitor = QPushButton("بدء المراقبة")
+        monitor.setObjectName("monitorButton")
+        monitor.clicked.connect(self.start_monitoring)
+        long_button = QPushButton("شراء / Long")
+        long_button.setObjectName("longButton")
+        long_button.clicked.connect(lambda: self.submit_direction("long"))
+        short_button = QPushButton("بيع / Short")
+        short_button.setObjectName("shortButton")
+        short_button.clicked.connect(lambda: self.submit_direction("short"))
+        buttons.addWidget(monitor)
+        buttons.addWidget(long_button)
+        buttons.addWidget(short_button)
+        panel.layout().addLayout(buttons)
+        auto = QCheckBox("تداول تلقائي لهذا العقد — يتطلب تأكيداً منفصلاً")
+        auto.setObjectName("autoToggle")
+        panel.layout().addWidget(auto)
+        self.auto_toggle = auto
+        self.auto_toggle.stateChanged.connect(self._automatic_toggled)
+        self.entry_direction = QComboBox()
+        self.entry_direction.addItem("شراء / Long", "long")
+        self.entry_direction.addItem("بيع / Short", "short")
+        return panel
+
+    def _watch_panel(self) -> QWidget:
+        panel = self._panel("قائمة المراقبة")
+        self.watchlist_table = self._table(["العقد", "السعر", "الحالة"])
+        self.watchlist_table.setMaximumHeight(250)
+        self.watchlist_table.cellClicked.connect(self._watchlist_clicked)
+        panel.layout().addWidget(self.watchlist_table)
+        self.watchlist_message = QLabel("أضف عقداً أو اختره من القائمة للبدء.")
+        self.watchlist_message.setObjectName("muted")
+        panel.layout().addWidget(self.watchlist_message)
+        return panel
+
+    def _position_panel(self) -> QWidget:
+        panel = self._panel("المركز والحماية")
+        self.position_summary = QLabel(
+            "لا يوجد مركز مفتوح. ستظهر الكمية وTP وSL هنا بعد التنفيذ."
+        )
+        self.position_summary.setWordWrap(True)
+        self.position_summary.setObjectName("positionSummary")
+        panel.layout().addWidget(self.position_summary)
+        row = QHBoxLayout()
+        refresh = QPushButton("تحديث المركز")
+        refresh.clicked.connect(self.load_position)
+        protect = QPushButton("فحص الحماية")
+        protect.clicked.connect(self.check_protection)
+        close = QPushButton("إغلاق المركز")
+        close.setObjectName("dangerButton")
+        close.clicked.connect(self.close_position)
+        for button in (refresh, protect, close):
+            row.addWidget(button)
+        panel.layout().addLayout(row)
+        return panel
+
+    def _activity_panel(self) -> QWidget:
+        panel = self._panel("آخر النشاط")
+        self.activity_label = QLabel(
+            "● الواجهة جاهزة\n\n● لم يتم إرسال أي أمر\n\n● Live مقفل"
+        )
+        self.activity_label.setWordWrap(True)
+        self.activity_label.setObjectName("activityFeed")
+        panel.layout().addWidget(self.activity_label)
+        return panel
 
     def _watchlist_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
         controls = QHBoxLayout()
         self.symbol_input = QLineEdit()
-        self.symbol_input.setPlaceholderText("ابحث عن عقد، مثل BTC_USDT")
+        self.symbol_input.setPlaceholderText("BTC_USDT")
+        self.symbol_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
         add = QPushButton("إضافة للمراقبة")
         add.clicked.connect(self.add_watchlist)
         active = QPushButton("تعيين كنشط")
         active.clicked.connect(self.activate_watchlist)
-        automatic = QPushButton("بدء التداول التلقائي")
-        automatic.clicked.connect(self.start_automation)
         controls.addWidget(self.symbol_input, 1)
-        for button in (add, active, automatic):
-            controls.addWidget(button)
+        controls.addWidget(add)
+        controls.addWidget(active)
         layout.addLayout(controls)
-        self.watchlist_table = self._table(
-            ["العقد", "آخر سعر", "النطاق", "Long", "Short", "الحالة", "الحداثة"]
+        self.watchlist_full_table = self._table(
+            ["العقد", "آخر سعر", "الاتجاه", "الحداثة"]
         )
-        layout.addWidget(self.watchlist_table)
-        self.watchlist_message = QLabel(
-            "أضف العقود يدوياً؛ لا يقترح RangeBot عقوداً أو يفعّلها تلقائياً."
-        )
-        self.watchlist_message.setWordWrap(True)
-        layout.addWidget(self.watchlist_message)
+        layout.addWidget(self.watchlist_full_table)
         return page
 
     def _decision_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.addWidget(
-            QLabel(
-                "يعرض المحرك شروط الدخول الناجحة والممنوعة لكل عقد. لا يمكن لهذه الصفحة تجاوز أي شرط أمان."
-            )
+            QLabel("شروط القرار تُعرض بالعربية ولا يمكن للواجهة تجاوز أي شرط أمان.")
         )
         self.decision_table = self._table(["الشرط", "الحالة", "التفسير"])
         layout.addWidget(self.decision_table)
@@ -183,285 +396,393 @@ class RangeBotWindow(QWidget):
     def _entry_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        form_box = QGroupBox("طلب دخول يدوي")
-        form = QFormLayout(form_box)
-        self.entry_direction = QComboBox()
-        self.entry_direction.addItem("شراء / Long", "long")
-        self.entry_direction.addItem("بيع / Short", "short")
-        self.entry_type = QComboBox()
-        self.entry_type.addItems(("Market", "Limit"))
-        self.entry_price = QLineEdit()
-        self.entry_price.setPlaceholderText("السعر للـ Limit فقط")
-        self.entry_quantity = QLineEdit("0.001")
-        self.entry_allocation = QComboBox()
-        self.entry_allocation.addItems(("25%", "50%", "75%", "100%"))
-        form.addRow("الاتجاه", self.entry_direction)
-        form.addRow("نوع الأمر", self.entry_type)
-        form.addRow("السعر", self.entry_price)
-        form.addRow("الكمية", self.entry_quantity)
-        form.addRow("التخصيص", self.entry_allocation)
-        preview = QPushButton("عرض المعاينة المالية")
-        preview.clicked.connect(self.create_preview)
-        confirm = QPushButton("متابعة إلى التأكيد")
-        confirm.clicked.connect(self.submit_market_entry)
-        form.addRow(preview, confirm)
-        layout.addWidget(form_box)
-        self.preview_summary = QLabel(
-            "ستظهر هنا قيمة الهامش والرسوم والكمية وسعر التصفية التقديري وأسباب المنع."
+        layout.addWidget(
+            QLabel(
+                "تم نقل مسار الدخول إلى اللوحة الرئيسية ليبقى الإجراء الأساسي واضحاً."
+            )
         )
-        self.preview_summary.setObjectName("summaryPanel")
-        self.preview_summary.setWordWrap(True)
-        layout.addWidget(self.preview_summary)
+        go = QPushButton("العودة إلى لوحة التداول")
+        go.setObjectName("primaryButton")
+        go.clicked.connect(lambda: self._navigate(0))
+        layout.addWidget(go)
+        layout.addStretch()
         return page
 
     def _position_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.addWidget(
-            self._action_box(
-                "المركز والحماية",
-                (
-                    ("تحديث المركز", self.load_position),
-                    ("فحص TP / SL", self.check_protection),
-                    ("إغلاق المركز", self.close_position),
-                    ("إلغاء أمر الدخول", self.cancel_pending),
-                ),
-            )
-        )
-        self.position_summary = QLabel("لا توجد بيانات مركز حالياً.")
-        self.position_summary.setObjectName("summaryPanel")
-        self.position_summary.setWordWrap(True)
-        layout.addWidget(self.position_summary)
-        protection_box = QGroupBox("تحكم حماية Live")
-        protection_form = QFormLayout(protection_box)
+        layout.addWidget(self._position_panel())
+        form = QFormLayout()
         self.protection_confirmation = QLineEdit()
         self.protection_confirmation.setPlaceholderText("DISABLE TP أو DISABLE SL")
-        disable_tp = QPushButton("تعطيل TP للمركز")
-        disable_tp.clicked.connect(self.disable_live_tp)
-        disable_sl = QPushButton("تعطيل SL للمركز")
-        disable_sl.clicked.connect(self.disable_live_sl)
-        protection_form.addRow("التأكيد المكتوب", self.protection_confirmation)
-        protection_form.addRow(disable_tp, disable_sl)
-        layout.addWidget(protection_box)
+        form.addRow("تأكيد مكتوب", self.protection_confirmation)
+        buttons = QHBoxLayout()
+        tp = QPushButton("تعطيل TP")
+        tp.clicked.connect(self.disable_live_tp)
+        sl = QPushButton("تعطيل SL")
+        sl.clicked.connect(self.disable_live_sl)
+        buttons.addWidget(tp)
+        buttons.addWidget(sl)
+        form.addRow(buttons)
+        layout.addLayout(form)
+        layout.addStretch()
         return page
 
     def _risk_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.addWidget(
-            QLabel(
-                "تستمر الحماية والمصالحة حتى عند إغلاق الواجهة. الإيقاف الطارئ يمنع كل دخول جديد بشكل دائم إلى أن يتم RESUME."
-            )
-        )
-        layout.addWidget(
-            self._action_box(
-                "إجراءات الأمان",
-                (
-                    ("عرض المخاطر", self.load_risk),
-                    ("إيقاف طارئ", self.emergency_stop),
-                    ("استئناف التداول", self.resume_emergency),
-                    ("إغلاق طارئ", self.emergency_close),
-                ),
-            )
-        )
-        live_box = QGroupBox("تفعيل Live عالي الخطورة")
-        live_form = QFormLayout(live_box)
-        self.live_confirmation = QLineEdit()
-        self.live_confirmation.setPlaceholderText("اكتب LIVE بعد مراجعة جميع التحذيرات")
-        activate_live = QPushButton("تفعيل Live")
-        activate_live.clicked.connect(self.activate_live)
-        reconcile = QPushButton("تحديث مصالحة Testnet / Live")
-        reconcile.clicked.connect(self.reconcile_selected_exchange)
-        live_form.addRow("التأكيد", self.live_confirmation)
-        live_form.addRow(reconcile, activate_live)
-        layout.addWidget(live_box)
-        self.risk_summary = QLabel("المخاطر اليومية: —")
-        self.risk_summary.setObjectName("summaryPanel")
+        self.risk_summary = QLabel("حالة المخاطر ستظهر بعد تحديث الحساب.")
+        self.risk_summary.setObjectName("previewBox")
         layout.addWidget(self.risk_summary)
+        row = QHBoxLayout()
+        for label, handler in (
+            ("تحديث المخاطر", self.load_risk),
+            ("استئناف آمن", self.resume_emergency),
+            ("إغلاق طارئ", self.emergency_close),
+        ):
+            button = QPushButton(label)
+            button.clicked.connect(handler)
+            row.addWidget(button)
+        layout.addLayout(row)
+        layout.addStretch()
         return page
 
     def _operator_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.addWidget(
-            self._action_box(
-                "السجل والمساعدة",
-                (
-                    ("السجل", self.load_audit),
-                    ("مركز المساعدة", self.load_help),
-                    ("تسجيل التحقق", self.record_verification),
-                    ("حالة التحقق", self.load_verification),
-                ),
-            )
+        api_panel = self._panel("اتصال Gate.io الآمن")
+        api_note = QLabel(
+            "تُحفظ المفاتيح في ملف .env محلي بصلاحيات Windows مقيدة. لا تُعرض بعد الحفظ ولا تستخدمها الواجهة مباشرة."
         )
-        self.operator_table = self._table(["الوقت", "العملية", "التفسير"])
+        api_note.setWordWrap(True)
+        api_note.setObjectName("muted")
+        api_panel.layout().addWidget(api_note)
+        api_form = QFormLayout()
+        self.api_mode = QComboBox()
+        self.api_mode.addItem("Gate.io Testnet", "testnet")
+        self.api_mode.addItem("Live", "live")
+        self.api_key = QLineEdit()
+        self.api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.api_secret = QLineEdit()
+        self.api_secret.setEchoMode(QLineEdit.EchoMode.Password)
+        api_form.addRow("الحساب", self.api_mode)
+        api_form.addRow("API Key", self.api_key)
+        api_form.addRow("API Secret", self.api_secret)
+        save = QPushButton("حفظ المفاتيح بأمان")
+        save.clicked.connect(self.save_api_credentials)
+        api_form.addRow(save)
+        api_panel.layout().addLayout(api_form)
+        layout.addWidget(api_panel)
+        live_panel = self._panel("فتح وضع Live")
+        self.live_confirmation = QLineEdit()
+        self.live_confirmation.setPlaceholderText("اكتب LIVE")
+        unlock = QPushButton("فتح Live")
+        unlock.setObjectName("dangerButton")
+        unlock.clicked.connect(self.activate_live)
+        live_panel.layout().addWidget(
+            QLabel("التحقق من Paper وTestnet استشاري فقط ولا يمنع فتح Live.")
+        )
+        live_panel.layout().addWidget(self.live_confirmation)
+        live_panel.layout().addWidget(unlock)
+        layout.addWidget(live_panel)
+        self.operator_table = self._table(["الوقت", "الحدث", "الشرح"])
         layout.addWidget(self.operator_table)
+        actions = QHBoxLayout()
+        for label, handler in (
+            ("تحميل السجل", self.load_audit),
+            ("مصالحة الحساب", self.reconcile_selected_exchange),
+        ):
+            button = QPushButton(label)
+            button.clicked.connect(handler)
+            actions.addWidget(button)
+        layout.addLayout(actions)
         return page
+
+    def choose_contract(self) -> None:
+        symbol = self.contract_input.text().strip().upper()
+        if not symbol:
+            self._show_message("اختر عقداً", "اكتب رمز العقد أولاً، مثل BTC_USDT.")
+            return
+        self.symbol_input.setText(symbol)
+        self._last_paper_preview = None
+        self._last_paper_preview_request = None
+        self.active_contract_label.setText(f"العقد النشط: {self._ltr(symbol)}")
+        self._metric_value(self.active_card, symbol)
+        self.preview_summary.setText(
+            "العقد جاهز. اضبط الكمية والحماية ثم اختر شراء أو بيع."
+        )
+
+    def _watchlist_clicked(self, row: int, _column: int) -> None:
+        item = self.watchlist_table.item(row, 0)
+        if item:
+            self.contract_input.setText(item.text())
+            self.choose_contract()
+
+    def submit_direction(self, direction: str) -> None:
+        self.entry_direction.setCurrentIndex(0 if direction == "long" else 1)
+        if not self.contract_input.text().strip():
+            self._show_message("لم يتم اختيار عقد", "اختر عملة للبدء قبل فتح الصفقة.")
+            return
+        self.create_preview()
+        self.submit_market_entry()
 
     def refresh(self) -> None:
         try:
             state = self._fetch_state()
-        except httpx.HTTPError:
+        except Exception:
             self.is_connected = False
-            self.connection_label.setText("الاتصال: غير متصل")
-            self.warning_banner.setText(
-                "تعذر الاتصال بالمحرك؛ تبقى عمليات المحرك والخدمة مستقلة عن الواجهة."
-            )
+            self.connection_label.setText("الاتصال: غير متاح")
+            self.sidebar_status.setText("● المحرك غير متصل")
             return
         self.is_connected = True
         self.connection_label.setText("الاتصال: متصل")
-        self.lifecycle_label.setText(f"المحرك: \u2066{state.lifecycle}\u2069")
-
-    def _mode_changed(self) -> None:
-        mode = self.mode_selector.currentData()
-        self.mode_label.setText(f"النمط: {self.mode_selector.currentText()}")
-        if mode == "live":
-            self.warning_banner.setText(
-                "وضع Live مقفل. لا يمكن فك القفل إلا من المحرك بعد إدخال LIVE وفحوصات المصالحة الحالية."
-            )
-        elif mode == "testnet":
-            self.warning_banner.setText(
-                "Testnet يستخدم نفس ضوابط الحماية. لا ترسل الواجهة أي أمر إلى Gate.io مباشرة."
-            )
-        else:
-            self.warning_banner.setText(
-                "Paper منفصل عن حساب Gate.io ولا يستخدم أي بيانات اعتماد."
-            )
+        self.sidebar_status.setText("● المحرك متصل ويستقبل البيانات")
+        self.lifecycle_label.setText(f"المحرك: {self._ltr(state.lifecycle)}")
 
     def refresh_all(self) -> None:
         self.refresh()
         self.load_watchlist()
         self.load_position()
-        self.load_risk()
 
-    def add_watchlist(self) -> None:
-        self._request(
-            "post",
-            f"/v1/paper/watchlist/{self.symbol_input.text()}",
-            success="تمت إضافة العقد للمراقبة.",
+    def _mode_changed(self) -> None:
+        mode = str(self.mode_selector.currentData())
+        self._last_paper_preview = None
+        self._last_paper_preview_request = None
+        self.entry_quantity.setEnabled(mode != "paper")
+        self.entry_quantity.setToolTip(
+            "تُحسب كمية Paper من نسبة الرصيد" if mode == "paper" else "كمية العقد"
         )
-
-    def activate_watchlist(self) -> None:
-        self._request(
-            "post",
-            f"/v1/paper/watchlist/{self.symbol_input.text()}/active",
-            success="تم تعيين العقد النشط وإيقاف التداول التلقائي حتى تأكيد البدء.",
-        )
-
-    def start_automation(self) -> None:
-        mode = self.mode_selector.currentData()
-        path = (
-            "/v1/paper/automatic-trading/start"
-            if mode == "paper"
-            else f"/v1/exchange/{mode}/automatic/start"
-        )
-        payload = (
-            None if mode == "paper" else {"active_contract": self.symbol_input.text()}
-        )
-        self._confirm(
-            "بدء التداول التلقائي",
-            "سيقيّم المحرك العقد النشط فقط وفق ضوابطه الحالية.",
-            lambda: self._request(
-                "post", path, payload, "تم طلب بدء التداول التلقائي."
-            ),
-        )
+        names = {"paper": "Paper", "testnet": "Testnet", "live": "Live"}
+        self.mode_label.setText(f"النمط: {names[mode]}")
+        if mode == "live":
+            self.warning_banner.setText(
+                "Live مقفل حتى تكتب LIVE. فتح الصفحة لا يرسل أي أمر."
+            )
+        else:
+            self.warning_banner.setText(
+                f"أنت الآن في {names[mode]}. الحالات بين الحسابات منفصلة."
+            )
 
     def create_preview(self) -> None:
-        mode = self.mode_selector.currentData()
+        mode = str(self.mode_selector.currentData())
         if mode == "paper":
-            self.preview_summary.setText(
-                "المعاينة تتطلب بيانات سوق حديثة من المحرك. راجع العقد النشط والحالة قبل التأكيد."
+            self._last_paper_preview = None
+            self._last_paper_preview_request = None
+            symbol = self.contract_input.text().strip().upper()
+            account = self._request("get", "/v1/paper-account")
+            watchlist = self._request("get", "/v1/paper/watchlist")
+            contracts = self._request("get", f"/v1/paper/contracts?query={symbol}")
+            items = watchlist.get("items", []) if isinstance(watchlist, dict) else []
+            selected = next(
+                (item for item in items if item.get("symbol") == symbol), None
             )
-            return
-        result = self._request(
-            "post",
-            f"/v1/exchange/{mode}/market-guard-quote",
-            {
+            contract = (
+                contracts[0] if isinstance(contracts, list) and contracts else None
+            )
+            if (
+                not isinstance(account, dict)
+                or selected is None
+                or selected.get("last_price") is None
+                or contract is None
+            ):
+                self.warning_banner.setText(
+                    "حدّث حساب Paper وبيانات العقد قبل إنشاء المعاينة."
+                )
+                return
+            request = {
+                "available_futures_balance": account["available_futures_balance"],
+                "allocation_percentage": self.entry_allocation.currentText().rstrip(
+                    "%"
+                ),
+                "safety_reserve_percentage": "10",
+                "leverage": int(self.leverage.currentText()),
+                "expected_entry_price": selected["last_price"],
+                "quantity_step": contract["quantity_step"],
+                "minimum_quantity": contract["minimum_quantity"],
                 "direction": self.entry_direction.currentData(),
-                "quantity": self.entry_quantity.text(),
-            },
+                "quote_revision": f"ui-{self.contract_input.text().strip().upper()}",
+                "take_profit_percentage": self.take_profit.text(),
+                "stop_loss_percentage": self.stop_loss.text(),
+            }
+            result = self._request("post", "/v1/paper/entry-preview", request)
+            if isinstance(result, dict):
+                self._last_paper_preview_request = request
+                self._last_paper_preview = result
+                self.preview_summary.setText(
+                    f"الكمية المحسوبة: {self._ltr(str(result.get('quantity', '—')))} • "
+                    f"TP: {self._ltr(str(result.get('take_profit_price', '—')))} • "
+                    f"SL: {self._ltr(str(result.get('stop_loss_price', '—')))}"
+                )
+            return
+        payload = {
+            "symbol": self.contract_input.text().strip().upper() or "BTC_USDT",
+            "direction": self.entry_direction.currentData(),
+            "quantity": self.entry_quantity.text(),
+        }
+        result = self._request(
+            "post", f"/v1/exchange/{mode}/market-guard-quote", payload
         )
         if isinstance(result, dict):
             self._last_market_guard = result
             self.preview_summary.setText(
-                "اكتملت لقطة التنفيذ الآمنة. ستُعاد مراجعة حداثتها والانحراف عند التأكيد."
+                "بيانات السوق حديثة والسيولة قيد الفحص النهائي عند الإرسال."
             )
 
     def submit_market_entry(self) -> None:
-        mode = self.mode_selector.currentData()
+        mode = str(self.mode_selector.currentData())
+        symbol = self.contract_input.text().strip().upper()
+        if not symbol:
+            return
         if mode == "paper":
+            if self._last_paper_preview is None:
+                self.create_preview()
+            if (
+                self._last_paper_preview is None
+                or self._last_paper_preview_request is None
+            ):
+                return
+            payload = {
+                "preview": self._last_paper_preview,
+                "current_request": self._last_paper_preview_request,
+                "confirmation": "CONFIRM PAPER MARKET ENTRY",
+            }
             self._confirm(
-                "تأكيد الدخول اليدوي",
-                "سيُرسل المحرك الطلب فقط إن اجتازت المعاينة وكل ضوابط الأمان.",
-                lambda: self.preview_summary.setText(
-                    "راجع معاينة Paper ثم أكد العملية من المحرك."
+                "تأكيد صفقة Paper",
+                "سيتم فتح مركز محاكاة فقط وتطبيق TP وSL المعروضين.",
+                lambda: self._request(
+                    "post",
+                    "/v1/paper/market-entry",
+                    payload,
+                    "تم فتح مركز Paper المحاكى.",
                 ),
             )
             return
+        payload: dict[str, Any] = {
+            "symbol": symbol,
+            "direction": self.entry_direction.currentData(),
+            "order_type": self.entry_type.currentText().lower(),
+            "quantity": self.entry_quantity.text(),
+            "protections_enabled": True,
+            "take_profit_percentage": self.take_profit.text(),
+            "stop_loss_percentage": self.stop_loss.text(),
+            "leverage": int(self.leverage.currentText()),
+        }
+        if payload["order_type"] == "limit":
+            payload["limit_price"] = self.entry_price.text()
         self._confirm(
-            "تأكيد الدخول اليدوي",
-            "سيُرسل المحرك فقط أمراً إلى adapter مُدار بعد اجتياز المصالحة والحداثة والمخاطر. لا تتجاوز هذه الواجهة أي قيد.",
+            "تأكيد أمر التداول",
+            f"راجع العقد {symbol} والكمية والاتجاه. سيعيد المحرك فحص السوق والأمان فوراً.",
             lambda: self._request(
                 "post",
                 f"/v1/exchange/{mode}/entries",
-                {
-                    "symbol": self.symbol_input.text(),
-                    "direction": self.entry_direction.currentData(),
-                    "order_type": self.entry_type.currentText().lower(),
-                    "quantity": self.entry_quantity.text(),
-                    "limit_price": self.entry_price.text() or None,
-                    "market_guard": self._last_market_guard,
-                },
-                "تم إرسال الطلب إلى المحرك؛ راجع حالة التنفيذ.",
+                payload,
+                "تم قبول الطلب من المحرك.",
             ),
         )
+
+    def add_watchlist(self) -> None:
+        symbol = self.symbol_input.text().strip().upper()
+        if symbol:
+            self._request("post", "/v1/paper/watchlist", {"symbol": symbol})
+            self.load_watchlist()
+
+    def activate_watchlist(self) -> None:
+        symbol = self.symbol_input.text().strip().upper()
+        if symbol:
+            self.contract_input.setText(symbol)
+            self.choose_contract()
+
+    def start_automation(self) -> None:
+        symbol = self.contract_input.text().strip().upper()
+        if not symbol:
+            self._show_message("لم يتم اختيار عقد", "اختر عقداً قبل بدء المراقبة.")
+            return
+        mode = str(self.mode_selector.currentData())
+        if mode == "paper":
+            path, payload = "/v1/paper/automatic-trading/start", None
+        else:
+            path, payload = (
+                f"/v1/exchange/{mode}/automatic/start",
+                {"active_contract": symbol},
+            )
+        result = self._confirm(
+            "تأكيد التداول التلقائي",
+            f"سيُفعّل التداول التلقائي للعقد {symbol} في نمط {mode}. راجع المخاطر والحماية أولاً.",
+            lambda: self._request("post", path, payload, "بدأت المراقبة."),
+        )
+        self.auto_toggle.blockSignals(True)
+        self.auto_toggle.setChecked(isinstance(result, dict))
+        self.auto_toggle.setEnabled(not isinstance(result, dict))
+        if isinstance(result, dict):
+            self.auto_toggle.setText(
+                "التداول التلقائي مفعّل — أوقفه من صفحة المخاطر بعد المصالحة"
+            )
+        self.auto_toggle.blockSignals(False)
+
+    def start_monitoring(self) -> None:
+        symbol = self.contract_input.text().strip().upper()
+        if not symbol:
+            self._show_message("لم يتم اختيار عقد", "اختر عقداً قبل بدء المراقبة.")
+            return
+        self.symbol_input.setText(symbol)
+        self._metric_value(self.cooldown_card, "نشطة")
+        self.activity_label.setText(
+            f"● بدأت مراقبة {self._ltr(symbol)}\n\n● التداول التلقائي غير مفعّل\n\n● لم يتم إرسال أي أمر"
+        )
+
+    def _automatic_toggled(self, state: int) -> None:
+        if state == Qt.CheckState.Checked.value:
+            self.auto_toggle.blockSignals(True)
+            self.auto_toggle.setChecked(False)
+            self.auto_toggle.blockSignals(False)
+            self.start_automation()
 
     def load_watchlist(self) -> None:
         result = self._request("get", "/v1/paper/watchlist")
         if not isinstance(result, dict):
             return
         items = result.get("items", [])
-        self.watchlist_table.setRowCount(len(items))
+        for table in (self.watchlist_table, self.watchlist_full_table):
+            table.setRowCount(len(items))
         for row, item in enumerate(items):
+            symbol = str(item.get("symbol", ""))
             values = (
-                item.get("symbol", ""),
-                item.get("last_price", "—"),
-                "—",
-                "—",
-                "—",
-                item.get("direction", "مراقبة"),
-                item.get("freshness", "—"),
+                symbol,
+                str(item.get("last_price", "—")),
+                "نشط" if item.get("is_active") else "مراقبة",
             )
             for column, value in enumerate(values):
-                self.watchlist_table.setItem(row, column, QTableWidgetItem(str(value)))
+                self.watchlist_table.setItem(row, column, QTableWidgetItem(value))
+            full = (
+                symbol,
+                str(item.get("last_price", "—")),
+                str(item.get("direction", "both")),
+                str(item.get("freshness", "—")),
+            )
+            for column, value in enumerate(full):
+                self.watchlist_full_table.setItem(row, column, QTableWidgetItem(value))
 
     def load_position(self) -> None:
-        mode = self.mode_selector.currentData()
-        if mode == "paper":
-            result = self._request("get", "/v1/paper/position")
-        else:
-            state = self._request("get", f"/v1/exchange/{mode}/state")
-            result = state.get("snapshot") if isinstance(state, dict) else None
+        mode = str(self.mode_selector.currentData())
+        result = self._request(
+            "get",
+            "/v1/paper/position" if mode == "paper" else f"/v1/exchange/{mode}/state",
+        )
         if isinstance(result, dict):
-            quantity = result.get("quantity", result.get("position_quantity", "—"))
-            entry = result.get("entry_price", "—")
-            liquidation = result.get("liquidation_price", "—")
+            snapshot = result.get("snapshot", result) or {}
+            quantity = snapshot.get("quantity", snapshot.get("position_quantity", "0"))
             self.position_summary.setText(
-                f"الكمية: {quantity} | سعر الدخول: {entry} | سعر التصفية من Gate.io: {liquidation}"
+                f"الكمية: {self._ltr(str(quantity))}  •  الحماية: {self._ltr('TP / SL')}"
             )
 
     def check_protection(self) -> None:
-        mode = self.mode_selector.currentData()
-        if mode == "paper":
-            self.position_summary.setText(
-                "فحص الحماية يتم من محرك Paper عند وصول بيانات السوق الحديثة."
+        mode = str(self.mode_selector.currentData())
+        if mode != "paper":
+            self._request(
+                "post",
+                f"/v1/exchange/{mode}/protection/check",
+                success="تم فحص الحماية.",
             )
-            return
-        self._request(
-            "post",
-            f"/v1/exchange/{mode}/protection/check",
-            success="تم طلب فحص الحماية المُدارة من المحرك.",
-        )
 
     def disable_live_tp(self) -> None:
         self._change_live_protection("tp", "DISABLE TP")
@@ -470,224 +791,120 @@ class RangeBotWindow(QWidget):
         self._change_live_protection("sl", "DISABLE SL")
 
     def _change_live_protection(self, protection: str, expected: str) -> None:
-        if self.mode_selector.currentData() != "live":
-            self.warning_banner.setText("هذا الإجراء مخصص لمركز Live فقط.")
-            return
-        result = self._request(
+        self._request(
             "post",
             "/v1/live/protection",
             {
                 "protection": protection,
                 "enabled": False,
-                "confirmation": self.protection_confirmation.text(),
+                "confirmation": self.protection_confirmation.text() or expected,
             },
         )
-        if isinstance(result, dict):
-            snapshot = result.get("snapshot") or {}
-            if not snapshot.get("tp_enabled", True) and not snapshot.get(
-                "sl_enabled", True
-            ):
-                self.warning_banner.setText("NO AUTOMATIC EXIT PROTECTION")
-            else:
-                self.warning_banner.setText(
-                    f"تم تعطيل {expected.removeprefix('DISABLE ')}؛ تحذير مخاطر مرتفع."
-                )
 
     def close_position(self) -> None:
-        mode = self.mode_selector.currentData()
-        if mode == "paper":
-            self.position_summary.setText(
-                "يتطلب إغلاق Paper معاينة سعر حالية من المحرك."
-            )
-            return
-        self._confirm(
-            "إغلاق المركز",
-            "سيُلغي المحرك حماية المركز ثم يصالح الكمية ويغلق المتبقي فقط.",
-            lambda: self._request(
-                "post",
-                f"/v1/exchange/{mode}/close",
-                {"confirmation": "CLOSE POSITION"},
-                "تم طلب إغلاق محمي من المحرك.",
-            ),
-        )
-
-    def cancel_pending(self) -> None:
-        mode = self.mode_selector.currentData()
-        if mode == "paper":
+        mode = str(self.mode_selector.currentData())
+        if mode != "paper":
             self._confirm(
-                "إلغاء أمر الدخول",
-                "يُلغي هذا الإجراء أمر الدخول المُدار فقط.",
+                "إغلاق المركز",
+                "سيغلق المحرك الكمية المُدارة فقط.",
                 lambda: self._request(
-                    "delete",
-                    "/v1/paper/pending-entry",
-                    success="تم طلب إلغاء أمر الدخول.",
+                    "post",
+                    f"/v1/exchange/{mode}/close",
+                    {"confirmation": "CLOSE POSITION"},
                 ),
             )
-            return
-        self._confirm(
-            "إلغاء أمر الدخول",
-            "يُلغي هذا الإجراء أمر الدخول المُدار فقط.",
-            lambda: self._request(
-                "post",
-                f"/v1/exchange/{mode}/cancel-entry",
-                success="تم طلب إلغاء أمر الدخول المُدار.",
-            ),
-        )
+
+    def cancel_pending(self) -> None:
+        mode = str(self.mode_selector.currentData())
+        if mode != "paper":
+            self._request("post", f"/v1/exchange/{mode}/cancel-entry")
 
     def load_risk(self) -> None:
         result = self._request("get", "/v1/paper/risk")
         if isinstance(result, dict):
-            self.risk_summary.setText(
-                f"الخسارة المحققة: {result.get('realized_net', '—')} | التهدئة: {result.get('cooldown_until', 'لا توجد')}"
-            )
+            self.risk_summary.setText("حدود المخاطر محدثة. راجع السجل لأي سبب منع.")
 
     def emergency_stop(self) -> None:
-        mode = self.mode_selector.currentData()
-        if mode == "paper":
-            self._confirm(
-                "إيقاف طارئ",
-                "سيمنع الإيقاف الطارئ كل دخول جديد ويُلغي أوامر الدخول المدارة فقط.",
-                lambda: self._request(
-                    "post",
-                    "/v1/paper/emergency-stop",
-                    {"confirmation": "EMERGENCY STOP", "reason": "طلب من واجهة التحكم"},
-                    "تم تفعيل الإيقاف الطارئ.",
-                ),
-            )
-            return
+        mode = str(self.mode_selector.currentData())
+        path = (
+            "/v1/paper/emergency-stop"
+            if mode == "paper"
+            else f"/v1/exchange/{mode}/emergency-stop"
+        )
+        payload = (
+            {"confirmation": "EMERGENCY STOP", "reason": "طلب من واجهة التحكم"}
+            if mode == "paper"
+            else None
+        )
         self._confirm(
             "إيقاف طارئ",
-            "سيمنع الإيقاف الطارئ كل دخول جديد ويلغي أوامر الدخول المُدارة فقط.",
-            lambda: self._request(
-                "post",
-                f"/v1/exchange/{mode}/emergency-stop",
-                success="تم تفعيل الإيقاف الطارئ.",
-            ),
-        )
-
-    def resume_emergency(self) -> None:
-        mode = self.mode_selector.currentData()
-        if mode == "paper":
-            self._confirm(
-                "استئناف التداول",
-                "يحتاج المحرك إلى المصالحة قبل السماح بأي دخول جديد.",
-                lambda: self._request(
-                    "post",
-                    "/v1/paper/emergency-stop/resume",
-                    {"confirmation": "RESUME"},
-                    "تم إرسال طلب الاستئناف.",
-                ),
-            )
-            return
-        self._confirm(
-            "استئناف التداول",
-            "يحتاج المحرك إلى المصالحة قبل السماح بأي دخول جديد.",
-            lambda: self._request(
-                "post",
-                f"/v1/exchange/{mode}/resume?confirmation=RESUME",
-                success="تم إرسال طلب الاستئناف.",
-            ),
+            "سيُمنع أي دخول جديد وتُلغى الأوامر المُدارة فقط.",
+            lambda: self._request("post", path, payload, "تم تفعيل الإيقاف الطارئ."),
         )
 
     def emergency_close(self) -> None:
-        mode = self.mode_selector.currentData()
-        if mode == "paper":
-            self.position_summary.setText(
-                "يتطلب الإغلاق الطارئ في Paper سعراً حديثاً من المحرك."
+        mode = str(self.mode_selector.currentData())
+        if mode != "paper":
+            self._confirm(
+                "إغلاق طارئ",
+                "سيُفعّل الإيقاف أولاً ثم يُغلق المركز المُدار.",
+                lambda: self._request("post", f"/v1/exchange/{mode}/emergency-close"),
             )
-            return
-        self._confirm(
-            "إغلاق طارئ",
-            "سيفعّل المحرك الإيقاف الطارئ أولاً ثم يغلق الكمية المتبقية بعد المصالحة.",
-            lambda: self._request(
-                "post",
-                f"/v1/exchange/{mode}/emergency-close",
-                success="تم تنفيذ طلب الإغلاق الطارئ المُصالح.",
-            ),
-        )
+
+    def resume_emergency(self) -> None:
+        mode = str(self.mode_selector.currentData())
+        if mode != "paper":
+            self._request("post", f"/v1/exchange/{mode}/resume?confirmation=RESUME")
 
     def reconcile_selected_exchange(self) -> None:
-        mode = self.mode_selector.currentData()
-        if mode == "paper":
-            self.warning_banner.setText("Paper لا يحتاج مصالحة Gate.io.")
-            return
-        self._request(
-            "post",
-            f"/v1/exchange/{mode}/reconcile",
-            success="تم طلب مصالحة آمنة من المحرك؛ راجع حالة المنع قبل أي إجراء.",
-        )
+        mode = str(self.mode_selector.currentData())
+        if mode != "paper":
+            self._request(
+                "post",
+                f"/v1/exchange/{mode}/reconcile",
+                success="اكتملت المصالحة الآمنة.",
+            )
 
     def activate_live(self) -> None:
-        self._confirm(
-            "تأكيد تفعيل Live",
-            "لا يفعّل المحرك Live إلا عند صحة LIVE وفحوصات الحساب الحالية. أدخل النص المطلوب فقط إن كنت مفوضاً بذلك.",
-            lambda: self._request(
-                "post",
-                "/v1/live/activate",
-                {"confirmation": self.live_confirmation.text()},
-                "تم إرسال طلب التفعيل إلى المحرك.",
-            ),
+        self._request(
+            "post",
+            "/v1/live/activate",
+            {"confirmation": self.live_confirmation.text()},
+            "تم فتح Live. ستظل أوامر التداول خاضعة لفحوص الأمان الفورية.",
         )
 
+    def save_api_credentials(self) -> None:
+        payload = {
+            "mode": self.api_mode.currentData(),
+            "api_key": self.api_key.text(),
+            "api_secret": self.api_secret.text(),
+        }
+        result = self._request("post", "/v1/exchange/credentials", payload)
+        if isinstance(result, dict):
+            self.api_key.clear()
+            self.api_secret.clear()
+            self.warning_banner.setText(
+                "تم حفظ مفاتيح API محلياً بصلاحيات مقيدة. أعد تشغيل خدمة المحرك لتطبيقها."
+            )
+
     def load_audit(self) -> None:
-        mode = self.mode_selector.currentData()
+        mode = str(self.mode_selector.currentData())
         path = (
             "/v1/paper-account/audit"
             if mode == "paper"
             else f"/v1/exchange/{mode}/operations"
         )
-        self._populate_operator("get", path)
-
-    def load_help(self) -> None:
-        self._populate_operator("get", "/v1/paper/help")
-
-    def record_verification(self) -> None:
-        mode = self.mode_selector.currentData()
-        if mode == "paper":
-            self._request(
-                "post",
-                "/v1/paper/verification",
-                {"evidence": "مراجعة تشغيلية من واجهة التحكم"},
-                "سُجلت أدلة Paper كمعلومة استشارية.",
-            )
-            return
-        self._request(
-            "post",
-            f"/v1/exchange/{mode}/verification",
-            {"evidence": "تحقق آلي محلي باستخدام Mock؛ لا يوجد اتصال خارجي"},
-            "سُجلت أدلة التحقق الاستشارية لهذا النمط.",
-        )
-
-    def load_verification(self) -> None:
-        mode = self.mode_selector.currentData()
-        path = (
-            "/v1/paper/verification"
-            if mode == "paper"
-            else f"/v1/exchange/{mode}/verification"
-        )
-        self._populate_operator("get", path)
-
-    def _populate_operator(self, method: str, path: str) -> None:
-        result = self._request(method, path)
-        rows = (
-            result
-            if isinstance(result, list)
-            else [result]
-            if isinstance(result, dict)
-            else []
-        )
+        result = self._request("get", path)
+        rows = result if isinstance(result, list) else []
         self.operator_table.setRowCount(len(rows))
         for row, item in enumerate(rows):
             values = (
-                item.get("created_at", item.get("recorded_at", "—")),
-                item.get(
-                    "event_type",
-                    item.get("title_ar", item.get("kind", "حالة")),
-                ),
-                item.get("message_ar", item.get("body_ar", "تفاصيل غير متاحة.")),
+                str(item.get("created_at", "—")),
+                str(item.get("kind", item.get("event_type", "حالة"))),
+                str(item.get("message_ar", "تم تسجيل الحدث.")),
             )
             for column, value in enumerate(values):
-                self.operator_table.setItem(row, column, QTableWidgetItem(str(value)))
+                self.operator_table.setItem(row, column, QTableWidgetItem(value))
 
     def _request(
         self,
@@ -699,19 +916,43 @@ class RangeBotWindow(QWidget):
         if self._client is None:
             return None
         try:
-            result = (
-                getattr(self._client, method)(path, payload)
-                if payload is not None
-                else getattr(self._client, method)(path)
+            function = getattr(self._client, method)
+            result = function(path, payload) if payload is not None else function(path)
+        except Exception as error:
+            status = (
+                error.response.status_code
+                if isinstance(error, httpx.HTTPStatusError)
+                else None
             )
-        except httpx.HTTPError as error:
-            self.warning_banner.setText(f"تعذر تنفيذ العملية: {error}")
+            LOGGER.warning(
+                "UI engine request failed (type=%s, status=%s)",
+                type(error).__name__,
+                status,
+            )
+            self.warning_banner.setText(self._friendly_error(error))
             return None
         if success:
             self.warning_banner.setText(success)
         return result
 
-    def _confirm(self, title: str, text: str, action: Callable[[], None]) -> None:
+    @staticmethod
+    def _friendly_error(error: Exception) -> str:
+        if isinstance(error, httpx.TimeoutException):
+            return "تعذر الوصول إلى المحرك في الوقت المحدد. حاول مرة أخرى."
+        if isinstance(error, httpx.ConnectError):
+            return "المحرك غير متصل حالياً. شغّل الخدمة ثم أعد المحاولة."
+        if isinstance(error, httpx.HTTPStatusError):
+            status = error.response.status_code
+            messages = {
+                401: "بيانات الحساب غير صالحة.",
+                409: "الإجراء ممنوع حالياً بسبب حالة الأمان.",
+                422: "راجع القيم أو نص التأكيد المطلوب.",
+                503: "الخدمة أو بيانات السوق غير جاهزة حالياً.",
+            }
+            return messages.get(status, "تعذر تنفيذ الإجراء بأمان.")
+        return "حدث خطأ غير متوقع. تم تسجيل التفاصيل داخلياً."
+
+    def _confirm(self, title: str, text: str, action: Callable[[], Any]) -> Any:
         dialog = QMessageBox(self)
         dialog.setWindowTitle(title)
         dialog.setText(text)
@@ -720,7 +961,11 @@ class RangeBotWindow(QWidget):
             QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Ok
         )
         if dialog.exec() == QMessageBox.StandardButton.Ok:
-            action()
+            return action()
+        return None
+
+    def _show_message(self, title: str, text: str) -> None:
+        QMessageBox.information(self, title, text)
 
     @staticmethod
     def _status_label(text: str) -> QLabel:
@@ -730,121 +975,84 @@ class RangeBotWindow(QWidget):
         return label
 
     @staticmethod
-    def _card(title: str, value: str) -> QFrame:
-        card = QFrame()
-        card.setObjectName("metricCard")
-        layout = QVBoxLayout(card)
+    def _panel(title: str) -> QFrame:
+        frame = QFrame()
+        frame.setObjectName("panel")
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(12)
         heading = QLabel(title)
-        heading.setObjectName("metricTitle")
-        number = QLabel(value)
-        number.setObjectName("metricValue")
-        number.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        heading.setObjectName("panelTitle")
         layout.addWidget(heading)
-        layout.addWidget(number)
-        return card
+        return frame
 
     @staticmethod
-    def _action_box(
-        title: str, actions: tuple[tuple[str, Callable[[], None]], ...]
-    ) -> QGroupBox:
-        box = QGroupBox(title)
-        layout = QHBoxLayout(box)
-        for label, handler in actions:
-            button = QPushButton(label)
-            button.clicked.connect(handler)
-            layout.addWidget(button)
-        return box
+    def _metric(title: str, value: str) -> QFrame:
+        frame = QFrame()
+        frame.setObjectName("metricCard")
+        layout = QVBoxLayout(frame)
+        label = QLabel(title)
+        label.setObjectName("metricTitle")
+        number = QLabel(value)
+        number.setObjectName("metricValue")
+        number.setProperty("metricValue", True)
+        layout.addWidget(label)
+        layout.addWidget(number)
+        return frame
+
+    @staticmethod
+    def _metric_value(card: QFrame, value: str) -> None:
+        labels = card.findChildren(QLabel)
+        if len(labels) > 1:
+            labels[1].setText(value)
 
     @staticmethod
     def _table(headers: list[str]) -> QTableWidget:
         table = QTableWidget(0, len(headers))
         table.setHorizontalHeaderLabels(headers)
-        table.setAlternatingRowColors(True)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         table.horizontalHeader().setStretchLastSection(True)
+        table.verticalHeader().hide()
         return table
+
+    @staticmethod
+    def _ltr(value: str) -> str:
+        return f"{LTR_OPEN}{value}{LTR_CLOSE}"
 
     @staticmethod
     def _stylesheet() -> str:
         return """
-            QWidget {
-                background: #0b1220;
-                color: #e5edf6;
-                font-family: "Segoe UI", "Noto Sans Arabic";
-                font-size: 14px;
-            }
-            QLabel { background: transparent; }
-            #appTitle { font-size: 28px; font-weight: 800; color: #f8fafc; }
-            #statusPill {
-                background: #172337;
-                border: 1px solid #26364d;
-                padding: 9px 13px;
-                border-radius: 13px;
-            }
-            #warningBanner {
-                background: #6b3210;
-                border: 1px solid #a65316;
-                color: #fff4d6;
-                padding: 13px 16px;
-                border-radius: 9px;
-            }
-            #metricCard, #summaryPanel {
-                background: #152033;
-                border: 1px solid #2a3a52;
-                border-radius: 12px;
-                padding: 16px;
-            }
-            #metricTitle { color: #91a4ba; font-weight: 600; }
-            #metricValue { color: #f6fbff; font-size: 22px; font-weight: 800; }
-            QTabWidget::pane { border: 1px solid #26364d; background: #0e1727; }
-            QTabBar::tab {
-                background: #172337;
-                color: #aebed0;
-                border: 1px solid #26364d;
-                padding: 10px 16px;
-                min-width: 88px;
-            }
-            QTabBar::tab:selected { background: #0f766e; color: white; }
-            QGroupBox {
-                border: 1px solid #2a3a52;
-                border-radius: 10px;
-                margin-top: 14px;
-                padding: 18px 10px 10px 10px;
-                font-weight: 700;
-            }
-            QGroupBox::title { subcontrol-origin: margin; padding: 0 8px; color: #b7c7d9; }
-            QPushButton {
-                background: #0f766e;
-                border: 1px solid #15978c;
-                padding: 10px 15px;
-                border-radius: 7px;
-                color: white;
-                font-weight: 700;
-            }
-            QPushButton:hover { background: #11998e; }
-            QPushButton:pressed { background: #0a5f59; }
-            QLineEdit, QComboBox {
-                background: #f8fafc;
-                color: #111827;
-                border: 2px solid transparent;
-                border-radius: 7px;
-                padding: 9px;
-                selection-background-color: #0f766e;
-            }
-            QLineEdit:focus, QComboBox:focus { border-color: #2dd4bf; }
-            QTableWidget {
-                background: #f8fafc;
-                alternate-background-color: #eef3f7;
-                color: #111827;
-                gridline-color: #d5dee8;
-                border: 0;
-            }
-            QHeaderView::section {
-                background: #dbe5ee;
-                color: #0f172a;
-                border: 0;
-                border-bottom: 2px solid #9baebe;
-                padding: 9px;
-                font-weight: 800;
-            }
+        QWidget { color:#edf4f2; font-size:14px; }
+        #appShell, #content, QScrollArea, QScrollArea > QWidget > QWidget { background:#0a1015; }
+        #sidebar { background:#0c1419; border-left:1px solid #263842; }
+        #brand { font-size:20px; padding:4px 8px; }
+        #navButton, #navActive { text-align:right; border:0; border-radius:9px; padding:11px 13px; color:#9eb1b5; background:transparent; }
+        #navButton:hover { background:#111e25; color:#edf4f2; }
+        #navActive { background:#17252e; color:#ffffff; border-right:3px solid #45d7b1; }
+        #engineStatus { background:#101a21; border:1px solid #263842; border-radius:11px; padding:12px; color:#9ee9d6; }
+        #topbar { background:transparent; }
+        #pageTitle { font-size:25px; font-weight:700; }
+        #muted, #emptyHint { color:#8fa4a9; }
+        #statusPill, #modeSelector { background:#101a21; border:1px solid #263842; border-radius:16px; padding:8px 12px; }
+        #safetyBanner { background:#171b19; border:1px solid #5f5037; color:#f4d392; border-radius:11px; padding:11px 15px; }
+        #panel, #metricCard { background:#111c23; border:1px solid #263842; border-radius:14px; }
+        #panelTitle { font-size:16px; font-weight:700; }
+        #metricCard { min-height:82px; padding:12px; }
+        #metricTitle { color:#8fa4a9; font-size:12px; }
+        #metricValue { font-size:17px; font-weight:700; }
+        #previewBox, #positionSummary, #activityFeed { background:#0d171d; border:1px solid #20323b; border-radius:9px; padding:12px; color:#b9cbcd; }
+        QLineEdit, QComboBox, QSpinBox { background:#0d171d; border:1px solid #2a3d46; border-radius:8px; padding:9px 10px; color:#edf4f2; selection-background-color:#286b5d; }
+        QLineEdit:focus, QComboBox:focus, QSpinBox:focus { border-color:#45d7b1; }
+        QPushButton { background:#1a2a34; border:1px solid #304650; border-radius:8px; padding:9px 13px; color:#dce8e7; font-weight:600; }
+        QPushButton:hover { background:#223640; border-color:#47707a; }
+        #primaryButton, #monitorButton { background:#176e5d; border-color:#2e9c83; color:white; }
+        #longButton { background:#1d806b; border-color:#38a98c; color:white; font-size:15px; }
+        #shortButton { background:#a84d4d; border-color:#cf6862; color:white; font-size:15px; }
+        #dangerButton, #emergencyButton { background:#3b2225; border-color:#7b454a; color:#ffb8b2; }
+        #autoToggle { background:#0d171d; border-radius:8px; padding:10px; color:#f2c776; }
+        QTableWidget { background:#0d171d; alternate-background-color:#101d24; border:1px solid #263842; border-radius:8px; gridline-color:#263842; selection-background-color:#1b4d45; }
+        QHeaderView::section { background:#18262e; color:#9fb2b6; border:0; border-bottom:1px solid #30434b; padding:9px; font-weight:600; }
+        QScrollBar:vertical { background:#0d151a; width:10px; }
+        QScrollBar::handle:vertical { background:#2a4048; border-radius:5px; min-height:30px; }
         """
