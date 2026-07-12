@@ -310,7 +310,11 @@ class RangeBotWindow(QWidget):
         self._confirm("إغلاق المركز", "سيُلغي المحرك حماية المركز ثم يصالح الكمية ويغلق المتبقي فقط.", lambda: self._request("post", f"/v1/exchange/{mode}/close", {"confirmation": "CLOSE POSITION"}, "تم طلب إغلاق محمي من المحرك."))
 
     def cancel_pending(self) -> None:
-        self._confirm("إلغاء أمر الدخول", "يُلغي هذا الإجراء أمر الدخول المُدار فقط.", lambda: self._request("delete", "/v1/paper/pending-entry", success="تم طلب إلغاء أمر الدخول."))
+        mode = self.mode_selector.currentData()
+        if mode == "paper":
+            self._confirm("إلغاء أمر الدخول", "يُلغي هذا الإجراء أمر الدخول المُدار فقط.", lambda: self._request("delete", "/v1/paper/pending-entry", success="تم طلب إلغاء أمر الدخول."))
+            return
+        self._confirm("إلغاء أمر الدخول", "يُلغي هذا الإجراء أمر الدخول المُدار فقط.", lambda: self._request("post", f"/v1/exchange/{mode}/cancel-entry", success="تم طلب إلغاء أمر الدخول المُدار."))
 
     def load_risk(self) -> None:
         result = self._request("get", "/v1/paper/risk")
@@ -318,13 +322,25 @@ class RangeBotWindow(QWidget):
             self.risk_summary.setText(f"الخسارة المحققة: {result.get('realized_net', '—')} | التهدئة: {result.get('cooldown_until', 'لا توجد')}")
 
     def emergency_stop(self) -> None:
-        self._confirm("إيقاف طارئ", "سيمنع الإيقاف الطارئ كل دخول جديد ويُلغي أوامر الدخول المدارة فقط.", lambda: self._request("post", "/v1/paper/emergency-stop", {"confirmation": "EMERGENCY STOP", "reason": "طلب من واجهة التحكم"}, "تم تفعيل الإيقاف الطارئ."))
+        mode = self.mode_selector.currentData()
+        if mode == "paper":
+            self._confirm("إيقاف طارئ", "سيمنع الإيقاف الطارئ كل دخول جديد ويُلغي أوامر الدخول المدارة فقط.", lambda: self._request("post", "/v1/paper/emergency-stop", {"confirmation": "EMERGENCY STOP", "reason": "طلب من واجهة التحكم"}, "تم تفعيل الإيقاف الطارئ."))
+            return
+        self._confirm("إيقاف طارئ", "سيمنع الإيقاف الطارئ كل دخول جديد ويلغي أوامر الدخول المُدارة فقط.", lambda: self._request("post", f"/v1/exchange/{mode}/emergency-stop", success="تم تفعيل الإيقاف الطارئ."))
 
     def resume_emergency(self) -> None:
-        self._confirm("استئناف التداول", "يحتاج المحرك إلى المصالحة قبل السماح بأي دخول جديد.", lambda: self._request("post", "/v1/paper/emergency-stop/resume", {"confirmation": "RESUME"}, "تم إرسال طلب الاستئناف."))
+        mode = self.mode_selector.currentData()
+        if mode == "paper":
+            self._confirm("استئناف التداول", "يحتاج المحرك إلى المصالحة قبل السماح بأي دخول جديد.", lambda: self._request("post", "/v1/paper/emergency-stop/resume", {"confirmation": "RESUME"}, "تم إرسال طلب الاستئناف."))
+            return
+        self._confirm("استئناف التداول", "يحتاج المحرك إلى المصالحة قبل السماح بأي دخول جديد.", lambda: self._request("post", f"/v1/exchange/{mode}/resume?confirmation=RESUME", success="تم إرسال طلب الاستئناف."))
 
     def emergency_close(self) -> None:
-        self._confirm("إغلاق طارئ", "سيفعّل المحرك الإيقاف الطارئ أولاً ثم يغلق الكمية المتبقية بعد المصالحة.", lambda: self.position_summary.setText("تم طلب الإغلاق الطارئ من المحرك."))
+        mode = self.mode_selector.currentData()
+        if mode == "paper":
+            self.position_summary.setText("يتطلب الإغلاق الطارئ في Paper سعراً حديثاً من المحرك.")
+            return
+        self._confirm("إغلاق طارئ", "سيفعّل المحرك الإيقاف الطارئ أولاً ثم يغلق الكمية المتبقية بعد المصالحة.", lambda: self._request("post", f"/v1/exchange/{mode}/emergency-stop", success="تم تفعيل الإيقاف الطارئ؛ نفّذ إغلاقاً محمياً بعد المصالحة."))
 
     def reconcile_selected_exchange(self) -> None:
         mode = self.mode_selector.currentData()
