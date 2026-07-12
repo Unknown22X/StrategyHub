@@ -95,6 +95,18 @@ class ExchangeModeStateRecord(Base):
     snapshot_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class ExchangeRequestRecord(Base):
+    """Persistent identity for an exchange operation before adapter submission."""
+
+    __tablename__ = "exchange_request"
+
+    client_request_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 class RuntimeStateRepository:
     """Stores a single engine-owned lifecycle state record."""
 
@@ -1803,6 +1815,21 @@ class ExchangeModeRepository:
         with Session(self._database_engine) as session:
             record = self._state(session, snapshot.mode)
             record.snapshot_json = snapshot.model_dump_json()
+            session.commit()
+
+    def persist_intent(self, mode: TradingMode, client_request_id: str, kind: str, payload_json: str) -> None:
+        with Session(self._database_engine) as session:
+            existing = session.get(ExchangeRequestRecord, client_request_id)
+            if existing is None:
+                session.add(ExchangeRequestRecord(client_request_id=client_request_id, mode=mode, kind=kind, status="pending", payload_json=payload_json))
+                session.commit()
+
+    def mark_intent(self, client_request_id: str, status: str) -> None:
+        with Session(self._database_engine) as session:
+            record = session.get(ExchangeRequestRecord, client_request_id)
+            if record is None:
+                raise LookupError("Exchange request identity is missing.")
+            record.status = status
             session.commit()
 
     def live_locked(self) -> bool:

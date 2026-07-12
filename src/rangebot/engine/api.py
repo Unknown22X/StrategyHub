@@ -201,16 +201,24 @@ def create_app(
             raise HTTPException(status_code=409, detail=" ".join(state.blocked_reasons_ar))
         if mode == "live" and not request.protections_enabled and request.confirmation != "UNPROTECTED POSITION":
             raise HTTPException(status_code=422, detail="يلزم إدخال UNPROTECTED POSITION حرفياً.")
-        result = gate_adapter.submit_entry(
-            mode,
-            ExchangeEntryRequest(
+        exchange_request = ExchangeEntryRequest(
                 symbol=request.symbol,
                 direction=request.direction,
                 order_type=request.order_type,
                 quantity=request.quantity,
                 client_request_id=str(uuid4()),
                 protections_enabled=request.protections_enabled,
-            ),
+            )
+        exchange_repository.persist_intent(
+            mode,
+            exchange_request.client_request_id,
+            "entry",
+            exchange_request.model_dump_json(),
+        )
+        result = gate_adapter.submit_entry(mode, exchange_request)
+        exchange_repository.mark_intent(
+            exchange_request.client_request_id,
+            "accepted" if result.accepted else "pending_unknown",
         )
         if not result.accepted:
             raise HTTPException(status_code=503, detail=result.message_ar)
