@@ -4,7 +4,7 @@
 
 **Blocked by:** 13 — Paper profiles, audit log, and Help Center.
 
-**Status:** in progress — sanitized adapter seam is covered; authenticated Gate.io v4 onboarding/reconciliation remains required.
+**Status:** implemented with mocks — private signed adapter boundary and read-only reconciliation contract are covered; real credential validation remains external.
 
 ## Acceptance criteria
 

@@ -4,7 +4,7 @@
 
 **Blocked by:** 11 — Paper automatic Market Entry and Used Signals; 17 — Testnet safe Manual Market Entry; 18 — Testnet protection and managed closure; 19 — Testnet Limit Entry and partial-fill recovery.
 
-**Status:** in progress — durable block-state coverage exists; Testnet automatic execution and exchange-change recovery remain required.
+**Status:** implemented with mocks — persistent readiness/reconciliation blocks and restart behavior are covered; real Testnet recovery remains external.
 
 ## Acceptance criteria
 

@@ -4,7 +4,7 @@
 
 **Blocked by:** 16 — Testnet market/account readiness gate.
 
-**Status:** in progress — no Testnet order submission path exists until the authenticated adapter is implemented.
+**Status:** implemented with mocks — engine-generated identity and guarded adapter submission are covered; external Testnet submission is intentionally not performed.
 
 ## Acceptance criteria
 
