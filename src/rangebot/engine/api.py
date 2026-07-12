@@ -56,11 +56,21 @@ from rangebot.domain.paper import (
     PaperHelpTopic,
 )
 from rangebot.domain.runtime import RuntimeState
+from rangebot.domain.exchange import (
+    LiveActivationRequest,
+    LiveEntryRequest,
+    ModeState,
+    ProtectionChangeRequest,
+    ReconciliationRequest,
+    TradingMode,
+)
 from rangebot.engine.database import apply_migrations, create_database_engine
+from rangebot.engine.exchange import entry_blocks, mode_state, snapshot_from_values
 from rangebot.engine.market import EmptyPublicMarketProvider, PublicMarketProvider
 from rangebot.engine.repository import (
     PaperAccountRepository,
     PaperWatchlistRepository,
+    ExchangeModeRepository,
     RuntimeStateRepository,
 )
 
@@ -73,6 +83,7 @@ def create_app(
     repository = RuntimeStateRepository(database_engine)
     paper_repository = PaperAccountRepository(database_engine)
     watchlist_repository = PaperWatchlistRepository(database_engine)
+    exchange_repository = ExchangeModeRepository(database_engine)
     market_provider = public_market_provider or EmptyPublicMarketProvider()
 
     @asynccontextmanager
@@ -91,6 +102,67 @@ def create_app(
 
     app = FastAPI(title="RangeBot Engine", lifespan=lifespan)
     app.state.paper_repository = paper_repository
+
+    def _exchange_state(mode: TradingMode) -> ModeState:
+        snapshot = exchange_repository.get_snapshot(mode)
+        return mode_state(
+            mode,
+            snapshot,
+            exchange_repository.live_locked() if mode == "live" else False,
+            exchange_repository.emergency_stop(mode),
+        )
+
+    @app.get("/v1/exchange/{mode}/state", response_model=ModeState)
+    def exchange_state(mode: TradingMode) -> ModeState:
+        return _exchange_state(mode)
+
+    @app.post("/v1/exchange/{mode}/reconcile", response_model=ModeState)
+    def reconcile_exchange(mode: TradingMode, request: ReconciliationRequest) -> ModeState:
+        """Persist a sanitized adapter result; no credentials or raw Gate payloads cross HTTP."""
+        snapshot = snapshot_from_values(mode, request.model_dump())
+        exchange_repository.save_snapshot(snapshot)
+        return _exchange_state(mode)
+
+    @app.post("/v1/live/activate", response_model=ModeState)
+    def activate_live(request: LiveActivationRequest) -> ModeState:
+        state = _exchange_state("live")
+        non_lock_reasons = entry_blocks(state.snapshot, "testnet", False, state.emergency_stop)
+        if request.confirmation != "LIVE":
+            raise HTTPException(status_code=422, detail="يلزم إدخال LIVE حرفياً.")
+        if non_lock_reasons:
+            raise HTTPException(status_code=409, detail=" ".join(non_lock_reasons))
+        exchange_repository.set_live_locked(False)
+        return _exchange_state("live")
+
+    @app.post("/v1/exchange/{mode}/emergency-stop", response_model=ModeState)
+    def exchange_emergency_stop(mode: TradingMode) -> ModeState:
+        exchange_repository.set_emergency_stop(mode, True)
+        return _exchange_state(mode)
+
+    @app.post("/v1/exchange/{mode}/resume", response_model=ModeState)
+    def exchange_resume(mode: TradingMode, confirmation: str) -> ModeState:
+        if confirmation != "RESUME":
+            raise HTTPException(status_code=422, detail="يلزم إدخال RESUME حرفياً.")
+        exchange_repository.set_emergency_stop(mode, False)
+        return _exchange_state(mode)
+
+    @app.post("/v1/live/protection", response_model=ModeState)
+    def change_live_protection(request: ProtectionChangeRequest) -> ModeState:
+        if not request.enabled:
+            expected = "DISABLE TP" if request.protection == "tp" else "DISABLE SL"
+            if request.confirmation != expected:
+                raise HTTPException(status_code=422, detail=f"يلزم إدخال {expected} حرفياً.")
+        return _exchange_state("live")
+
+    @app.post("/v1/live/entries", response_model=ModeState)
+    def submit_live_entry(request: LiveEntryRequest) -> ModeState:
+        state = _exchange_state("live")
+        if state.blocked_reasons_ar:
+            raise HTTPException(status_code=409, detail=" ".join(state.blocked_reasons_ar))
+        if not request.protections_enabled and request.confirmation != "UNPROTECTED POSITION":
+            raise HTTPException(status_code=422, detail="يلزم إدخال UNPROTECTED POSITION حرفياً.")
+        # Actual Gateway submission is intentionally unavailable until a configured adapter is injected.
+        raise HTTPException(status_code=503, detail="لم يُضبط Gate.io adapter للتنفيذ؛ لم يُرسل أي أمر.")
 
     @app.get("/health", response_model=RuntimeState)
     def health() -> RuntimeState:

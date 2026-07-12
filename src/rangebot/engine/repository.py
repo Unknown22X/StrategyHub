@@ -13,6 +13,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 from rangebot.domain.runtime import RuntimeState
+from rangebot.domain.exchange import ExchangeSnapshot, TradingMode
 from rangebot.domain.paper import (
     PaperAccountChange,
     PaperAccountSnapshot,
@@ -81,6 +82,17 @@ class RuntimeStateRecord(Base):
         DateTime(timezone=True), nullable=False
     )
     state_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class ExchangeModeStateRecord(Base):
+    """Restart-critical state for Testnet/Live safety gates, never credentials."""
+
+    __tablename__ = "exchange_mode_state"
+
+    mode: Mapped[str] = mapped_column(String(16), primary_key=True)
+    live_locked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    emergency_stop: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    snapshot_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class RuntimeStateRepository:
@@ -1772,3 +1784,57 @@ class PaperWatchlistRepository:
             session.add(state)
             session.flush()
         return state
+
+
+class ExchangeModeRepository:
+    """Durably records sanitized reconciliation and Live lock state."""
+
+    def __init__(self, database_engine: Engine) -> None:
+        self._database_engine = database_engine
+
+    def get_snapshot(self, mode: TradingMode) -> ExchangeSnapshot | None:
+        with Session(self._database_engine) as session:
+            record = self._state(session, mode)
+            if record.snapshot_json is None:
+                return None
+            return ExchangeSnapshot.model_validate_json(record.snapshot_json)
+
+    def save_snapshot(self, snapshot: ExchangeSnapshot) -> None:
+        with Session(self._database_engine) as session:
+            record = self._state(session, snapshot.mode)
+            record.snapshot_json = snapshot.model_dump_json()
+            session.commit()
+
+    def live_locked(self) -> bool:
+        with Session(self._database_engine) as session:
+            return self._state(session, "live").live_locked
+
+    def set_live_locked(self, locked: bool) -> None:
+        with Session(self._database_engine) as session:
+            self._state(session, "live").live_locked = locked
+            session.commit()
+
+    def emergency_stop(self, mode: TradingMode) -> bool:
+        with Session(self._database_engine) as session:
+            return self._state(session, mode).emergency_stop
+
+    def set_emergency_stop(self, mode: TradingMode, active: bool) -> None:
+        with Session(self._database_engine) as session:
+            record = self._state(session, mode)
+            record.emergency_stop = active
+            if mode == "live" and active:
+                record.live_locked = True
+            session.commit()
+
+    @staticmethod
+    def _state(session: Session, mode: TradingMode) -> ExchangeModeStateRecord:
+        record = session.get(ExchangeModeStateRecord, mode)
+        if record is None:
+            record = ExchangeModeStateRecord(
+                mode=mode,
+                live_locked=mode == "live",
+                emergency_stop=False,
+            )
+            session.add(record)
+            session.flush()
+        return record
