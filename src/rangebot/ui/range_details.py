@@ -20,8 +20,8 @@ class RangeDecisionDetailsWidget(QWidget):
         layout.addWidget(self.history_label)
         self.condition_labels: list[QLabel] = []
         for condition in result.conditions:
-            status = "✓" if condition.passed else "✗"
-            label = QLabel(f"{status} {condition.arabic_explanation}")
+            marker = "✓" if condition.passed else "✗"
+            label = QLabel(f"{marker} {condition.arabic_explanation}")
             label.setTextFormat(Qt.TextFormat.PlainText)
             label.setAlignment(Qt.AlignmentFlag.AlignRight)
             layout.addWidget(label)

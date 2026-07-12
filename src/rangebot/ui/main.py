@@ -27,7 +27,7 @@ def main() -> None:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     application = QApplication([])
     client = EngineClient(arguments.engine_url)
-    window = RangeBotWindow(client.fetch_runtime_state)
+    window = RangeBotWindow(client.fetch_runtime_state, engine_client=client)
     window.show()
     if arguments.once:
         exit_code = 1
