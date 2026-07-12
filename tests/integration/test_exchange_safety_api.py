@@ -301,6 +301,19 @@ def test_mock_limit_lifecycle_expires_or_hands_partial_fill_to_protection() -> N
     assert (adapter.take_profit_quantity, adapter.stop_loss_quantity) == (2, 2)
 
 
+def test_emergency_close_stops_then_reconciles_and_closes_only_managed_state(tmp_path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
+    adapter = MockGateIoAdapter()
+    adapter.submit_entry("live", ExchangeEntryRequest(symbol="BTC_USDT", direction="long", quantity="1", client_request_id="managed-close"))
+    with TestClient(create_app(database_url, exchange_adapter=adapter)) as client:
+        response = client.post("/v1/exchange/live/emergency-close")
+        state = client.get("/v1/exchange/live/state")
+
+    assert response.status_code == 200
+    assert adapter.position_quantity == 0
+    assert state.json()["emergency_stop"] is True
+
+
 def test_market_entry_guard_uses_correct_side_vwap_and_rejects_stale_or_slippage() -> None:
     now = datetime.now(UTC)
     allowed = guard_market_entry(MarketEntryGuardRequest(direction="long", quantity="2", last_price="100", last_price_observed_at=now, asks=[OrderBookLevel(price="100.1", quantity="2", observed_at=now)]))

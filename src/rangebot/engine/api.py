@@ -254,6 +254,17 @@ def create_app(
             raise HTTPException(status_code=422, detail="يلزم إدخال CLOSE POSITION حرفياً.")
         return gate_adapter.close_managed_position(mode)
 
+    @app.post("/v1/exchange/{mode}/emergency-close", response_model=ExchangeOperationResult)
+    def emergency_close_exchange(mode: TradingMode) -> ExchangeOperationResult:
+        """Persist the stop first; close only after a current safe reconciliation state."""
+        gate_adapter.cancel_managed_entry(mode)
+        exchange_repository.set_emergency_stop(mode, True)
+        snapshot = gate_adapter.reconcile(mode)
+        exchange_repository.save_snapshot(snapshot)
+        if snapshot.reconciliation_error or snapshot.unmanaged_state:
+            raise HTTPException(status_code=409, detail="تعذر الإغلاق الطارئ حتى تكتمل المصالحة الآمنة.")
+        return gate_adapter.close_managed_position(mode)
+
     @app.get("/health", response_model=RuntimeState)
     def health() -> RuntimeState:
         return repository.get_state()
