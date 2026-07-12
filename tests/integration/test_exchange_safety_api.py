@@ -9,6 +9,7 @@ from rangebot.domain.exchange import (
     ExchangeOperationResult,
     ExchangeSnapshot,
     MarketEntryGuardRequest,
+    MarketGuardQuoteRequest,
     OrderBookLevel,
 )
 from rangebot.engine.api import create_app
@@ -63,26 +64,57 @@ class FakeGateAdapter:
         self.protected_modes: list[str] = []
 
     def reconcile(self, mode: str) -> ExchangeSnapshot:
-        return ExchangeSnapshot(mode=mode, reconciled_at=datetime.now(UTC), **self.values)  # type: ignore[arg-type]
+        return ExchangeSnapshot(
+            mode=mode, reconciled_at=datetime.now(UTC), **self.values
+        )  # type: ignore[arg-type]
 
-    def submit_entry(self, mode: str, request: ExchangeEntryRequest) -> ExchangeOperationResult:
+    def market_guard_quote(
+        self, mode: str, request: MarketGuardQuoteRequest
+    ) -> MarketEntryGuardRequest:
+        return MarketEntryGuardRequest.model_validate(
+            _market_guard_payload()
+            | {"direction": request.direction, "quantity": request.quantity}
+        )
+
+    def submit_entry(
+        self, mode: str, request: ExchangeEntryRequest
+    ) -> ExchangeOperationResult:
         self.submitted.append(request)
-        return ExchangeOperationResult(accepted=True, client_request_id=request.client_request_id, order_id="mock-1", message_ar="تم قبول الأمر الوهمي.")
+        return ExchangeOperationResult(
+            accepted=True,
+            client_request_id=request.client_request_id,
+            order_id="mock-1",
+            message_ar="تم قبول الأمر الوهمي.",
+        )
 
     def cancel_managed_entry(self, mode: str) -> ExchangeOperationResult:
         self.cancelled_modes.append(mode)
-        return ExchangeOperationResult(accepted=True, client_request_id="cancel", message_ar="تم إلغاء الأمر المُدار.")
+        return ExchangeOperationResult(
+            accepted=True,
+            client_request_id="cancel",
+            message_ar="تم إلغاء الأمر المُدار.",
+        )
 
     def close_managed_position(self, mode: str) -> ExchangeOperationResult:
         self.closed_modes.append(mode)
-        return ExchangeOperationResult(accepted=True, client_request_id="close", message_ar="تم طلب الإغلاق المُدار.")
+        return ExchangeOperationResult(
+            accepted=True,
+            client_request_id="close",
+            message_ar="تم طلب الإغلاق المُدار.",
+        )
 
     def ensure_protection(self, mode: str) -> ExchangeOperationResult:
         self.protected_modes.append(mode)
-        return ExchangeOperationResult(accepted=True, client_request_id="protection", message_ar="تم تأكيد الحماية المُدارة.")
+        return ExchangeOperationResult(
+            accepted=True,
+            client_request_id="protection",
+            message_ar="تم تأكيد الحماية المُدارة.",
+        )
 
 
-def test_live_is_locked_until_exact_confirmation_and_ready_reconciliation(tmp_path) -> None:
+def test_live_is_locked_until_exact_confirmation_and_ready_reconciliation(
+    tmp_path,
+) -> None:
     database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
     adapter = FakeGateAdapter(_ready_snapshot())
     with TestClient(create_app(database_url, exchange_adapter=adapter)) as client:
@@ -114,15 +146,38 @@ def test_unmanaged_state_and_emergency_stop_block_testnet_and_persist(tmp_path) 
     assert persisted.json()["emergency_stop"] is True
 
 
-def test_live_high_risk_confirmations_and_entry_uses_only_injected_adapter(tmp_path) -> None:
+def test_live_high_risk_confirmations_and_entry_uses_only_injected_adapter(
+    tmp_path,
+) -> None:
     database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
     adapter = FakeGateAdapter(_ready_snapshot())
     with TestClient(create_app(database_url, exchange_adapter=adapter)) as client:
         client.post("/v1/exchange/live/reconcile")
         client.post("/v1/live/activate", json={"confirmation": "LIVE"})
-        rejected = client.post("/v1/live/protection", json={"protection": "sl", "enabled": False, "confirmation": "no"})
-        unprotected = client.post("/v1/live/entries", json={"symbol": "BTC_USDT", "direction": "long", "quantity": "1", "protections_enabled": False})
-        adapter_missing = client.post("/v1/live/entries", json={"symbol": "BTC_USDT", "direction": "long", "quantity": "1", "protections_enabled": False, "confirmation": "UNPROTECTED POSITION", "market_guard": _market_guard_payload()})
+        rejected = client.post(
+            "/v1/live/protection",
+            json={"protection": "sl", "enabled": False, "confirmation": "no"},
+        )
+        unprotected = client.post(
+            "/v1/live/entries",
+            json={
+                "symbol": "BTC_USDT",
+                "direction": "long",
+                "quantity": "1",
+                "protections_enabled": False,
+            },
+        )
+        adapter_missing = client.post(
+            "/v1/live/entries",
+            json={
+                "symbol": "BTC_USDT",
+                "direction": "long",
+                "quantity": "1",
+                "protections_enabled": False,
+                "confirmation": "UNPROTECTED POSITION",
+                "market_guard": _market_guard_payload(),
+            },
+        )
 
     assert rejected.status_code == 422
     assert unprotected.status_code == 422
@@ -135,19 +190,36 @@ def test_live_relocks_on_engine_restart(tmp_path) -> None:
     adapter = FakeGateAdapter(_ready_snapshot())
     with TestClient(create_app(database_url, exchange_adapter=adapter)) as client:
         client.post("/v1/exchange/live/reconcile")
-        assert client.post("/v1/live/activate", json={"confirmation": "LIVE"}).json()["live_locked"] is False
+        assert (
+            client.post("/v1/live/activate", json={"confirmation": "LIVE"}).json()[
+                "live_locked"
+            ]
+            is False
+        )
     with TestClient(create_app(database_url, exchange_adapter=adapter)) as restarted:
         assert restarted.get("/v1/exchange/live/state").json()["live_locked"] is True
 
 
-def test_testnet_execution_uses_engine_generated_identity_and_managed_actions(tmp_path) -> None:
+def test_testnet_execution_uses_engine_generated_identity_and_managed_actions(
+    tmp_path,
+) -> None:
     database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
     adapter = FakeGateAdapter(_ready_snapshot())
     with TestClient(create_app(database_url, exchange_adapter=adapter)) as client:
         client.post("/v1/exchange/testnet/reconcile")
-        entry = client.post("/v1/exchange/testnet/entries", json={"symbol": "BTC_USDT", "direction": "long", "quantity": "1", "market_guard": _market_guard_payload()})
+        entry = client.post(
+            "/v1/exchange/testnet/entries",
+            json={
+                "symbol": "BTC_USDT",
+                "direction": "long",
+                "quantity": "1",
+                "market_guard": _market_guard_payload(),
+            },
+        )
         cancelled = client.post("/v1/exchange/testnet/cancel-entry")
-        closed = client.post("/v1/exchange/testnet/close", json={"confirmation": "CLOSE POSITION"})
+        closed = client.post(
+            "/v1/exchange/testnet/close", json={"confirmation": "CLOSE POSITION"}
+        )
         protection = client.post("/v1/exchange/testnet/protection/check")
         client.post("/v1/exchange/testnet/emergency-stop")
 
@@ -163,11 +235,22 @@ def test_testnet_execution_uses_engine_generated_identity_and_managed_actions(tm
 
 def test_testnet_entry_requires_fresh_reconnect_stages(tmp_path) -> None:
     database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
-    stale = _ready_snapshot() | {"market_observed_at": datetime(2020, 1, 1, tzinfo=UTC), "websocket_price_updates": 1}
+    stale = _ready_snapshot() | {
+        "market_observed_at": datetime(2020, 1, 1, tzinfo=UTC),
+        "websocket_price_updates": 1,
+    }
     adapter = FakeGateAdapter(stale)
     with TestClient(create_app(database_url, exchange_adapter=adapter)) as client:
         state = client.post("/v1/exchange/testnet/reconcile")
-        entry = client.post("/v1/exchange/testnet/entries", json={"symbol": "BTC_USDT", "direction": "long", "quantity": "1", "market_guard": _market_guard_payload()})
+        entry = client.post(
+            "/v1/exchange/testnet/entries",
+            json={
+                "symbol": "BTC_USDT",
+                "direction": "long",
+                "quantity": "1",
+                "market_guard": _market_guard_payload(),
+            },
+        )
 
     assert state.json()["can_enter"] is False
     assert entry.status_code == 409
@@ -181,14 +264,21 @@ def test_existing_exchange_position_blocks_new_entry_even_when_ready(tmp_path) -
         state = client.post("/v1/exchange/testnet/reconcile")
         entry = client.post(
             "/v1/exchange/testnet/entries",
-            json={"symbol": "BTC_USDT", "direction": "long", "quantity": "1", "market_guard": _market_guard_payload()},
+            json={
+                "symbol": "BTC_USDT",
+                "direction": "long",
+                "quantity": "1",
+                "market_guard": _market_guard_payload(),
+            },
         )
 
     assert state.json()["can_enter"] is False
     assert entry.status_code == 409
 
 
-def test_market_entry_cannot_submit_without_guard_payload(tmp_path) -> None:
+def test_market_entry_uses_fresh_server_side_guard_without_client_payload(
+    tmp_path,
+) -> None:
     database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
     adapter = FakeGateAdapter(_ready_snapshot())
     with TestClient(create_app(database_url, exchange_adapter=adapter)) as client:
@@ -198,19 +288,68 @@ def test_market_entry_cannot_submit_without_guard_payload(tmp_path) -> None:
             json={"symbol": "BTC_USDT", "direction": "long", "quantity": "1"},
         )
 
+    assert response.status_code == 200
+    assert len(adapter.submitted) == 1
+
+
+def test_fabricated_client_guard_cannot_bypass_server_side_market_guard(
+    tmp_path,
+) -> None:
+    class StaleQuoteAdapter(FakeGateAdapter):
+        def market_guard_quote(
+            self, mode: str, request: MarketGuardQuoteRequest
+        ) -> MarketEntryGuardRequest:
+            stale = _market_guard_payload()
+            stale["last_price_observed_at"] = "2020-01-01T00:00:00+00:00"
+            stale["asks"] = [
+                {
+                    "price": "100.1",
+                    "quantity": "1",
+                    "observed_at": "2020-01-01T00:00:00+00:00",
+                }
+            ]
+            return MarketEntryGuardRequest.model_validate(stale)
+
+    database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
+    adapter = StaleQuoteAdapter(_ready_snapshot())
+    with TestClient(create_app(database_url, exchange_adapter=adapter)) as client:
+        client.post("/v1/exchange/testnet/reconcile")
+        response = client.post(
+            "/v1/exchange/testnet/entries",
+            json={
+                "symbol": "BTC_USDT",
+                "direction": "long",
+                "quantity": "1",
+                "market_guard": _market_guard_payload(),
+            },
+        )
+
     assert response.status_code == 409
     assert adapter.submitted == []
 
 
 def test_unknown_exchange_outcome_blocks_retry_with_same_identity(tmp_path) -> None:
     class UnknownAdapter(FakeGateAdapter):
-        def submit_entry(self, mode: str, request: ExchangeEntryRequest) -> ExchangeOperationResult:
+        def submit_entry(
+            self, mode: str, request: ExchangeEntryRequest
+        ) -> ExchangeOperationResult:
             self.submitted.append(request)
-            return ExchangeOperationResult(accepted=False, pending_unknown=True, client_request_id=request.client_request_id, message_ar="نتيجة غير معروفة")
+            return ExchangeOperationResult(
+                accepted=False,
+                pending_unknown=True,
+                client_request_id=request.client_request_id,
+                message_ar="نتيجة غير معروفة",
+            )
 
     database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
     adapter = UnknownAdapter(_ready_snapshot())
-    payload = {"symbol": "BTC_USDT", "direction": "long", "quantity": "1", "market_guard": _market_guard_payload(), "client_request_id": "stable-request"}
+    payload = {
+        "symbol": "BTC_USDT",
+        "direction": "long",
+        "quantity": "1",
+        "market_guard": _market_guard_payload(),
+        "client_request_id": "stable-request",
+    }
     with TestClient(create_app(database_url, exchange_adapter=adapter)) as client:
         client.post("/v1/exchange/testnet/reconcile")
         first = client.post("/v1/exchange/testnet/entries", json=payload)
@@ -221,7 +360,44 @@ def test_unknown_exchange_outcome_blocks_retry_with_same_identity(tmp_path) -> N
     assert len(adapter.submitted) == 1
 
 
-def test_gate_configuration_stays_engine_private_and_redacts_values(monkeypatch) -> None:
+def test_known_exchange_rejection_is_audited_and_can_be_retried(tmp_path) -> None:
+    class RejectedAdapter(FakeGateAdapter):
+        def submit_entry(
+            self, mode: str, request: ExchangeEntryRequest
+        ) -> ExchangeOperationResult:
+            self.submitted.append(request)
+            return ExchangeOperationResult(
+                accepted=False,
+                client_request_id=request.client_request_id,
+                message_ar="رفض حتمي من المحاكي",
+            )
+
+    database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
+    adapter = RejectedAdapter(_ready_snapshot())
+    payload = {
+        "symbol": "BTC_USDT",
+        "direction": "long",
+        "quantity": "1",
+        "client_request_id": "rejected-request",
+    }
+    with TestClient(create_app(database_url, exchange_adapter=adapter)) as client:
+        client.post("/v1/exchange/testnet/reconcile")
+        first = client.post("/v1/exchange/testnet/entries", json=payload)
+        retry = client.post("/v1/exchange/testnet/entries", json=payload)
+        audit = client.get("/v1/exchange/testnet/operations")
+
+    assert first.status_code == 503
+    assert retry.status_code == 503
+    assert len(adapter.submitted) == 2
+    matching = [
+        item for item in audit.json() if item["client_request_id"] == "rejected-request"
+    ]
+    assert matching[-1]["status"] == "rejected"
+
+
+def test_gate_configuration_stays_engine_private_and_redacts_values(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("GATE_TESTNET_KEY", "abc-secret-key")
     monkeypatch.setenv("GATE_TESTNET_SECRET", "do-not-show")
 
@@ -232,7 +408,9 @@ def test_gate_configuration_stays_engine_private_and_redacts_values(monkeypatch)
     assert "abc-secret-key" not in configuration.redacted_description()
 
 
-def test_configured_adapter_without_credentials_is_safe_and_offline(monkeypatch) -> None:
+def test_configured_adapter_without_credentials_is_safe_and_offline(
+    monkeypatch,
+) -> None:
     monkeypatch.delenv("GATE_TESTNET_KEY", raising=False)
     monkeypatch.delenv("GATE_TESTNET_SECRET", raising=False)
 
@@ -242,7 +420,9 @@ def test_configured_adapter_without_credentials_is_safe_and_offline(monkeypatch)
     assert adapter.reconcile("testnet").reconciliation_error is not None
 
 
-def test_gate_v4_adapter_signs_mocked_requests_and_refuses_orders_by_default(monkeypatch) -> None:
+def test_gate_v4_adapter_signs_mocked_requests_and_refuses_orders_by_default(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("GATE_TESTNET_KEY", "test-key")
     monkeypatch.setenv("GATE_TESTNET_SECRET", "test-secret")
     calls: list[tuple[str, str, str, dict[str, str], str]] = []
@@ -266,9 +446,19 @@ def test_gate_v4_adapter_signs_mocked_requests_and_refuses_orders_by_default(mon
             return {"id": "mock-order"}
         return []  # type: ignore[return-value]
 
-    adapter = GateIoV4Adapter(GateIoConfiguration.from_environment("testnet"), transport, allow_network=True)
+    adapter = GateIoV4Adapter(
+        GateIoConfiguration.from_environment("testnet"), transport, allow_network=True
+    )
     snapshot = adapter.reconcile("testnet")
-    blocked = adapter.submit_entry("testnet", ExchangeEntryRequest(symbol="BTC_USDT", direction="long", quantity="1", client_request_id="request-1"))
+    blocked = adapter.submit_entry(
+        "testnet",
+        ExchangeEntryRequest(
+            symbol="BTC_USDT",
+            direction="long",
+            quantity="1",
+            client_request_id="request-1",
+        ),
+    )
 
     assert snapshot.available_futures_balance == 1000
     assert calls[0][1].startswith("https://fx-api-testnet")
@@ -298,7 +488,9 @@ def test_gate_v4_adapter_signs_mocked_requests_and_refuses_orders_by_default(mon
 
 def test_mock_exchange_manages_partial_fill_protection_close_and_idempotency() -> None:
     adapter = MockGateIoAdapter()
-    request = ExchangeEntryRequest(symbol="BTC_USDT", direction="long", quantity="3", client_request_id="managed-1")
+    request = ExchangeEntryRequest(
+        symbol="BTC_USDT", direction="long", quantity="3", client_request_id="managed-1"
+    )
 
     accepted = adapter.submit_entry("testnet", request)
     duplicate = adapter.submit_entry("testnet", request)
@@ -330,7 +522,15 @@ def test_mock_exchange_requires_full_reconnect_before_automatic_recovery() -> No
 
 def test_mock_reconciliation_resizes_protection_after_external_reduction() -> None:
     adapter = MockGateIoAdapter()
-    adapter.submit_entry("testnet", ExchangeEntryRequest(symbol="BTC_USDT", direction="long", quantity="4", client_request_id="managed-2"))
+    adapter.submit_entry(
+        "testnet",
+        ExchangeEntryRequest(
+            symbol="BTC_USDT",
+            direction="long",
+            quantity="4",
+            client_request_id="managed-2",
+        ),
+    )
 
     reduced = adapter.reconcile_external_position(Decimal("2"))
     closed = adapter.reconcile_external_position(Decimal("0"))
@@ -343,11 +543,20 @@ def test_mock_reconciliation_resizes_protection_after_external_reduction() -> No
 
 def test_mock_limit_lifecycle_expires_or_hands_partial_fill_to_protection() -> None:
     adapter = MockGateIoAdapter()
-    limit = ExchangeEntryRequest(symbol="BTC_USDT", direction="long", order_type="limit", quantity="5", limit_price="99", client_request_id="limit-1")
+    limit = ExchangeEntryRequest(
+        symbol="BTC_USDT",
+        direction="long",
+        order_type="limit",
+        quantity="5",
+        limit_price="99",
+        client_request_id="limit-1",
+    )
 
     adapter.submit_entry("testnet", limit)
     expired = adapter.settle_limit(Decimal("0"))
-    adapter.submit_entry("testnet", limit.model_copy(update={"client_request_id": "limit-2"}))
+    adapter.submit_entry(
+        "testnet", limit.model_copy(update={"client_request_id": "limit-2"})
+    )
     partial = adapter.settle_limit(Decimal("2"), Decimal("99"))
 
     assert expired == "expired"
@@ -363,10 +572,20 @@ def test_mock_limit_lifecycle_expires_or_hands_partial_fill_to_protection() -> N
     ) == Decimal("102")
 
 
-def test_emergency_close_stops_then_reconciles_and_closes_only_managed_state(tmp_path) -> None:
+def test_emergency_close_stops_then_reconciles_and_closes_only_managed_state(
+    tmp_path,
+) -> None:
     database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
     adapter = MockGateIoAdapter()
-    adapter.submit_entry("live", ExchangeEntryRequest(symbol="BTC_USDT", direction="long", quantity="1", client_request_id="managed-close"))
+    adapter.submit_entry(
+        "live",
+        ExchangeEntryRequest(
+            symbol="BTC_USDT",
+            direction="long",
+            quantity="1",
+            client_request_id="managed-close",
+        ),
+    )
     with TestClient(create_app(database_url, exchange_adapter=adapter)) as client:
         response = client.post("/v1/exchange/live/emergency-close")
         state = client.get("/v1/exchange/live/state")
@@ -396,6 +615,21 @@ def test_failed_emergency_close_never_queues_a_later_close(tmp_path) -> None:
 
     assert result.json()["accepted"] is False
     assert adapter.position_quantity == 1
+    assert state.json()["emergency_stop"] is True
+
+
+def test_emergency_stop_is_durable_even_when_cancel_raises(tmp_path) -> None:
+    class FailingCancelAdapter(FakeGateAdapter):
+        def cancel_managed_entry(self, mode: str) -> ExchangeOperationResult:
+            raise TimeoutError("simulated cancel timeout")
+
+    database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
+    adapter = FailingCancelAdapter(_ready_snapshot())
+    with TestClient(create_app(database_url, exchange_adapter=adapter)) as client:
+        response = client.post("/v1/exchange/testnet/emergency-stop")
+        state = client.get("/v1/exchange/testnet/state")
+
+    assert response.status_code == 503
     assert state.json()["emergency_stop"] is True
 
 
@@ -564,11 +798,38 @@ def test_api_restart_restores_mock_state_but_forces_reconnect(tmp_path) -> None:
     assert restarted_adapter.may_resume_automatic() is False
     assert state.json()["snapshot"] is not None
 
-def test_market_entry_guard_uses_correct_side_vwap_and_rejects_stale_or_slippage() -> None:
+
+def test_market_entry_guard_uses_correct_side_vwap_and_rejects_stale_or_slippage() -> (
+    None
+):
     now = datetime.now(UTC)
-    allowed = guard_market_entry(MarketEntryGuardRequest(direction="long", quantity="2", last_price="100", last_price_observed_at=now, asks=[OrderBookLevel(price="100.1", quantity="2", observed_at=now)]))
-    rejected = guard_market_entry(MarketEntryGuardRequest(direction="short", quantity="1", last_price="100", last_price_observed_at=now, bids=[OrderBookLevel(price="99", quantity="1", observed_at=now)]))
-    stale = guard_market_entry(MarketEntryGuardRequest(direction="long", quantity="1", last_price="100", last_price_observed_at=datetime(2020, 1, 1, tzinfo=UTC), asks=[OrderBookLevel(price="100", quantity="1", observed_at=now)]))
+    allowed = guard_market_entry(
+        MarketEntryGuardRequest(
+            direction="long",
+            quantity="2",
+            last_price="100",
+            last_price_observed_at=now,
+            asks=[OrderBookLevel(price="100.1", quantity="2", observed_at=now)],
+        )
+    )
+    rejected = guard_market_entry(
+        MarketEntryGuardRequest(
+            direction="short",
+            quantity="1",
+            last_price="100",
+            last_price_observed_at=now,
+            bids=[OrderBookLevel(price="99", quantity="1", observed_at=now)],
+        )
+    )
+    stale = guard_market_entry(
+        MarketEntryGuardRequest(
+            direction="long",
+            quantity="1",
+            last_price="100",
+            last_price_observed_at=datetime(2020, 1, 1, tzinfo=UTC),
+            asks=[OrderBookLevel(price="100", quantity="1", observed_at=now)],
+        )
+    )
 
     assert allowed.allowed is True
     assert rejected.allowed is False
@@ -619,7 +880,9 @@ def test_testnet_verification_is_persistent_separate_and_advisory(tmp_path) -> N
     assert persisted.json()["stale"] is False
 
 
-def test_live_protection_disable_persists_and_requires_unprotected_confirmation(tmp_path) -> None:
+def test_live_protection_disable_persists_and_requires_unprotected_confirmation(
+    tmp_path,
+) -> None:
     database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
     adapter = MockGateIoAdapter()
     with TestClient(create_app(database_url, exchange_adapter=adapter)) as client:
@@ -661,7 +924,9 @@ def test_live_protection_disable_persists_and_requires_unprotected_confirmation(
     assert blocked.status_code == 422
 
 
-def test_database_restore_invalidates_exchange_readiness_until_reconciliation(tmp_path) -> None:
+def test_database_restore_invalidates_exchange_readiness_until_reconciliation(
+    tmp_path,
+) -> None:
     database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
     with TestClient(
         create_app(database_url, exchange_adapter=MockGateIoAdapter())
@@ -681,27 +946,27 @@ def test_database_restore_invalidates_exchange_readiness_until_reconciliation(tm
     assert state.json()["snapshot"] is None
 
 
-def test_emergency_resume_requires_safe_reconciliation_and_live_stays_locked(tmp_path) -> None:
+def test_emergency_resume_requires_safe_reconciliation_and_live_stays_locked(
+    tmp_path,
+) -> None:
     database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
     adapter = MockGateIoAdapter()
     with TestClient(create_app(database_url, exchange_adapter=adapter)) as client:
         client.post("/v1/exchange/live/reconcile")
         client.post("/v1/exchange/live/emergency-stop")
         adapter.inject_unmanaged_state(order_ids=("external-order",))
-        blocked = client.post(
-            "/v1/exchange/live/resume?confirmation=RESUME"
-        )
+        blocked = client.post("/v1/exchange/live/resume?confirmation=RESUME")
         adapter.clear_unmanaged_state()
-        resumed = client.post(
-            "/v1/exchange/live/resume?confirmation=RESUME"
-        )
+        resumed = client.post("/v1/exchange/live/resume?confirmation=RESUME")
 
     assert blocked.status_code == 409
     assert resumed.status_code == 200
     assert resumed.json()["live_locked"] is True
 
 
-def test_managed_close_and_protection_operations_have_persistent_identities(tmp_path) -> None:
+def test_managed_close_and_protection_operations_have_persistent_identities(
+    tmp_path,
+) -> None:
     database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
     adapter = MockGateIoAdapter()
     with TestClient(create_app(database_url, exchange_adapter=adapter)) as client:
@@ -719,7 +984,9 @@ def test_managed_close_and_protection_operations_have_persistent_identities(tmp_
     assert len(identities) == len(audit.json())
 
 
-def test_testnet_automatic_api_persists_intent_and_used_signal_across_restart(tmp_path) -> None:
+def test_testnet_automatic_api_persists_intent_and_used_signal_across_restart(
+    tmp_path,
+) -> None:
     database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
     adapter = MockGateIoAdapter()
     with TestClient(create_app(database_url, exchange_adapter=adapter)) as client:
@@ -738,14 +1005,14 @@ def test_testnet_automatic_api_persists_intent_and_used_signal_across_restart(tm
         )
 
     restarted_adapter = MockGateIoAdapter()
-    with TestClient(
-        create_app(database_url, exchange_adapter=restarted_adapter)
-    ):
+    with TestClient(create_app(database_url, exchange_adapter=restarted_adapter)):
         pass
 
     assert started.status_code == 200
     assert accepted.status_code == 200
     assert duplicate.status_code == 409
+    assert adapter.position_quantity == Decimal("1")
+    assert adapter.protection_confirmed is True
     assert restarted_adapter.automatic_intent is True
     assert ("BTC_USDT", "long") in restarted_adapter.used_signals
     assert restarted_adapter.may_resume_automatic() is False

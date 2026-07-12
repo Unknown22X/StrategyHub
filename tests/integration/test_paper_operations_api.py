@@ -50,7 +50,9 @@ def _create_limit(client: TestClient, expires_at: datetime | None = None) -> dic
             "current_request": request,
             "limit_price": "99",
             "placement_price": "100",
-            "expires_at": (expires_at or datetime.now(UTC) + timedelta(minutes=1)).isoformat(),
+            "expires_at": (
+                expires_at or datetime.now(UTC) + timedelta(minutes=1)
+            ).isoformat(),
             "confirmation": "CONFIRM PAPER LIMIT ENTRY",
             "signal_zone": "99-100",
         },
@@ -59,7 +61,9 @@ def _create_limit(client: TestClient, expires_at: datetime | None = None) -> dic
     return request
 
 
-def test_manual_close_cancels_protection_and_keeps_stale_controls_available(tmp_path) -> None:
+def test_manual_close_cancels_protection_and_keeps_stale_controls_available(
+    tmp_path,
+) -> None:
     database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
     request = _preview_request()
 
@@ -83,7 +87,9 @@ def test_manual_close_cancels_protection_and_keeps_stale_controls_available(tmp_
     assert Decimal(closed.json()["account"]["position_quantity"]) == Decimal("0")
 
 
-def test_partial_close_preserves_remaining_protection_and_rejects_reversal(tmp_path) -> None:
+def test_partial_close_preserves_remaining_protection_and_rejects_reversal(
+    tmp_path,
+) -> None:
     database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
     request = _preview_request()
     with TestClient(create_app(database_url)) as client:
@@ -91,19 +97,31 @@ def test_partial_close_preserves_remaining_protection_and_rejects_reversal(tmp_p
         preview = client.post("/v1/paper/entry-preview", json=request).json()
         opened = client.post(
             "/v1/paper/market-entry",
-            json={"preview": preview, "current_request": request, "confirmation": "CONFIRM PAPER MARKET ENTRY"},
+            json={
+                "preview": preview,
+                "current_request": request,
+                "confirmation": "CONFIRM PAPER MARKET ENTRY",
+            },
         ).json()
         quantity = Decimal(opened["position"]["quantity"])
         partial = client.post(
             "/v1/paper/position/close",
-            json={"market_price": "101", "quantity": str(quantity / 2), "confirmation": "CLOSE PAPER POSITION"},
+            json={
+                "market_price": "101",
+                "quantity": str(quantity / 2),
+                "confirmation": "CLOSE PAPER POSITION",
+            },
         )
         position = client.get("/v1/paper/position")
         protection = client.get("/v1/paper/position/protection")
         account = client.get("/v1/paper-account")
         oversized = client.post(
             "/v1/paper/position/close",
-            json={"market_price": "101", "quantity": str(quantity), "confirmation": "CLOSE PAPER POSITION"},
+            json={
+                "market_price": "101",
+                "quantity": str(quantity),
+                "confirmation": "CLOSE PAPER POSITION",
+            },
         )
 
     assert partial.status_code == 200
@@ -113,22 +131,46 @@ def test_partial_close_preserves_remaining_protection_and_rejects_reversal(tmp_p
     assert oversized.status_code == 422
 
 
-def test_risk_cooldown_persists_after_full_close_and_blocks_new_entries(tmp_path) -> None:
+def test_risk_cooldown_persists_after_full_close_and_blocks_new_entries(
+    tmp_path,
+) -> None:
     database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
     request = _preview_request()
     with TestClient(create_app(database_url)) as client:
         client.post("/v1/paper-account/initialize", json={"reason": "setup"})
         client.put(
             "/v1/paper/risk/settings",
-            json={"daily_loss_limit": "100", "losing_trade_limit": 3, "automatic_fill_limit": 10, "cooldown_seconds": 300},
+            json={
+                "daily_loss_limit": "100",
+                "losing_trade_limit": 3,
+                "automatic_fill_limit": 10,
+                "cooldown_seconds": 300,
+            },
         )
         preview = client.post("/v1/paper/entry-preview", json=request).json()
-        client.post("/v1/paper/market-entry", json={"preview": preview, "current_request": request, "confirmation": "CONFIRM PAPER MARKET ENTRY"})
-        client.post("/v1/paper/position/close", json={"market_price": "100", "confirmation": "CLOSE PAPER POSITION"})
+        client.post(
+            "/v1/paper/market-entry",
+            json={
+                "preview": preview,
+                "current_request": request,
+                "confirmation": "CONFIRM PAPER MARKET ENTRY",
+            },
+        )
+        client.post(
+            "/v1/paper/position/close",
+            json={"market_price": "100", "confirmation": "CLOSE PAPER POSITION"},
+        )
     with TestClient(create_app(database_url)) as restarted:
         risk = restarted.get("/v1/paper/risk")
         preview = restarted.post("/v1/paper/entry-preview", json=request).json()
-        blocked = restarted.post("/v1/paper/market-entry", json={"preview": preview, "current_request": request, "confirmation": "CONFIRM PAPER MARKET ENTRY"})
+        blocked = restarted.post(
+            "/v1/paper/market-entry",
+            json={
+                "preview": preview,
+                "current_request": request,
+                "confirmation": "CONFIRM PAPER MARKET ENTRY",
+            },
+        )
 
     assert risk.json()["cooldown_until"] is not None
     assert blocked.status_code == 409
@@ -153,7 +195,9 @@ def test_limit_lifecycle_and_risk_block_keep_cancel_available(tmp_path) -> None:
     assert Decimal(filled.json()["position"]["entry_price"]) == Decimal("99")
 
 
-def test_expired_limit_marks_signal_used_and_emergency_stop_cancels_pending(tmp_path) -> None:
+def test_expired_limit_marks_signal_used_and_emergency_stop_cancels_pending(
+    tmp_path,
+) -> None:
     database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
     with TestClient(create_app(database_url)) as client:
         client.post("/v1/paper-account/initialize", json={"reason": "setup"})
@@ -169,7 +213,8 @@ def test_expired_limit_marks_signal_used_and_emergency_stop_cancels_pending(tmp_
         )
         pending = client.get("/v1/paper/pending-entry")
         resume = client.post(
-            "/v1/paper/emergency-stop/resume", json={"confirmation": "RESUME"},
+            "/v1/paper/emergency-stop/resume",
+            json={"confirmation": "RESUME"},
         )
 
     assert expired.json()["expired"] is True
@@ -291,7 +336,9 @@ def test_automatic_entry_requires_active_contract_and_consumes_signal(tmp_path) 
     assert duplicate.status_code == 409
     assert signals.json()[0]["trigger_zone"] == "99-100"
 
-    with TestClient(create_app(database_url, public_market_provider=_PublicMarket())) as reset_client:
+    with TestClient(
+        create_app(database_url, public_market_provider=_PublicMarket())
+    ) as reset_client:
         inside = reset_client.post(
             "/v1/paper/used-signals/BTC_USDT/long/reset",
             json={"market_price": "99.5", "reset_distance_percentage": "1"},

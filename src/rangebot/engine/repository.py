@@ -259,10 +259,14 @@ class PaperPendingEntryRecord(Base):
     maker_fee_rate: Mapped[Decimal] = mapped_column(Numeric(24, 8), nullable=False)
     entry_fee_rate: Mapped[Decimal] = mapped_column(Numeric(24, 8), nullable=False)
     safety_reserve: Mapped[Decimal] = mapped_column(Numeric(24, 8), nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     signal_zone: Mapped[str | None] = mapped_column(String(200))
     signal_symbol: Mapped[str | None] = mapped_column(String(64))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
 
 class PaperRiskStateRecord(Base):
@@ -323,7 +327,9 @@ class PaperVerificationRecordRow(Base):
     __tablename__ = "paper_verification_record"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     engine_build: Mapped[str] = mapped_column(String(200), nullable=False)
     safety_fingerprint: Mapped[str] = mapped_column(String(128), nullable=False)
     evidence: Mapped[str] = mapped_column(Text, nullable=False)
@@ -433,7 +439,9 @@ class PaperAccountRepository:
                     raise LookupError("Paper Account has no open position.")
                 close_quantity = request.quantity or position.quantity
                 if close_quantity > position.quantity:
-                    raise ValueError("Paper close quantity exceeds the remaining position.")
+                    raise ValueError(
+                        "Paper close quantity exceeds the remaining position."
+                    )
                 fully_closed = close_quantity == position.quantity
                 protection = session.get(PaperProtectionRecord, 1)
                 result = self._close_position_record(
@@ -483,7 +491,9 @@ class PaperAccountRepository:
                 raise LookupError("Paper Account has no pending entry.")
             return self._to_pending_entry(record)
 
-    def create_limit_entry(self, request: PaperLimitEntryRequest) -> PaperLimitCheckResult:
+    def create_limit_entry(
+        self, request: PaperLimitEntryRequest
+    ) -> PaperLimitCheckResult:
         """Create one full-or-none Paper Limit entry without placing any exchange order."""
         if request.confirmation != "CONFIRM PAPER LIMIT ENTRY":
             raise ValueError("Explicit Paper Limit-entry confirmation required.")
@@ -500,7 +510,8 @@ class PaperAccountRepository:
             fee_schedule = self._fee_schedule(session)
             if (
                 request.current_request.taker_fee_rate is not None
-                and request.current_request.taker_fee_rate != fee_schedule.taker_fee_rate
+                and request.current_request.taker_fee_rate
+                != fee_schedule.taker_fee_rate
             ):
                 raise ValueError("Paper Entry Preview is stale: fee schedule changed.")
             marketable = (
@@ -509,7 +520,9 @@ class PaperAccountRepository:
                 else request.limit_price <= request.placement_price
             )
             entry_fee_rate = (
-                fee_schedule.taker_fee_rate if marketable else fee_schedule.maker_fee_rate
+                fee_schedule.taker_fee_rate
+                if marketable
+                else fee_schedule.maker_fee_rate
             )
             pending = PaperPendingEntryRecord(
                 id=1,
@@ -565,7 +578,10 @@ class PaperAccountRepository:
                 account.revision += 1
                 if signal_zone is not None:
                     self._record_used_signal(
-                        session, pending.signal_symbol or "ACTIVE", direction, signal_zone
+                        session,
+                        pending.signal_symbol or "ACTIVE",
+                        direction,
+                        signal_zone,
                     )
                 self._audit(
                     session,
@@ -591,7 +607,9 @@ class PaperAccountRepository:
                     account=self._to_snapshot(account),
                     pending_entry=self._to_pending_entry(pending),
                 )
-            actual_margin = pending.quantity * pending.limit_price / Decimal(pending.leverage)
+            actual_margin = (
+                pending.quantity * pending.limit_price / Decimal(pending.leverage)
+            )
             entry_fee = pending.quantity * pending.limit_price * pending.entry_fee_rate
             total_debit = actual_margin + entry_fee
             if total_debit + pending.safety_reserve > account.available_futures_balance:
@@ -693,7 +711,9 @@ class PaperAccountRepository:
         self, request: PaperAutomaticSignalRequest
     ) -> PaperMarketEntryResult:
         if not request.market_ready or not request.history_ready:
-            raise ValueError("Automatic Paper entry requires fresh market and history data.")
+            raise ValueError(
+                "Automatic Paper entry requires fresh market and history data."
+            )
         with Session(self._database_engine) as session:
             account = session.get(PaperAccountRecord, 1)
             if account is None:
@@ -723,16 +743,16 @@ class PaperAccountRepository:
             self._release_automatic_reservation(request)
             raise
         return result.model_copy(
-            update={
-                "activity": "تم فتح مركز Paper تلقائيا وتم حفظ الإشارة كمستخدمة."
-            }
+            update={"activity": "تم فتح مركز Paper تلقائيا وتم حفظ الإشارة كمستخدمة."}
         )
 
     def automatic_limit_entry(
         self, request: PaperAutomaticLimitRequest
     ) -> PaperLimitCheckResult:
         if not request.market_ready or not request.history_ready:
-            raise ValueError("Automatic Paper Limit requires fresh market and history data.")
+            raise ValueError(
+                "Automatic Paper Limit requires fresh market and history data."
+            )
         with Session(self._database_engine) as session:
             account = session.get(PaperAccountRecord, 1)
             if account is None:
@@ -782,15 +802,21 @@ class PaperAccountRepository:
                 )
             )
             for record in records:
-                low, high = (Decimal(part) for part in record.trigger_zone.split("-", maxsplit=1))
+                low, high = (
+                    Decimal(part) for part in record.trigger_zone.split("-", maxsplit=1)
+                )
                 distance = request.reset_distance_percentage / Decimal("100")
-                outside_zone = request.market_price < low * (Decimal("1") - distance) or request.market_price > high * (Decimal("1") + distance)
+                outside_zone = request.market_price < low * (
+                    Decimal("1") - distance
+                ) or request.market_price > high * (Decimal("1") + distance)
                 if outside_zone:
                     record.reset_seen = True
             session.commit()
             return [self._to_used_signal(record) for record in records]
 
-    def _release_automatic_reservation(self, request: PaperAutomaticSignalRequest) -> None:
+    def _release_automatic_reservation(
+        self, request: PaperAutomaticSignalRequest
+    ) -> None:
         with Session(self._database_engine) as session:
             record = session.scalar(
                 select(PaperUsedSignalRecord).where(
@@ -828,7 +854,9 @@ class PaperAccountRepository:
             if account is not None and pending is not None:
                 session.delete(pending)
                 account.pending_entry = False
-                account.last_change_reason = "Paper Emergency Stop cancelled pending entry"
+                account.last_change_reason = (
+                    "Paper Emergency Stop cancelled pending entry"
+                )
                 account.revision += 1
             self._audit(
                 session,
@@ -838,7 +866,9 @@ class PaperAccountRepository:
             session.commit()
             return self._to_emergency_state(emergency)
 
-    def resume_after_emergency(self, request: PaperResumeRequest) -> PaperEmergencyState:
+    def resume_after_emergency(
+        self, request: PaperResumeRequest
+    ) -> PaperEmergencyState:
         if request.confirmation != "RESUME":
             raise ValueError("Type RESUME to clear Paper Emergency Stop.")
         with Session(self._database_engine) as session:
@@ -886,7 +916,9 @@ class PaperAccountRepository:
                 safety_fingerprint=fingerprint,
             )
             session.add(record)
-            self._audit(session, "profile_saved", "تم حفظ ملف إعدادات Paper بدون أسرار.")
+            self._audit(
+                session, "profile_saved", "تم حفظ ملف إعدادات Paper بدون أسرار."
+            )
             session.commit()
             return self._to_profile(record)
 
@@ -897,7 +929,9 @@ class PaperAccountRepository:
                 for record in session.scalars(select(PaperProfileRecord))
             ]
 
-    def duplicate_profile(self, profile_id: int, change: PaperProfileChange) -> PaperProfile:
+    def duplicate_profile(
+        self, profile_id: int, change: PaperProfileChange
+    ) -> PaperProfile:
         with Session(self._database_engine) as session:
             original = session.get(PaperProfileRecord, profile_id)
             if original is None:
@@ -916,7 +950,9 @@ class PaperAccountRepository:
             session.commit()
             return self._to_profile(duplicate)
 
-    def update_profile(self, profile_id: int, change: PaperProfileChange) -> PaperProfile:
+    def update_profile(
+        self, profile_id: int, change: PaperProfileChange
+    ) -> PaperProfile:
         with Session(self._database_engine) as session:
             record = session.get(PaperProfileRecord, profile_id)
             if record is None:
@@ -954,17 +990,37 @@ class PaperAccountRepository:
                 raise LookupError("Paper Account has not been initialized.")
             fee_schedule = self._fee_schedule(session)
             validated_fees = PaperFeeSchedule(
-                maker_fee_rate=Decimal(str(profile.settings.get("maker_fee_rate", fee_schedule.maker_fee_rate))),
-                taker_fee_rate=Decimal(str(profile.settings.get("taker_fee_rate", fee_schedule.taker_fee_rate))),
+                maker_fee_rate=Decimal(
+                    str(
+                        profile.settings.get(
+                            "maker_fee_rate", fee_schedule.maker_fee_rate
+                        )
+                    )
+                ),
+                taker_fee_rate=Decimal(
+                    str(
+                        profile.settings.get(
+                            "taker_fee_rate", fee_schedule.taker_fee_rate
+                        )
+                    )
+                ),
             )
             fee_schedule.maker_fee_rate = validated_fees.maker_fee_rate
             fee_schedule.taker_fee_rate = validated_fees.taker_fee_rate
             risk = self._risk_state(session, account)
             validated_risk = PaperRiskSettings(
-                daily_loss_limit=profile.settings.get("daily_loss_limit", risk.daily_loss_limit),
-                losing_trade_limit=profile.settings.get("losing_trade_limit", risk.losing_trade_limit),
-                automatic_fill_limit=profile.settings.get("automatic_fill_limit", risk.automatic_fill_limit),
-                cooldown_seconds=profile.settings.get("cooldown_seconds", risk.cooldown_seconds),
+                daily_loss_limit=profile.settings.get(
+                    "daily_loss_limit", risk.daily_loss_limit
+                ),
+                losing_trade_limit=profile.settings.get(
+                    "losing_trade_limit", risk.losing_trade_limit
+                ),
+                automatic_fill_limit=profile.settings.get(
+                    "automatic_fill_limit", risk.automatic_fill_limit
+                ),
+                cooldown_seconds=profile.settings.get(
+                    "cooldown_seconds", risk.cooldown_seconds
+                ),
             )
             risk.daily_loss_limit = validated_risk.daily_loss_limit
             risk.losing_trade_limit = validated_risk.losing_trade_limit
@@ -1024,11 +1080,13 @@ class PaperAccountRepository:
                 existing.engine_build = ENGINE_BUILD_ID
                 existing.safety_fingerprint = safety_fingerprint
                 existing.evidence = request.evidence
-            self._audit(session, "paper_verification_recorded", "تم تسجيل تحقق Paper كدليل استرشادي.")
-            session.commit()
-            return self._to_verification(
-                existing, ENGINE_BUILD_ID, safety_fingerprint
+            self._audit(
+                session,
+                "paper_verification_recorded",
+                "تم تسجيل تحقق Paper كدليل استرشادي.",
             )
+            session.commit()
+            return self._to_verification(existing, ENGINE_BUILD_ID, safety_fingerprint)
 
     def verification(self) -> PaperVerificationRecord:
         with Session(self._database_engine) as session:
@@ -1069,7 +1127,8 @@ class PaperAccountRepository:
             fee_schedule = self._fee_schedule(session)
             if (
                 request.current_request.taker_fee_rate is not None
-                and request.current_request.taker_fee_rate != fee_schedule.taker_fee_rate
+                and request.current_request.taker_fee_rate
+                != fee_schedule.taker_fee_rate
             ):
                 raise ValueError("Paper Entry Preview is stale: fee schedule changed.")
 
@@ -1083,15 +1142,18 @@ class PaperAccountRepository:
                     Decimal("1") - slippage_fraction
                 )
             quantity = recalculated.quantity
-            entry_fee = quantity * fill_price * (
-                fee_schedule.taker_fee_rate
-            )
-            allocated_margin = quantity * fill_price / Decimal(
-                request.current_request.leverage
+            entry_fee = quantity * fill_price * (fee_schedule.taker_fee_rate)
+            allocated_margin = (
+                quantity * fill_price / Decimal(request.current_request.leverage)
             )
             total_debit = allocated_margin + entry_fee
-            if total_debit + recalculated.safety_reserve > account.available_futures_balance:
-                raise ValueError("Paper Market entry exceeds available balance after fill.")
+            if (
+                total_debit + recalculated.safety_reserve
+                > account.available_futures_balance
+            ):
+                raise ValueError(
+                    "Paper Market entry exceeds available balance after fill."
+                )
 
             position = PaperPositionRecord(
                 id=1,
@@ -1127,7 +1189,9 @@ class PaperAccountRepository:
             session.commit()
             snapshot = self._to_snapshot(account)
             return PaperMarketEntryResult(
-                position=self._to_position(position), account=snapshot, activity=activity
+                position=self._to_position(position),
+                account=snapshot,
+                activity=activity,
             )
 
     def position(self) -> PaperPosition:
@@ -1148,7 +1212,8 @@ class PaperAccountRepository:
         with Session(self._database_engine) as session:
             record = self._fee_schedule(session)
             return PaperFeeSchedule(
-                maker_fee_rate=record.maker_fee_rate, taker_fee_rate=record.taker_fee_rate
+                maker_fee_rate=record.maker_fee_rate,
+                taker_fee_rate=record.taker_fee_rate,
             )
 
     def update_fee_schedule(self, schedule: PaperFeeSchedule) -> PaperFeeSchedule:
@@ -1159,7 +1224,8 @@ class PaperAccountRepository:
             record.taker_fee_rate = schedule.taker_fee_rate
             session.commit()
             return PaperFeeSchedule(
-                maker_fee_rate=record.maker_fee_rate, taker_fee_rate=record.taker_fee_rate
+                maker_fee_rate=record.maker_fee_rate,
+                taker_fee_rate=record.taker_fee_rate,
             )
 
     def check_protection(
@@ -1236,14 +1302,18 @@ class PaperAccountRepository:
                 target + position.entry_fee + position.quantity * position.entry_price
             ) / (position.quantity * (Decimal("1") - position.maker_fee_rate))
             sl = (
-                position.quantity * position.entry_price + position.entry_fee - maximum_loss
+                position.quantity * position.entry_price
+                + position.entry_fee
+                - maximum_loss
             ) / (position.quantity * (Decimal("1") - position.taker_fee_rate))
         else:
             tp = (
                 position.quantity * position.entry_price - position.entry_fee - target
             ) / (position.quantity * (Decimal("1") + position.maker_fee_rate))
             sl = (
-                position.quantity * position.entry_price - position.entry_fee + maximum_loss
+                position.quantity * position.entry_price
+                - position.entry_fee
+                + maximum_loss
             ) / (position.quantity * (Decimal("1") + position.taker_fee_rate))
         return tp, sl
 
@@ -1268,7 +1338,9 @@ class PaperAccountRepository:
     def _audit(session: Session, action: str, reason: str) -> None:
         session.add(
             PaperAccountAuditRecord(
-                occurred_at=datetime.now(UTC), action=action, reason=_redact_audit_text(reason)
+                occurred_at=datetime.now(UTC),
+                action=action,
+                reason=_redact_audit_text(reason),
             )
         )
 
@@ -1655,9 +1727,7 @@ class PaperAccountRepository:
             evidence=record.evidence,
             stale=stale,
             advisory_warning_ar=(
-                "تحقق Paper قديم، وهذا تحذير استرشادي فقط."
-                if stale
-                else None
+                "تحقق Paper قديم، وهذا تحذير استرشادي فقط." if stale else None
             ),
         )
 
@@ -1848,11 +1918,21 @@ class ExchangeModeRepository:
             value = self._state(session, mode).verification_json
             return None if value is None else json.loads(value)
 
-    def persist_intent(self, mode: TradingMode, client_request_id: str, kind: str, payload_json: str) -> None:
+    def persist_intent(
+        self, mode: TradingMode, client_request_id: str, kind: str, payload_json: str
+    ) -> None:
         with Session(self._database_engine) as session:
             existing = session.get(ExchangeRequestRecord, client_request_id)
             if existing is None:
-                session.add(ExchangeRequestRecord(client_request_id=client_request_id, mode=mode, kind=kind, status="pending", payload_json=payload_json))
+                session.add(
+                    ExchangeRequestRecord(
+                        client_request_id=client_request_id,
+                        mode=mode,
+                        kind=kind,
+                        status="pending",
+                        payload_json=payload_json,
+                    )
+                )
                 session.commit()
 
     def mark_intent(self, client_request_id: str, status: str) -> None:
@@ -1871,9 +1951,7 @@ class ExchangeModeRepository:
     def request_audit(self, mode: TradingMode) -> list[ExchangeRequestAudit]:
         with Session(self._database_engine) as session:
             records = session.scalars(
-                select(ExchangeRequestRecord).where(
-                    ExchangeRequestRecord.mode == mode
-                )
+                select(ExchangeRequestRecord).where(ExchangeRequestRecord.mode == mode)
             )
             return [
                 ExchangeRequestAudit(

@@ -36,7 +36,14 @@ class PaperEntryPreviewWidget(QWidget):
         )
         blocks = "، ".join(preview.blocking_reasons) or "لا توجد موانع"
         self.blocking_label = QLabel(f"موانع الدخول: {blocks}")
-        for label in (self.liquidation_label, self.protection_label, self.budget_label, self.entry_label, self.fees_label, self.blocking_label):
+        for label in (
+            self.liquidation_label,
+            self.protection_label,
+            self.budget_label,
+            self.entry_label,
+            self.fees_label,
+            self.blocking_label,
+        ):
             label.setTextFormat(Qt.TextFormat.PlainText)
             label.setAlignment(Qt.AlignmentFlag.AlignRight)
             layout.addWidget(label)

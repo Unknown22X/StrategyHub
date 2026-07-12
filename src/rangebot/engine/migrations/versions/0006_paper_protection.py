@@ -18,14 +18,18 @@ def upgrade() -> None:
     op.add_column(
         "paper_position",
         sa.Column(
-            "maker_fee_rate", sa.Numeric(precision=24, scale=8), nullable=False,
+            "maker_fee_rate",
+            sa.Numeric(precision=24, scale=8),
+            nullable=False,
             server_default="0.001",
         ),
     )
     op.add_column(
         "paper_position",
         sa.Column(
-            "taker_fee_rate", sa.Numeric(precision=24, scale=8), nullable=False,
+            "taker_fee_rate",
+            sa.Numeric(precision=24, scale=8),
+            nullable=False,
             server_default="0.001",
         ),
     )

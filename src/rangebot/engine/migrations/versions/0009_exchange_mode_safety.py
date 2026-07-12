@@ -14,8 +14,12 @@ def upgrade() -> None:
     op.create_table(
         "exchange_mode_state",
         sa.Column("mode", sa.String(length=16), primary_key=True),
-        sa.Column("live_locked", sa.Boolean(), nullable=False, server_default=sa.true()),
-        sa.Column("emergency_stop", sa.Boolean(), nullable=False, server_default=sa.false()),
+        sa.Column(
+            "live_locked", sa.Boolean(), nullable=False, server_default=sa.true()
+        ),
+        sa.Column(
+            "emergency_stop", sa.Boolean(), nullable=False, server_default=sa.false()
+        ),
         sa.Column("snapshot_json", sa.Text(), nullable=True),
     )
 

@@ -50,7 +50,9 @@ class RangeBotWindow(QWidget):
         root.setContentsMargins(24, 20, 24, 20)
         root.setSpacing(16)
         root.addWidget(self._status_header())
-        self.warning_banner = QLabel("وضع Live مقفل افتراضياً. لا يتم إرسال أي أمر حقيقي من الواجهة.")
+        self.warning_banner = QLabel(
+            "وضع Live مقفل افتراضياً. لا يتم إرسال أي أمر حقيقي من الواجهة."
+        )
         self.warning_banner.setObjectName("warningBanner")
         self.warning_banner.setWordWrap(True)
         root.addWidget(self.warning_banner)
@@ -112,9 +114,31 @@ class RangeBotWindow(QWidget):
         self.protection_card = self._card("الحماية", "TP / SL: —")
         self.cooldown_card = self._card("التهدئة", "لا توجد تهدئة")
         self.risk_card = self._card("المخاطر اليومية", "ضمن الحدود")
-        for index, card in enumerate((self.balance_card, self.active_card, self.position_card, self.protection_card, self.cooldown_card, self.risk_card)):
+        for index, card in enumerate(
+            (
+                self.balance_card,
+                self.active_card,
+                self.position_card,
+                self.protection_card,
+                self.cooldown_card,
+                self.risk_card,
+            )
+        ):
             grid.addWidget(card, index // 3, index % 3)
-        grid.addWidget(self._action_box("إجراءات سريعة", (("تحديث البيانات", self.refresh_all), ("إيقاف طارئ", self.emergency_stop), ("إغلاق طارئ", self.emergency_close))), 2, 0, 1, 3)
+        grid.addWidget(
+            self._action_box(
+                "إجراءات سريعة",
+                (
+                    ("تحديث البيانات", self.refresh_all),
+                    ("إيقاف طارئ", self.emergency_stop),
+                    ("إغلاق طارئ", self.emergency_close),
+                ),
+            ),
+            2,
+            0,
+            1,
+            3,
+        )
         return page
 
     def _watchlist_page(self) -> QWidget:
@@ -133,9 +157,13 @@ class RangeBotWindow(QWidget):
         for button in (add, active, automatic):
             controls.addWidget(button)
         layout.addLayout(controls)
-        self.watchlist_table = self._table(["العقد", "آخر سعر", "النطاق", "Long", "Short", "الحالة", "الحداثة"])
+        self.watchlist_table = self._table(
+            ["العقد", "آخر سعر", "النطاق", "Long", "Short", "الحالة", "الحداثة"]
+        )
         layout.addWidget(self.watchlist_table)
-        self.watchlist_message = QLabel("أضف العقود يدوياً؛ لا يقترح RangeBot عقوداً أو يفعّلها تلقائياً.")
+        self.watchlist_message = QLabel(
+            "أضف العقود يدوياً؛ لا يقترح RangeBot عقوداً أو يفعّلها تلقائياً."
+        )
         self.watchlist_message.setWordWrap(True)
         layout.addWidget(self.watchlist_message)
         return page
@@ -143,7 +171,11 @@ class RangeBotWindow(QWidget):
     def _decision_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.addWidget(QLabel("يعرض المحرك شروط الدخول الناجحة والممنوعة لكل عقد. لا يمكن لهذه الصفحة تجاوز أي شرط أمان."))
+        layout.addWidget(
+            QLabel(
+                "يعرض المحرك شروط الدخول الناجحة والممنوعة لكل عقد. لا يمكن لهذه الصفحة تجاوز أي شرط أمان."
+            )
+        )
         self.decision_table = self._table(["الشرط", "الحالة", "التفسير"])
         layout.addWidget(self.decision_table)
         return page
@@ -174,7 +206,9 @@ class RangeBotWindow(QWidget):
         confirm.clicked.connect(self.submit_market_entry)
         form.addRow(preview, confirm)
         layout.addWidget(form_box)
-        self.preview_summary = QLabel("ستظهر هنا قيمة الهامش والرسوم والكمية وسعر التصفية التقديري وأسباب المنع.")
+        self.preview_summary = QLabel(
+            "ستظهر هنا قيمة الهامش والرسوم والكمية وسعر التصفية التقديري وأسباب المنع."
+        )
         self.preview_summary.setObjectName("summaryPanel")
         self.preview_summary.setWordWrap(True)
         layout.addWidget(self.preview_summary)
@@ -183,7 +217,17 @@ class RangeBotWindow(QWidget):
     def _position_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.addWidget(self._action_box("المركز والحماية", (("تحديث المركز", self.load_position), ("فحص TP / SL", self.check_protection), ("إغلاق المركز", self.close_position), ("إلغاء أمر الدخول", self.cancel_pending))))
+        layout.addWidget(
+            self._action_box(
+                "المركز والحماية",
+                (
+                    ("تحديث المركز", self.load_position),
+                    ("فحص TP / SL", self.check_protection),
+                    ("إغلاق المركز", self.close_position),
+                    ("إلغاء أمر الدخول", self.cancel_pending),
+                ),
+            )
+        )
         self.position_summary = QLabel("لا توجد بيانات مركز حالياً.")
         self.position_summary.setObjectName("summaryPanel")
         self.position_summary.setWordWrap(True)
@@ -191,9 +235,7 @@ class RangeBotWindow(QWidget):
         protection_box = QGroupBox("تحكم حماية Live")
         protection_form = QFormLayout(protection_box)
         self.protection_confirmation = QLineEdit()
-        self.protection_confirmation.setPlaceholderText(
-            "DISABLE TP أو DISABLE SL"
-        )
+        self.protection_confirmation.setPlaceholderText("DISABLE TP أو DISABLE SL")
         disable_tp = QPushButton("تعطيل TP للمركز")
         disable_tp.clicked.connect(self.disable_live_tp)
         disable_sl = QPushButton("تعطيل SL للمركز")
@@ -206,8 +248,22 @@ class RangeBotWindow(QWidget):
     def _risk_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.addWidget(QLabel("تستمر الحماية والمصالحة حتى عند إغلاق الواجهة. الإيقاف الطارئ يمنع كل دخول جديد بشكل دائم إلى أن يتم RESUME."))
-        layout.addWidget(self._action_box("إجراءات الأمان", (("عرض المخاطر", self.load_risk), ("إيقاف طارئ", self.emergency_stop), ("استئناف التداول", self.resume_emergency), ("إغلاق طارئ", self.emergency_close))))
+        layout.addWidget(
+            QLabel(
+                "تستمر الحماية والمصالحة حتى عند إغلاق الواجهة. الإيقاف الطارئ يمنع كل دخول جديد بشكل دائم إلى أن يتم RESUME."
+            )
+        )
+        layout.addWidget(
+            self._action_box(
+                "إجراءات الأمان",
+                (
+                    ("عرض المخاطر", self.load_risk),
+                    ("إيقاف طارئ", self.emergency_stop),
+                    ("استئناف التداول", self.resume_emergency),
+                    ("إغلاق طارئ", self.emergency_close),
+                ),
+            )
+        )
         live_box = QGroupBox("تفعيل Live عالي الخطورة")
         live_form = QFormLayout(live_box)
         self.live_confirmation = QLineEdit()
@@ -227,7 +283,17 @@ class RangeBotWindow(QWidget):
     def _operator_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.addWidget(self._action_box("السجل والمساعدة", (("السجل", self.load_audit), ("مركز المساعدة", self.load_help), ("تسجيل التحقق", self.record_verification), ("حالة التحقق", self.load_verification))))
+        layout.addWidget(
+            self._action_box(
+                "السجل والمساعدة",
+                (
+                    ("السجل", self.load_audit),
+                    ("مركز المساعدة", self.load_help),
+                    ("تسجيل التحقق", self.record_verification),
+                    ("حالة التحقق", self.load_verification),
+                ),
+            )
+        )
         self.operator_table = self._table(["الوقت", "العملية", "التفسير"])
         layout.addWidget(self.operator_table)
         return page
@@ -238,7 +304,9 @@ class RangeBotWindow(QWidget):
         except httpx.HTTPError:
             self.is_connected = False
             self.connection_label.setText("الاتصال: غير متصل")
-            self.warning_banner.setText("تعذر الاتصال بالمحرك؛ تبقى عمليات المحرك والخدمة مستقلة عن الواجهة.")
+            self.warning_banner.setText(
+                "تعذر الاتصال بالمحرك؛ تبقى عمليات المحرك والخدمة مستقلة عن الواجهة."
+            )
             return
         self.is_connected = True
         self.connection_label.setText("الاتصال: متصل")
@@ -248,11 +316,17 @@ class RangeBotWindow(QWidget):
         mode = self.mode_selector.currentData()
         self.mode_label.setText(f"النمط: {self.mode_selector.currentText()}")
         if mode == "live":
-            self.warning_banner.setText("وضع Live مقفل. لا يمكن فك القفل إلا من المحرك بعد إدخال LIVE وفحوصات المصالحة الحالية.")
+            self.warning_banner.setText(
+                "وضع Live مقفل. لا يمكن فك القفل إلا من المحرك بعد إدخال LIVE وفحوصات المصالحة الحالية."
+            )
         elif mode == "testnet":
-            self.warning_banner.setText("Testnet يستخدم نفس ضوابط الحماية. لا ترسل الواجهة أي أمر إلى Gate.io مباشرة.")
+            self.warning_banner.setText(
+                "Testnet يستخدم نفس ضوابط الحماية. لا ترسل الواجهة أي أمر إلى Gate.io مباشرة."
+            )
         else:
-            self.warning_banner.setText("Paper منفصل عن حساب Gate.io ولا يستخدم أي بيانات اعتماد.")
+            self.warning_banner.setText(
+                "Paper منفصل عن حساب Gate.io ولا يستخدم أي بيانات اعتماد."
+            )
 
     def refresh_all(self) -> None:
         self.refresh()
@@ -261,10 +335,18 @@ class RangeBotWindow(QWidget):
         self.load_risk()
 
     def add_watchlist(self) -> None:
-        self._request("post", f"/v1/paper/watchlist/{self.symbol_input.text()}", success="تمت إضافة العقد للمراقبة.")
+        self._request(
+            "post",
+            f"/v1/paper/watchlist/{self.symbol_input.text()}",
+            success="تمت إضافة العقد للمراقبة.",
+        )
 
     def activate_watchlist(self) -> None:
-        self._request("post", f"/v1/paper/watchlist/{self.symbol_input.text()}/active", success="تم تعيين العقد النشط وإيقاف التداول التلقائي حتى تأكيد البدء.")
+        self._request(
+            "post",
+            f"/v1/paper/watchlist/{self.symbol_input.text()}/active",
+            success="تم تعيين العقد النشط وإيقاف التداول التلقائي حتى تأكيد البدء.",
+        )
 
     def start_automation(self) -> None:
         mode = self.mode_selector.currentData()
@@ -273,7 +355,9 @@ class RangeBotWindow(QWidget):
             if mode == "paper"
             else f"/v1/exchange/{mode}/automatic/start"
         )
-        payload = None if mode == "paper" else {"active_contract": self.symbol_input.text()}
+        payload = (
+            None if mode == "paper" else {"active_contract": self.symbol_input.text()}
+        )
         self._confirm(
             "بدء التداول التلقائي",
             "سيقيّم المحرك العقد النشط فقط وفق ضوابطه الحالية.",
@@ -285,7 +369,9 @@ class RangeBotWindow(QWidget):
     def create_preview(self) -> None:
         mode = self.mode_selector.currentData()
         if mode == "paper":
-            self.preview_summary.setText("المعاينة تتطلب بيانات سوق حديثة من المحرك. راجع العقد النشط والحالة قبل التأكيد.")
+            self.preview_summary.setText(
+                "المعاينة تتطلب بيانات سوق حديثة من المحرك. راجع العقد النشط والحالة قبل التأكيد."
+            )
             return
         result = self._request(
             "post",
@@ -304,7 +390,13 @@ class RangeBotWindow(QWidget):
     def submit_market_entry(self) -> None:
         mode = self.mode_selector.currentData()
         if mode == "paper":
-            self._confirm("تأكيد الدخول اليدوي", "سيُرسل المحرك الطلب فقط إن اجتازت المعاينة وكل ضوابط الأمان.", lambda: self.preview_summary.setText("راجع معاينة Paper ثم أكد العملية من المحرك."))
+            self._confirm(
+                "تأكيد الدخول اليدوي",
+                "سيُرسل المحرك الطلب فقط إن اجتازت المعاينة وكل ضوابط الأمان.",
+                lambda: self.preview_summary.setText(
+                    "راجع معاينة Paper ثم أكد العملية من المحرك."
+                ),
+            )
             return
         self._confirm(
             "تأكيد الدخول اليدوي",
@@ -331,7 +423,15 @@ class RangeBotWindow(QWidget):
         items = result.get("items", [])
         self.watchlist_table.setRowCount(len(items))
         for row, item in enumerate(items):
-            values = (item.get("symbol", ""), item.get("last_price", "—"), "—", "—", "—", item.get("direction", "مراقبة"), item.get("freshness", "—"))
+            values = (
+                item.get("symbol", ""),
+                item.get("last_price", "—"),
+                "—",
+                "—",
+                "—",
+                item.get("direction", "مراقبة"),
+                item.get("freshness", "—"),
+            )
             for column, value in enumerate(values):
                 self.watchlist_table.setItem(row, column, QTableWidgetItem(str(value)))
 
@@ -353,9 +453,15 @@ class RangeBotWindow(QWidget):
     def check_protection(self) -> None:
         mode = self.mode_selector.currentData()
         if mode == "paper":
-            self.position_summary.setText("فحص الحماية يتم من محرك Paper عند وصول بيانات السوق الحديثة.")
+            self.position_summary.setText(
+                "فحص الحماية يتم من محرك Paper عند وصول بيانات السوق الحديثة."
+            )
             return
-        self._request("post", f"/v1/exchange/{mode}/protection/check", success="تم طلب فحص الحماية المُدارة من المحرك.")
+        self._request(
+            "post",
+            f"/v1/exchange/{mode}/protection/check",
+            success="تم طلب فحص الحماية المُدارة من المحرك.",
+        )
 
     def disable_live_tp(self) -> None:
         self._change_live_protection("tp", "DISABLE TP")
@@ -390,52 +496,138 @@ class RangeBotWindow(QWidget):
     def close_position(self) -> None:
         mode = self.mode_selector.currentData()
         if mode == "paper":
-            self.position_summary.setText("يتطلب إغلاق Paper معاينة سعر حالية من المحرك.")
+            self.position_summary.setText(
+                "يتطلب إغلاق Paper معاينة سعر حالية من المحرك."
+            )
             return
-        self._confirm("إغلاق المركز", "سيُلغي المحرك حماية المركز ثم يصالح الكمية ويغلق المتبقي فقط.", lambda: self._request("post", f"/v1/exchange/{mode}/close", {"confirmation": "CLOSE POSITION"}, "تم طلب إغلاق محمي من المحرك."))
+        self._confirm(
+            "إغلاق المركز",
+            "سيُلغي المحرك حماية المركز ثم يصالح الكمية ويغلق المتبقي فقط.",
+            lambda: self._request(
+                "post",
+                f"/v1/exchange/{mode}/close",
+                {"confirmation": "CLOSE POSITION"},
+                "تم طلب إغلاق محمي من المحرك.",
+            ),
+        )
 
     def cancel_pending(self) -> None:
         mode = self.mode_selector.currentData()
         if mode == "paper":
-            self._confirm("إلغاء أمر الدخول", "يُلغي هذا الإجراء أمر الدخول المُدار فقط.", lambda: self._request("delete", "/v1/paper/pending-entry", success="تم طلب إلغاء أمر الدخول."))
+            self._confirm(
+                "إلغاء أمر الدخول",
+                "يُلغي هذا الإجراء أمر الدخول المُدار فقط.",
+                lambda: self._request(
+                    "delete",
+                    "/v1/paper/pending-entry",
+                    success="تم طلب إلغاء أمر الدخول.",
+                ),
+            )
             return
-        self._confirm("إلغاء أمر الدخول", "يُلغي هذا الإجراء أمر الدخول المُدار فقط.", lambda: self._request("post", f"/v1/exchange/{mode}/cancel-entry", success="تم طلب إلغاء أمر الدخول المُدار."))
+        self._confirm(
+            "إلغاء أمر الدخول",
+            "يُلغي هذا الإجراء أمر الدخول المُدار فقط.",
+            lambda: self._request(
+                "post",
+                f"/v1/exchange/{mode}/cancel-entry",
+                success="تم طلب إلغاء أمر الدخول المُدار.",
+            ),
+        )
 
     def load_risk(self) -> None:
         result = self._request("get", "/v1/paper/risk")
         if isinstance(result, dict):
-            self.risk_summary.setText(f"الخسارة المحققة: {result.get('realized_net', '—')} | التهدئة: {result.get('cooldown_until', 'لا توجد')}")
+            self.risk_summary.setText(
+                f"الخسارة المحققة: {result.get('realized_net', '—')} | التهدئة: {result.get('cooldown_until', 'لا توجد')}"
+            )
 
     def emergency_stop(self) -> None:
         mode = self.mode_selector.currentData()
         if mode == "paper":
-            self._confirm("إيقاف طارئ", "سيمنع الإيقاف الطارئ كل دخول جديد ويُلغي أوامر الدخول المدارة فقط.", lambda: self._request("post", "/v1/paper/emergency-stop", {"confirmation": "EMERGENCY STOP", "reason": "طلب من واجهة التحكم"}, "تم تفعيل الإيقاف الطارئ."))
+            self._confirm(
+                "إيقاف طارئ",
+                "سيمنع الإيقاف الطارئ كل دخول جديد ويُلغي أوامر الدخول المدارة فقط.",
+                lambda: self._request(
+                    "post",
+                    "/v1/paper/emergency-stop",
+                    {"confirmation": "EMERGENCY STOP", "reason": "طلب من واجهة التحكم"},
+                    "تم تفعيل الإيقاف الطارئ.",
+                ),
+            )
             return
-        self._confirm("إيقاف طارئ", "سيمنع الإيقاف الطارئ كل دخول جديد ويلغي أوامر الدخول المُدارة فقط.", lambda: self._request("post", f"/v1/exchange/{mode}/emergency-stop", success="تم تفعيل الإيقاف الطارئ."))
+        self._confirm(
+            "إيقاف طارئ",
+            "سيمنع الإيقاف الطارئ كل دخول جديد ويلغي أوامر الدخول المُدارة فقط.",
+            lambda: self._request(
+                "post",
+                f"/v1/exchange/{mode}/emergency-stop",
+                success="تم تفعيل الإيقاف الطارئ.",
+            ),
+        )
 
     def resume_emergency(self) -> None:
         mode = self.mode_selector.currentData()
         if mode == "paper":
-            self._confirm("استئناف التداول", "يحتاج المحرك إلى المصالحة قبل السماح بأي دخول جديد.", lambda: self._request("post", "/v1/paper/emergency-stop/resume", {"confirmation": "RESUME"}, "تم إرسال طلب الاستئناف."))
+            self._confirm(
+                "استئناف التداول",
+                "يحتاج المحرك إلى المصالحة قبل السماح بأي دخول جديد.",
+                lambda: self._request(
+                    "post",
+                    "/v1/paper/emergency-stop/resume",
+                    {"confirmation": "RESUME"},
+                    "تم إرسال طلب الاستئناف.",
+                ),
+            )
             return
-        self._confirm("استئناف التداول", "يحتاج المحرك إلى المصالحة قبل السماح بأي دخول جديد.", lambda: self._request("post", f"/v1/exchange/{mode}/resume?confirmation=RESUME", success="تم إرسال طلب الاستئناف."))
+        self._confirm(
+            "استئناف التداول",
+            "يحتاج المحرك إلى المصالحة قبل السماح بأي دخول جديد.",
+            lambda: self._request(
+                "post",
+                f"/v1/exchange/{mode}/resume?confirmation=RESUME",
+                success="تم إرسال طلب الاستئناف.",
+            ),
+        )
 
     def emergency_close(self) -> None:
         mode = self.mode_selector.currentData()
         if mode == "paper":
-            self.position_summary.setText("يتطلب الإغلاق الطارئ في Paper سعراً حديثاً من المحرك.")
+            self.position_summary.setText(
+                "يتطلب الإغلاق الطارئ في Paper سعراً حديثاً من المحرك."
+            )
             return
-        self._confirm("إغلاق طارئ", "سيفعّل المحرك الإيقاف الطارئ أولاً ثم يغلق الكمية المتبقية بعد المصالحة.", lambda: self._request("post", f"/v1/exchange/{mode}/emergency-close", success="تم تنفيذ طلب الإغلاق الطارئ المُصالح."))
+        self._confirm(
+            "إغلاق طارئ",
+            "سيفعّل المحرك الإيقاف الطارئ أولاً ثم يغلق الكمية المتبقية بعد المصالحة.",
+            lambda: self._request(
+                "post",
+                f"/v1/exchange/{mode}/emergency-close",
+                success="تم تنفيذ طلب الإغلاق الطارئ المُصالح.",
+            ),
+        )
 
     def reconcile_selected_exchange(self) -> None:
         mode = self.mode_selector.currentData()
         if mode == "paper":
             self.warning_banner.setText("Paper لا يحتاج مصالحة Gate.io.")
             return
-        self._request("post", f"/v1/exchange/{mode}/reconcile", success="تم طلب مصالحة آمنة من المحرك؛ راجع حالة المنع قبل أي إجراء.")
+        self._request(
+            "post",
+            f"/v1/exchange/{mode}/reconcile",
+            success="تم طلب مصالحة آمنة من المحرك؛ راجع حالة المنع قبل أي إجراء.",
+        )
 
     def activate_live(self) -> None:
-        self._confirm("تأكيد تفعيل Live", "لا يفعّل المحرك Live إلا عند صحة LIVE وفحوصات الحساب الحالية. أدخل النص المطلوب فقط إن كنت مفوضاً بذلك.", lambda: self._request("post", "/v1/live/activate", {"confirmation": self.live_confirmation.text()}, "تم إرسال طلب التفعيل إلى المحرك."))
+        self._confirm(
+            "تأكيد تفعيل Live",
+            "لا يفعّل المحرك Live إلا عند صحة LIVE وفحوصات الحساب الحالية. أدخل النص المطلوب فقط إن كنت مفوضاً بذلك.",
+            lambda: self._request(
+                "post",
+                "/v1/live/activate",
+                {"confirmation": self.live_confirmation.text()},
+                "تم إرسال طلب التفعيل إلى المحرك.",
+            ),
+        )
 
     def load_audit(self) -> None:
         mode = self.mode_selector.currentData()
@@ -452,7 +644,12 @@ class RangeBotWindow(QWidget):
     def record_verification(self) -> None:
         mode = self.mode_selector.currentData()
         if mode == "paper":
-            self._request("post", "/v1/paper/verification", {"evidence": "مراجعة تشغيلية من واجهة التحكم"}, "سُجلت أدلة Paper كمعلومة استشارية.")
+            self._request(
+                "post",
+                "/v1/paper/verification",
+                {"evidence": "مراجعة تشغيلية من واجهة التحكم"},
+                "سُجلت أدلة Paper كمعلومة استشارية.",
+            )
             return
         self._request(
             "post",
@@ -472,7 +669,13 @@ class RangeBotWindow(QWidget):
 
     def _populate_operator(self, method: str, path: str) -> None:
         result = self._request(method, path)
-        rows = result if isinstance(result, list) else [result] if isinstance(result, dict) else []
+        rows = (
+            result
+            if isinstance(result, list)
+            else [result]
+            if isinstance(result, dict)
+            else []
+        )
         self.operator_table.setRowCount(len(rows))
         for row, item in enumerate(rows):
             values = (
@@ -486,11 +689,21 @@ class RangeBotWindow(QWidget):
             for column, value in enumerate(values):
                 self.operator_table.setItem(row, column, QTableWidgetItem(str(value)))
 
-    def _request(self, method: str, path: str, payload: dict[str, Any] | None = None, success: str | None = None) -> Any:
+    def _request(
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | None = None,
+        success: str | None = None,
+    ) -> Any:
         if self._client is None:
             return None
         try:
-            result = getattr(self._client, method)(path, payload) if payload is not None else getattr(self._client, method)(path)
+            result = (
+                getattr(self._client, method)(path, payload)
+                if payload is not None
+                else getattr(self._client, method)(path)
+            )
         except httpx.HTTPError as error:
             self.warning_banner.setText(f"تعذر تنفيذ العملية: {error}")
             return None
@@ -503,7 +716,9 @@ class RangeBotWindow(QWidget):
         dialog.setWindowTitle(title)
         dialog.setText(text)
         dialog.setIcon(QMessageBox.Icon.Warning)
-        dialog.setStandardButtons(QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Ok)
+        dialog.setStandardButtons(
+            QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Ok
+        )
         if dialog.exec() == QMessageBox.StandardButton.Ok:
             action()
 
@@ -529,7 +744,9 @@ class RangeBotWindow(QWidget):
         return card
 
     @staticmethod
-    def _action_box(title: str, actions: tuple[tuple[str, Callable[[], None]], ...]) -> QGroupBox:
+    def _action_box(
+        title: str, actions: tuple[tuple[str, Callable[[], None]], ...]
+    ) -> QGroupBox:
         box = QGroupBox(title)
         layout = QHBoxLayout(box)
         for label, handler in actions:

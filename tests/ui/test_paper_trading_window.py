@@ -37,7 +37,9 @@ class FakeEngineClient:
 def test_operator_window_is_rtl_form_based_and_has_no_json_debug_surface() -> None:
     application = QApplication.instance() or QApplication([])
     client = FakeEngineClient()
-    window = RangeBotWindow(client.fetch_runtime_state, refresh_interval_ms=60_000, engine_client=client)  # type: ignore[arg-type]
+    window = RangeBotWindow(
+        client.fetch_runtime_state, refresh_interval_ms=60_000, engine_client=client
+    )  # type: ignore[arg-type]
 
     assert window.layoutDirection() == Qt.LayoutDirection.RightToLeft
     assert window.tabs.count() == 7

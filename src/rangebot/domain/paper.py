@@ -271,13 +271,23 @@ class PaperProfileChange(BaseModel):
         cls, settings: dict[str, object]
     ) -> dict[str, JsonValue]:
         allowed = {
-            "theme", "language", "font_size", "layout", "leverage",
-            "maker_fee_rate", "taker_fee_rate", "daily_loss_limit",
-            "losing_trade_limit", "automatic_fill_limit", "cooldown_seconds",
+            "theme",
+            "language",
+            "font_size",
+            "layout",
+            "leverage",
+            "maker_fee_rate",
+            "taker_fee_rate",
+            "daily_loss_limit",
+            "losing_trade_limit",
+            "automatic_fill_limit",
+            "cooldown_seconds",
         }
         for key in settings:
             if key not in allowed:
-                raise ValueError("Paper profiles may contain only approved Paper settings.")
+                raise ValueError(
+                    "Paper profiles may contain only approved Paper settings."
+                )
         return settings
 
 

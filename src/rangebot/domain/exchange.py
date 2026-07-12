@@ -138,6 +138,7 @@ class MarketEntryGuardResult(BaseModel):
 
 
 class MarketGuardQuoteRequest(BaseModel):
+    symbol: str = Field(default="BTC_USDT", min_length=1, max_length=64)
     direction: Literal["long", "short"]
     quantity: Decimal = Field(gt=0)
 
@@ -162,6 +163,9 @@ class AutomaticStartRequest(BaseModel):
 class AutomaticSignalRequest(BaseModel):
     symbol: str = Field(min_length=1, max_length=64)
     direction: Literal["long", "short"]
+    quantity: Decimal = Field(default=Decimal("1"), gt=0)
+    order_type: Literal["market", "limit"] = "market"
+    limit_price: Decimal | None = Field(default=None, gt=0)
 
 
 class ExchangeRequestAudit(BaseModel):

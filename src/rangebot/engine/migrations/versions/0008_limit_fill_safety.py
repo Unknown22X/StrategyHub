@@ -13,7 +13,12 @@ depends_on = None
 def upgrade() -> None:
     op.add_column(
         "paper_pending_entry",
-        sa.Column("safety_reserve", sa.Numeric(precision=24, scale=8), nullable=False, server_default="0"),
+        sa.Column(
+            "safety_reserve",
+            sa.Numeric(precision=24, scale=8),
+            nullable=False,
+            server_default="0",
+        ),
     )
 
 

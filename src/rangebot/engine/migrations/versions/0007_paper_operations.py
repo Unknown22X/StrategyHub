@@ -17,7 +17,9 @@ def upgrade() -> None:
         sa.Column("kind", sa.String(length=16), nullable=False),
         sa.Column("direction", sa.String(length=8), nullable=False),
         sa.Column("quantity", sa.Numeric(precision=24, scale=8), nullable=False),
-        sa.Column("allocated_margin", sa.Numeric(precision=24, scale=8), nullable=False),
+        sa.Column(
+            "allocated_margin", sa.Numeric(precision=24, scale=8), nullable=False
+        ),
         sa.Column("limit_price", sa.Numeric(precision=24, scale=8), nullable=False),
         sa.Column("leverage", sa.Integer(), nullable=False),
         sa.Column("taker_fee_rate", sa.Numeric(precision=24, scale=8), nullable=False),
@@ -33,11 +35,17 @@ def upgrade() -> None:
         "paper_risk_state",
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("day", sa.String(length=10), nullable=False),
-        sa.Column("baseline_balance", sa.Numeric(precision=24, scale=8), nullable=False),
-        sa.Column("realized_net_loss", sa.Numeric(precision=24, scale=8), nullable=False),
+        sa.Column(
+            "baseline_balance", sa.Numeric(precision=24, scale=8), nullable=False
+        ),
+        sa.Column(
+            "realized_net_loss", sa.Numeric(precision=24, scale=8), nullable=False
+        ),
         sa.Column("losing_trades", sa.Integer(), nullable=False),
         sa.Column("automatic_fills", sa.Integer(), nullable=False),
-        sa.Column("daily_loss_limit", sa.Numeric(precision=24, scale=8), nullable=False),
+        sa.Column(
+            "daily_loss_limit", sa.Numeric(precision=24, scale=8), nullable=False
+        ),
         sa.Column("losing_trade_limit", sa.Integer(), nullable=False),
         sa.Column("automatic_fill_limit", sa.Integer(), nullable=False),
         sa.Column("cooldown_seconds", sa.Integer(), nullable=False),

@@ -155,9 +155,7 @@ def create_app(
         mode: TradingMode, kind: str, operation: Callable[[], ExchangeOperationResult]
     ) -> ExchangeOperationResult:
         client_request_id = str(uuid4())
-        exchange_repository.persist_intent(
-            mode, client_request_id, kind, "{}"
-        )
+        exchange_repository.persist_intent(mode, client_request_id, kind, "{}")
         try:
             result = operation()
         except Exception as error:
@@ -205,6 +203,20 @@ def create_app(
         adapter = _mock_adapter()
         try:
             adapter.consume_automatic_signal(request.symbol, request.direction)
+            result = adapter.submit_entry(
+                mode,
+                ExchangeEntryRequest(
+                    symbol=request.symbol,
+                    direction=request.direction,
+                    order_type=request.order_type,
+                    quantity=request.quantity,
+                    limit_price=request.limit_price,
+                    client_request_id=f"auto-{uuid4()}",
+                ),
+            )
+            if not result.accepted:
+                adapter.used_signals.discard((request.symbol, request.direction))
+                raise RuntimeError(result.message_ar)
         except RuntimeError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         _persist_mock_state(mode)
@@ -236,7 +248,9 @@ def create_app(
         if value is None:
             return None
         record = ExchangeVerificationRecord.model_validate(value)
-        return record.model_copy(update={"stale": record.engine_build != ENGINE_BUILD_ID})
+        return record.model_copy(
+            update={"stale": record.engine_build != ENGINE_BUILD_ID}
+        )
 
     @app.get("/v1/exchange/{mode}/state", response_model=ModeState)
     def exchange_state(mode: TradingMode) -> ModeState:
@@ -260,7 +274,9 @@ def create_app(
     @app.post("/v1/live/activate", response_model=ModeState)
     def activate_live(request: LiveActivationRequest) -> ModeState:
         state = _exchange_state("live")
-        non_lock_reasons = entry_blocks(state.snapshot, "testnet", False, state.emergency_stop)
+        non_lock_reasons = entry_blocks(
+            state.snapshot, "testnet", False, state.emergency_stop
+        )
         try:
             paper_state = paper_repository.get()
         except LookupError:
@@ -270,7 +286,10 @@ def create_app(
             paper_state.position_quantity != 0 or paper_state.pending_entry
         ):
             non_lock_reasons += ("يوجد نشاط Paper قائم؛ لا يمكن تفعيل Live.",)
-        if testnet_snapshot is not None and testnet_snapshot.position_quantity != 0:
+        if testnet_snapshot is not None and (
+            testnet_snapshot.position_quantity != 0
+            or bool(testnet_snapshot.managed_order_ids)
+        ):
             non_lock_reasons += ("يوجد مركز Testnet قائم؛ لا يمكن تفعيل Live.",)
         if request.confirmation != "LIVE":
             raise HTTPException(status_code=422, detail="يلزم إدخال LIVE حرفياً.")
@@ -282,12 +301,14 @@ def create_app(
     @app.post("/v1/exchange/{mode}/emergency-stop", response_model=ModeState)
     def exchange_emergency_stop(mode: TradingMode) -> ModeState:
         # Only adapter-owned pending entries may be cancelled; unmanaged state is never touched.
+        exchange_repository.set_emergency_stop(mode, True)
+        if mode == "live":
+            exchange_repository.set_live_locked(True)
         _managed_operation(
             mode,
             "emergency_cancel_entry",
             lambda: gate_adapter.cancel_managed_entry(mode),
         )
-        exchange_repository.set_emergency_stop(mode, True)
         _persist_mock_state(mode)
         return _exchange_state(mode)
 
@@ -317,7 +338,9 @@ def create_app(
         if not request.enabled:
             expected = "DISABLE TP" if request.protection == "tp" else "DISABLE SL"
             if request.confirmation != expected:
-                raise HTTPException(status_code=422, detail=f"يلزم إدخال {expected} حرفياً.")
+                raise HTTPException(
+                    status_code=422, detail=f"يلزم إدخال {expected} حرفياً."
+                )
         result = _managed_operation(
             "live",
             f"set_{request.protection}_protection",
@@ -332,7 +355,9 @@ def create_app(
         _persist_mock_state("live")
         return _exchange_state("live")
 
-    @app.post("/v1/exchange/{mode}/protection/check", response_model=ExchangeOperationResult)
+    @app.post(
+        "/v1/exchange/{mode}/protection/check", response_model=ExchangeOperationResult
+    )
     def check_exchange_protection(mode: TradingMode) -> ExchangeOperationResult:
         result = _managed_operation(
             mode, "ensure_protection", lambda: gate_adapter.ensure_protection(mode)
@@ -346,11 +371,15 @@ def create_app(
         return _submit_exchange_entry("live", request)
 
     @app.post("/v1/exchange/{mode}/entries", response_model=ModeState)
-    def submit_exchange_entry(mode: TradingMode, request: LiveEntryRequest) -> ModeState:
+    def submit_exchange_entry(
+        mode: TradingMode, request: LiveEntryRequest
+    ) -> ModeState:
         return _submit_exchange_entry(mode, request)
 
     @app.post("/v1/exchange/market-entry-guard", response_model=MarketEntryGuardResult)
-    def preview_market_entry_guard(request: MarketEntryGuardRequest) -> MarketEntryGuardResult:
+    def preview_market_entry_guard(
+        request: MarketEntryGuardRequest,
+    ) -> MarketEntryGuardResult:
         return guard_market_entry(request)
 
     @app.post(
@@ -365,10 +394,14 @@ def create_app(
         except RuntimeError as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
 
-    def _submit_exchange_entry(mode: TradingMode, request: LiveEntryRequest) -> ModeState:
+    def _submit_exchange_entry(
+        mode: TradingMode, request: LiveEntryRequest
+    ) -> ModeState:
         state = _exchange_state(mode)
         if state.blocked_reasons_ar:
-            raise HTTPException(status_code=409, detail=" ".join(state.blocked_reasons_ar))
+            raise HTTPException(
+                status_code=409, detail=" ".join(state.blocked_reasons_ar)
+            )
         globally_unprotected = bool(
             state.snapshot
             and not state.snapshot.tp_enabled
@@ -379,26 +412,40 @@ def create_app(
             and (not request.protections_enabled or globally_unprotected)
             and request.confirmation != "UNPROTECTED POSITION"
         ):
-            raise HTTPException(status_code=422, detail="يلزم إدخال UNPROTECTED POSITION حرفياً.")
+            raise HTTPException(
+                status_code=422, detail="يلزم إدخال UNPROTECTED POSITION حرفياً."
+            )
         if request.order_type == "market":
-            if request.market_guard is None:
-                raise HTTPException(status_code=409, detail="يلزم فحص تنفيذ Market حديث قبل الإرسال.")
-            guard = guard_market_entry(request.market_guard)
+            try:
+                authoritative_quote = gate_adapter.market_guard_quote(
+                    mode,
+                    MarketGuardQuoteRequest(
+                        symbol=request.symbol,
+                        direction=request.direction,
+                        quantity=request.quantity,
+                    ),
+                )
+            except RuntimeError as error:
+                raise HTTPException(status_code=503, detail=str(error)) from error
+            guard = guard_market_entry(authoritative_quote)
             if not guard.allowed:
                 raise HTTPException(status_code=409, detail=guard.reason_ar)
         client_request_id = request.client_request_id or str(uuid4())
         prior_status = exchange_repository.intent_status(client_request_id)
         if prior_status == "pending_unknown":
-            raise HTTPException(status_code=409, detail="نتيجة الطلب السابق غير معروفة؛ يلزم إجراء المصالحة قبل المحاولة.")
-        exchange_request = ExchangeEntryRequest(
-                symbol=request.symbol,
-                direction=request.direction,
-                order_type=request.order_type,
-                quantity=request.quantity,
-                limit_price=request.limit_price,
-                client_request_id=client_request_id,
-                protections_enabled=request.protections_enabled,
+            raise HTTPException(
+                status_code=409,
+                detail="نتيجة الطلب السابق غير معروفة؛ يلزم إجراء المصالحة قبل المحاولة.",
             )
+        exchange_request = ExchangeEntryRequest(
+            symbol=request.symbol,
+            direction=request.direction,
+            order_type=request.order_type,
+            quantity=request.quantity,
+            limit_price=request.limit_price,
+            client_request_id=client_request_id,
+            protections_enabled=request.protections_enabled,
+        )
         exchange_repository.persist_intent(
             mode,
             exchange_request.client_request_id,
@@ -408,7 +455,13 @@ def create_app(
         result = gate_adapter.submit_entry(mode, exchange_request)
         exchange_repository.mark_intent(
             exchange_request.client_request_id,
-            "accepted" if result.accepted else "pending_unknown",
+            (
+                "accepted"
+                if result.accepted
+                else "pending_unknown"
+                if result.pending_unknown
+                else "rejected"
+            ),
         )
         _persist_mock_state(mode)
         if not result.accepted:
@@ -416,7 +469,9 @@ def create_app(
         exchange_repository.save_snapshot(gate_adapter.reconcile(mode))
         return _exchange_state(mode)
 
-    @app.post("/v1/exchange/{mode}/cancel-entry", response_model=ExchangeOperationResult)
+    @app.post(
+        "/v1/exchange/{mode}/cancel-entry", response_model=ExchangeOperationResult
+    )
     def cancel_exchange_entry(mode: TradingMode) -> ExchangeOperationResult:
         result = _managed_operation(
             mode, "cancel_entry", lambda: gate_adapter.cancel_managed_entry(mode)
@@ -430,7 +485,9 @@ def create_app(
         mode: TradingMode, request: ExchangeCloseRequest
     ) -> ExchangeOperationResult:
         if request.confirmation != "CLOSE POSITION":
-            raise HTTPException(status_code=422, detail="يلزم إدخال CLOSE POSITION حرفياً.")
+            raise HTTPException(
+                status_code=422, detail="يلزم إدخال CLOSE POSITION حرفياً."
+            )
         result = _managed_operation(
             mode,
             "manual_close",
@@ -440,26 +497,41 @@ def create_app(
         exchange_repository.save_snapshot(gate_adapter.reconcile(mode))
         return result
 
-    @app.post("/v1/exchange/{mode}/emergency-close", response_model=ExchangeOperationResult)
+    @app.post(
+        "/v1/exchange/{mode}/emergency-close", response_model=ExchangeOperationResult
+    )
     def emergency_close_exchange(mode: TradingMode) -> ExchangeOperationResult:
         """Persist the stop first; close only after a current safe reconciliation state."""
+        exchange_repository.set_emergency_stop(mode, True)
+        if mode == "live":
+            exchange_repository.set_live_locked(True)
         _managed_operation(
             mode,
             "emergency_cancel_entry",
             lambda: gate_adapter.cancel_managed_entry(mode),
         )
-        exchange_repository.set_emergency_stop(mode, True)
         snapshot = gate_adapter.reconcile(mode)
         exchange_repository.save_snapshot(snapshot)
         if snapshot.reconciliation_error or snapshot.unmanaged_state:
-            raise HTTPException(status_code=409, detail="تعذر الإغلاق الطارئ حتى تكتمل المصالحة الآمنة.")
+            raise HTTPException(
+                status_code=409, detail="تعذر الإغلاق الطارئ حتى تكتمل المصالحة الآمنة."
+            )
         result = _managed_operation(
             mode,
             "emergency_close",
             lambda: gate_adapter.close_managed_position(mode),
         )
         _persist_mock_state(mode)
-        exchange_repository.save_snapshot(gate_adapter.reconcile(mode))
+        final_snapshot = gate_adapter.reconcile(mode)
+        exchange_repository.save_snapshot(final_snapshot)
+        if result.accepted and (
+            final_snapshot.position_quantity != 0
+            or bool(final_snapshot.managed_order_ids)
+        ):
+            raise HTTPException(
+                status_code=503,
+                detail="لم يكتمل الإغلاق الطارئ إلى مركز صفري وأوامر مُدارة صفرية.",
+            )
         return result
 
     @app.get("/health", response_model=RuntimeState)
@@ -647,7 +719,8 @@ def create_app(
         return paper_repository.update_fee_schedule(schedule)
 
     @app.post(
-        "/v1/paper/position/protection/check", response_model=PaperProtectionTriggerResult
+        "/v1/paper/position/protection/check",
+        response_model=PaperProtectionTriggerResult,
     )
     def check_paper_protection(
         request: PaperProtectionCheck,
@@ -681,7 +754,9 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(error)) from error
 
     @app.post("/v1/paper/limit-entry", response_model=PaperLimitCheckResult)
-    def create_paper_limit_entry(request: PaperLimitEntryRequest) -> PaperLimitCheckResult:
+    def create_paper_limit_entry(
+        request: PaperLimitEntryRequest,
+    ) -> PaperLimitCheckResult:
         try:
             return paper_repository.create_limit_entry(request)
         except LookupError as error:
@@ -781,12 +856,17 @@ def create_app(
     def paper_used_signals() -> list[PaperUsedSignal]:
         return paper_repository.used_signals()
 
-    @app.post("/v1/paper/used-signals/{symbol}/{direction}/reset", response_model=list[PaperUsedSignal])
+    @app.post(
+        "/v1/paper/used-signals/{symbol}/{direction}/reset",
+        response_model=list[PaperUsedSignal],
+    )
     def reset_paper_signal(
         symbol: str, direction: str, request: PaperDirectionalResetRequest
     ) -> list[PaperUsedSignal]:
         if direction not in {"long", "short"}:
-            raise HTTPException(status_code=422, detail="Direction must be long or short.")
+            raise HTTPException(
+                status_code=422, detail="Direction must be long or short."
+            )
         return paper_repository.directional_reset(
             _normalize_contract_symbol(symbol), direction, request
         )
@@ -831,14 +911,18 @@ def create_app(
         return paper_repository.save_profile(change)
 
     @app.post("/v1/paper/profiles/{profile_id}/duplicate", response_model=PaperProfile)
-    def duplicate_paper_profile(profile_id: int, change: PaperProfileChange) -> PaperProfile:
+    def duplicate_paper_profile(
+        profile_id: int, change: PaperProfileChange
+    ) -> PaperProfile:
         try:
             return paper_repository.duplicate_profile(profile_id, change)
         except LookupError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
     @app.put("/v1/paper/profiles/{profile_id}", response_model=PaperProfile)
-    def update_paper_profile(profile_id: int, change: PaperProfileChange) -> PaperProfile:
+    def update_paper_profile(
+        profile_id: int, change: PaperProfileChange
+    ) -> PaperProfile:
         try:
             return paper_repository.update_profile(profile_id, change)
         except LookupError as error:
@@ -851,7 +935,9 @@ def create_app(
         except LookupError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
-    @app.post("/v1/paper/profiles/{profile_id}/apply", response_model=PaperProfileApplyResult)
+    @app.post(
+        "/v1/paper/profiles/{profile_id}/apply", response_model=PaperProfileApplyResult
+    )
     def apply_paper_profile(
         profile_id: int, change: PaperProfileChange
     ) -> PaperProfileApplyResult:

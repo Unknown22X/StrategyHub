@@ -17,9 +17,7 @@ def test_winsw_service_is_automatic_restartable_and_separate_from_ui() -> None:
 def test_packaging_and_operations_assets_exclude_credentials() -> None:
     engine_spec = (ROOT / "deploy" / "engine.spec").read_text(encoding="utf-8")
     ui_spec = (ROOT / "deploy" / "ui.spec").read_text(encoding="utf-8")
-    restore = (ROOT / "deploy" / "restore-postgresql.ps1").read_text(
-        encoding="utf-8"
-    )
+    restore = (ROOT / "deploy" / "restore-postgresql.ps1").read_text(encoding="utf-8")
 
     assert ".env" not in engine_spec + ui_spec
     assert "bot-engine" in engine_spec

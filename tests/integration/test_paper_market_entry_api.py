@@ -79,7 +79,9 @@ def test_confirmed_paper_market_entry_persists_slippage_fee_and_arabic_activity(
     assert audit.json()[-1]["action"] == "manual_market_entry"
 
 
-def test_market_entry_rejects_missing_confirmation_stale_or_unsafe_data(tmp_path) -> None:
+def test_market_entry_rejects_missing_confirmation_stale_or_unsafe_data(
+    tmp_path,
+) -> None:
     database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
 
     with TestClient(create_app(database_url)) as client:
@@ -219,7 +221,9 @@ def test_protection_trigger_uses_stored_fee_rate_with_decimal_accounting(
     assert Decimal(closed["account"]["available_futures_balance"]) == expected_balance
 
 
-def test_later_fee_schedule_change_does_not_change_open_position_rates(tmp_path) -> None:
+def test_later_fee_schedule_change_does_not_change_open_position_rates(
+    tmp_path,
+) -> None:
     database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
     request = _preview_payload()
     request["taker_fee_rate"] = "0.003"

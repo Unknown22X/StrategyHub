@@ -3,7 +3,7 @@
 Automated release gate executed on 2026-07-13:
 
 - `uv run ruff check .` — passed.
-- `uv run pytest -q` — 83 passed.
+- `uv run pytest -q` — 86 passed.
 - `uv run pyinstaller --clean --noconfirm deploy/engine.spec` — passed.
 - `uv run pyinstaller --clean --noconfirm deploy/ui.spec` — passed.
 - Both packaged executables returned exit code 0 for `--help`.

@@ -16,7 +16,9 @@ class PaperWatchlistWidget(QWidget):
         self.item_labels: list[QLabel] = []
         for item in watchlist.items:
             status = "نشط للتداول الآلي" if item.is_active else "مراقبة فقط"
-            price = f" | السعر: \u2066{item.last_price}\u2069" if item.last_price else ""
+            price = (
+                f" | السعر: \u2066{item.last_price}\u2069" if item.last_price else ""
+            )
             label = QLabel(f"{status}: \u2066{item.symbol}\u2069{price}")
             label.setTextFormat(Qt.TextFormat.PlainText)
             label.setAlignment(Qt.AlignmentFlag.AlignRight)
