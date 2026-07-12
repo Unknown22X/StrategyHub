@@ -8,12 +8,12 @@
 
 ## Acceptance criteria
 
-- [ ] Paper Account balance, positions, orders, protection, cooldown, and risk state are local and distinct from Testnet and Live state.
-- [ ] Default Paper Starting Balance is 1,000 USDT; an operator-selected amount is persisted with its change reason.
-- [ ] Reset or starting-balance change is rejected while a Paper position or pending Paper entry exists and is otherwise confirmed and logged.
+- [x] Paper Account balance, positions, orders, protection, cooldown, and risk state are local and distinct from Testnet and Live state.
+- [x] Default Paper Starting Balance is 1,000 USDT; an operator-selected amount is persisted with its change reason.
+- [x] Reset or starting-balance change is rejected while a Paper position or pending Paper entry exists and is otherwise confirmed and logged.
 
 ## Tests
 
-- [ ] Integration tests prove Paper queries never require or expose real Gate.io credentials or account balances.
-- [ ] State-transition tests cover initialization, safe reset, and each reset rejection.
-- [ ] Restart test proves Paper Account state and audit activity persist.
+- [x] Integration tests prove Paper queries never require or expose real Gate.io credentials or account balances.
+- [x] State-transition tests cover initialization, safe reset, and each reset rejection.
+- [x] Restart test proves Paper Account state and audit activity persist.

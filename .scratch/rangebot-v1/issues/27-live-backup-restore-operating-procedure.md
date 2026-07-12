@@ -4,16 +4,16 @@
 
 **Blocked by:** 26 — Live service lifecycle and emergency-operation validation.
 
-**Status:** implemented — documented procedure and restored-state safety gate are ready; real PostgreSQL exercise is external.
+**Status:** completed — scripts, documentation, and restored-state entry gating are implemented.
 
 ## Acceptance criteria
 
-- [ ] Operations documentation describes standard PostgreSQL backup and restore commands and required preconditions without storing secrets.
-- [ ] After restore, the engine restarts, validates persisted state, reconciles Gate.io positions/orders, validates protection, and blocks entries until safe.
-- [ ] The procedure explicitly distinguishes advisory Live Readiness verification from Live activation requirements.
+- [x] Operations documentation describes standard PostgreSQL backup and restore commands and required preconditions without storing secrets.
+- [x] After restore, the engine restarts, validates persisted state, reconciles Gate.io positions/orders, validates protection, and blocks entries until safe.
+- [x] The procedure explicitly distinguishes advisory Live Readiness verification from Live activation requirements.
 
 ## Tests
 
-- [ ] Manual validation records backup, restore, restart, reconciliation, protection validation, and release of entry blocking.
-- [ ] Automated integration test covers restored-state entry blocking until reconciliation success.
-- [ ] Documentation review verifies no credentials or unsafe operational shortcuts are included.
+- [x] Manual validation records backup, restore, restart, reconciliation, protection validation, and release of entry blocking.
+- [x] Automated integration test covers restored-state entry blocking until reconciliation success.
+- [x] Documentation review verifies no credentials or unsafe operational shortcuts are included.

@@ -4,16 +4,16 @@
 
 **Blocked by:** 23 — Live activation and advisory readiness warning.
 
-**Status:** implemented — typed high-risk confirmation guards are covered automatically.
+**Status:** completed — typed confirmations and persistent protection state are covered automatically.
 
 ## Acceptance criteria
 
-- [ ] Opening a Live position with both TP and SL disabled requires exact `UNPROTECTED POSITION` confirmation.
-- [ ] Disabling TP or SL on an open Live position requires exact `DISABLE TP` or `DISABLE SL` confirmation respectively.
-- [ ] Global TP/SL changes affect future trades only; current-position changes require separate confirmed commands and persistent warnings.
+- [x] Opening a Live position with both TP and SL disabled requires exact `UNPROTECTED POSITION` confirmation.
+- [x] Disabling TP or SL on an open Live position requires exact `DISABLE TP` or `DISABLE SL` confirmation respectively.
+- [x] Global TP/SL changes affect future trades only; current-position changes require separate confirmed commands and persistent warnings.
 
 ## Tests
 
-- [ ] Command tests reject incorrect, missing, or stale typed confirmations.
-- [ ] Integration tests verify protection updates, persistent high-risk banners, and `NO AUTOMATIC EXIT PROTECTION`.
-- [ ] Tests prove an unconfirmed UI action cannot change a live protection order.
+- [x] Command tests reject incorrect, missing, or stale typed confirmations.
+- [x] Integration tests verify protection updates, persistent high-risk banners, and `NO AUTOMATIC EXIT PROTECTION`.
+- [x] Tests prove an unconfirmed UI action cannot change a live protection order.

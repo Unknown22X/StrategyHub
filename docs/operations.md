@@ -20,6 +20,8 @@
    إن كنت تجري اختبار Paper فقط.
 4. ضع WinSW و[RangeBot.Engine.xml](../deploy/RangeBot.Engine.xml) في مجلد الخدمة
    واضبط متغير بيئة `RANGEBOT_DATABASE_URL` في حساب الخدمة. ثبّت الخدمة وشغّلها.
+   يمكن استخدام `deploy\install-service.ps1 -InstallRoot C:\RangeBot` من نافذة
+   PowerShell مرتفعة الصلاحيات بعد وضع WinSW والملف XML في مجلد الخدمة.
 5. افتح `rangebot-control.exe` بصورة منفصلة؛ أغلقه ثم تحقق أن خدمة المحرك بقيت
    تعمل. إيقاف الخدمة لا يغلق مركزاً قائماً تلقائياً.
 
@@ -34,9 +36,15 @@ pg_dump --format=custom --file C:\RangeBot\backup\rangebot.backup --host 127.0.0
 pg_restore --clean --if-exists --host 127.0.0.1 --username rangebot --dbname rangebot C:\RangeBot\backup\rangebot.backup
 ```
 
+توجد أوامر مغلفة وآمنة في `deploy\backup-postgresql.ps1` و
+`deploy\restore-postgresql.ps1`. تتطلب الاستعادة التأكيد الحرفي
+`RESTORE RANGEBOT` ولا تخزن كلمة مرور.
+
 بعد الاستعادة: شغّل خدمة المحرك، تحقق من ترحيلات القاعدة، نفّذ مصالحة Gate.io
 للمراكز والأوامر، تحقق من TP/SL، واترك الدخول محظوراً حتى تنجح المصالحة. سجل
 النتيجة كدليل تشغيل، لا كسماح تلقائي لـ Live.
+ابدأ التشغيل الأول بعد الاستعادة مع `--restored-state`؛ يمسح المحرك جاهزية
+Testnet/Live المخزنة ويبقي الدخول محظوراً حتى تصل مصالحة وحماية جديدتان.
 
 ## فحوصات خارجية لا يمكن أتمتتها
 

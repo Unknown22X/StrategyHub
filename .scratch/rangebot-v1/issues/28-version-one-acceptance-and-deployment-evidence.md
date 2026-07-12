@@ -4,16 +4,16 @@
 
 **Blocked by:** 21 — Testnet verification evidence; 27 — Live backup/restore operating procedure.
 
-**Status:** in progress — acceptance evidence cannot close while Testnet/Live lifecycle tickets remain incomplete.
+**Status:** completed — automated evidence, packages, UI review, operations guide, and final checklist are recorded.
 
 ## Acceptance criteria
 
-- [ ] TEST-001 through TEST-027 each have automated or documented manual evidence, including service lifecycle, reconciliation, stale data, idempotency, protection, cooldown, daily risk, and confirmations.
-- [ ] Paper and Testnet results are recorded as advisory Live Readiness evidence; missing/stale evidence is not represented as a Live activation blocker.
-- [ ] Deployment handoff includes RTL visual review, Testnet evidence, Live operational checks, backup/restore evidence, and known non-blocking presentation choices.
+- [x] TEST-001 through TEST-027 each have automated or documented manual evidence, including service lifecycle, reconciliation, stale data, idempotency, protection, cooldown, daily risk, and confirmations.
+- [x] Paper and Testnet results are recorded as advisory Live Readiness evidence; missing/stale evidence is not represented as a Live activation blocker.
+- [x] Deployment handoff includes RTL visual review, Testnet evidence, Live operational checks, backup/restore evidence, and known non-blocking presentation choices.
 
 ## Tests
 
-- [ ] Acceptance matrix maps every requirement and accepted ADR scenario to a test or manual validation artifact.
-- [ ] Release review reruns the full automated suite and separately marked Testnet checks.
-- [ ] Manual review verifies the typed `LIVE` flow remains available when real safety checks pass regardless of advisory evidence state.
+- [x] Acceptance matrix maps every requirement and accepted ADR scenario to a test or manual validation artifact.
+- [x] Release review reruns the full automated suite and separately marked Testnet checks.
+- [x] Manual review verifies the typed `LIVE` flow remains available when real safety checks pass regardless of advisory evidence state.

@@ -8,12 +8,12 @@
 
 ## Acceptance criteria
 
-- [ ] An operator can record Paper verification evidence with timestamp, engine build identifier, and Safety-Critical Profile Fingerprint.
-- [ ] Build or safety-critical profile changes make the record stale while visual-only preferences do not.
-- [ ] Missing or stale Paper verification is displayed as an Arabic advisory warning and never blocks Testnet work, Live deployment, or valid typed `LIVE` activation.
+- [x] An operator can record Paper verification evidence with timestamp, engine build identifier, and Safety-Critical Profile Fingerprint.
+- [x] Build or safety-critical profile changes make the record stale while visual-only preferences do not.
+- [x] Missing or stale Paper verification is displayed as an Arabic advisory warning and never blocks Testnet work, Live deployment, or valid typed `LIVE` activation.
 
 ## Tests
 
-- [ ] Persistence tests cover record creation, fingerprint invalidation, and restart survival.
-- [ ] Unit tests distinguish safety-critical from visual-only profile changes.
-- [ ] Integration tests prove advisory warnings do not alter entry/activation blocking decisions.
+- [x] Persistence tests cover record creation, fingerprint invalidation, and restart survival.
+- [x] Unit tests distinguish safety-critical from visual-only profile changes.
+- [x] Integration tests prove advisory warnings do not alter entry/activation blocking decisions.

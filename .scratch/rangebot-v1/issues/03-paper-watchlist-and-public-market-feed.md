@@ -8,12 +8,12 @@
 
 ## Acceptance criteria
 
-- [ ] Eligible contracts are searchable and may be manually added or removed up to a maximum watchlist size of 20.
-- [ ] Exactly one watched contract can be the Active Auto-Trading Coin; changing it stops automatic trading intent.
-- [ ] Watchlist priority affects display order only, and non-active contracts are visibly monitoring-only.
+- [x] Eligible contracts are searchable and may be manually added or removed up to a maximum watchlist size of 20.
+- [x] Exactly one watched contract can be the Active Auto-Trading Coin; changing it stops automatic trading intent.
+- [x] Watchlist priority affects display order only, and non-active contracts are visibly monitoring-only.
 
 ## Tests
 
-- [ ] Adapter-contract tests map eligible public contract and Last Price data without leaking exchange payloads into domain state.
-- [ ] Integration tests cover watchlist limit, active-contract exclusivity, and automatic-stop-on-change behavior.
-- [ ] UI tests verify Arabic contract status and mixed Arabic/Latin symbol rendering.
+- [x] Adapter-contract tests map eligible public contract and Last Price data without leaking exchange payloads into domain state.
+- [x] Integration tests cover watchlist limit, active-contract exclusivity, and automatic-stop-on-change behavior.
+- [x] UI tests verify Arabic contract status and mixed Arabic/Latin symbol rendering.

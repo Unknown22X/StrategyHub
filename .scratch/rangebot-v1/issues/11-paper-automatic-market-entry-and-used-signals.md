@@ -14,6 +14,6 @@
 
 ## Tests
 
-- [ ] State-machine tests cover Eligible, Retry Delayed, Pending / Unknown, Used, and stable Directional Reset semantics.
-- [ ] Integration tests prove daily-risk/cooldown blocks prevent automatic entry and active-contract change stops automation.
-- [ ] Scenario tests cover immediate valid startup entry, conflicting signals, and no duplicate entry before full reset.
+- [x] State-machine tests cover Eligible, Retry Delayed, Pending / Unknown, Used, and stable Directional Reset semantics.
+- [x] Integration tests prove daily-risk/cooldown blocks prevent automatic entry and active-contract change stops automation.
+- [x] Scenario tests cover immediate valid startup entry, conflicting signals, and no duplicate entry before full reset.

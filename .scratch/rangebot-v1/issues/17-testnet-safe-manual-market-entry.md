@@ -4,16 +4,16 @@
 
 **Blocked by:** 16 — Testnet market/account readiness gate.
 
-**Status:** in progress — adapter submission contract exists, but persistent intent and liquidity/slippage safeguards remain incomplete.
+**Status:** completed — persistent identity and market execution safeguards are covered locally.
 
 ## Acceptance criteria
 
-- [ ] Final confirmation submits a Market entry only after Last Price and order-book snapshot are each less than one second old.
-- [ ] Long uses Ask liquidity and Short uses Bid liquidity; insufficient liquidity or expected deviation above 0.30% rejects without resizing, conversion, or submission.
-- [ ] Intent and persistent client identity are committed before submission; timeout/missing response produces Pending / Unknown and no blind duplicate retry.
+- [x] Final confirmation submits a Market entry only after Last Price and order-book snapshot are each less than one second old.
+- [x] Long uses Ask liquidity and Short uses Bid liquidity; insufficient liquidity or expected deviation above 0.30% rejects without resizing, conversion, or submission.
+- [x] Intent and persistent client identity are committed before submission; timeout/missing response produces Pending / Unknown and no blind duplicate retry.
 
 ## Tests
 
-- [ ] Adapter tests cover order-book volume-weighting, age checks, and Long/Short sides.
-- [ ] Fault-injection tests cover timeout before/after exchange acceptance and prove identity-based reconciliation prevents duplicates.
-- [ ] Integration tests verify final confirmation, rejection reasons, retry-delay behavior, and no order request on guard failure.
+- [x] Adapter tests cover order-book volume-weighting, age checks, and Long/Short sides.
+- [x] Fault-injection tests cover timeout before/after exchange acceptance and prove identity-based reconciliation prevents duplicates.
+- [x] Integration tests verify final confirmation, rejection reasons, retry-delay behavior, and no order request on guard failure.

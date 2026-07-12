@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** approved
+**Status:** completed
 
 ## Acceptance criteria
 

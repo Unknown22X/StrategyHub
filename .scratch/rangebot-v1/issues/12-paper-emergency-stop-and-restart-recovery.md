@@ -8,12 +8,12 @@
 
 ## Acceptance criteria
 
-- [ ] Emergency Stop persistently blocks manual and automatic entries and cancels managed pending Paper entries.
-- [ ] Emergency Close Position activates Emergency Stop before performing the safe close path and never queues a disconnected or failed close for later execution.
-- [ ] `RESUME` is required to clear Emergency Stop; automatic trading remains disabled until explicitly restarted after recovery.
+- [x] Emergency Stop persistently blocks manual and automatic entries and cancels managed pending Paper entries.
+- [x] Emergency Close Position activates Emergency Stop before performing the safe close path and never queues a disconnected or failed close for later execution.
+- [x] `RESUME` is required to clear Emergency Stop; automatic trading remains disabled until explicitly restarted after recovery.
 
 ## Tests
 
-- [ ] Restart tests prove Emergency Stop, pending Limit handling, cooldown, and recovery state persist.
-- [ ] Fault-injection tests cover failed/disconnected Emergency Close Position and require a fresh explicit retry.
-- [ ] Integration tests cover typed Resume, entry blocks, and post-resume automatic-trading state.
+- [x] Restart tests prove Emergency Stop, pending Limit handling, cooldown, and recovery state persist.
+- [x] Fault-injection tests cover failed/disconnected Emergency Close Position and require a fresh explicit retry.
+- [x] Integration tests cover typed Resume, entry blocks, and post-resume automatic-trading state.

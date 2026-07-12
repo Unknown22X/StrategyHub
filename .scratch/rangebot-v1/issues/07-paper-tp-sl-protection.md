@@ -15,12 +15,12 @@ Taker. Future Paper Limit fills use Maker unless marketable.
 
 ## Acceptance criteria
 
-- [ ] Default TP and SL use actual Paper fill, quantity, leverage, entry fee, estimated closing fee, and configured 30%/10% Allocated Margin targets.
-- [ ] TP and SL are capped to remaining position quantity and cannot create reverse exposure.
-- [ ] Missing, rejected, or disabled protection has a persistent high-risk warning and blocks new entries where required.
+- [x] Default TP and SL use actual Paper fill, quantity, leverage, entry fee, estimated closing fee, and configured 30%/10% Allocated Margin targets.
+- [x] TP and SL are capped to remaining position quantity and cannot create reverse exposure.
+- [x] Missing, rejected, or disabled protection has a persistent high-risk warning and blocks new entries where required.
 
 ## Tests
 
-- [ ] Unit tests cover Long/Short target calculations, fee treatment, and non-reversing quantities.
-- [ ] Integration tests verify protected position state, protection-error entry blocking, and Arabic warnings.
-- [ ] Simulation tests cover TP/SL trigger fees and position state changes.
+- [x] Unit tests cover Long/Short target calculations, fee treatment, and non-reversing quantities.
+- [x] Integration tests verify protected position state, protection-error entry blocking, and Arabic warnings.
+- [x] Simulation tests cover TP/SL trigger fees and position state changes.

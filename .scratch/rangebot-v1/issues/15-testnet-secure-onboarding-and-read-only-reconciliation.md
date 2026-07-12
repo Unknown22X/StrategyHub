@@ -4,16 +4,16 @@
 
 **Blocked by:** 13 — Paper profiles, audit log, and Help Center.
 
-**Status:** in progress — signed adapter boundary exists, but managed/unmanaged position and protection reconciliation remains incomplete.
+**Status:** completed — implemented with local mocks; real Testnet validation remains external.
 
 ## Acceptance criteria
 
-- [ ] Testnet configuration is distinct from Paper and Live, uses local credentials, and keeps secrets out of UI, logs, and builds.
-- [ ] The engine retrieves and displays Testnet positions, orders, balances, and relevant configuration through read-only reconciliation.
-- [ ] Any unmatched position, entry, TP, or SL is shown as Unmanaged Exchange State; it blocks mutations but is neither adopted nor changed.
+- [x] Testnet configuration is distinct from Paper and Live, uses local credentials, and keeps secrets out of UI, logs, and builds.
+- [x] The engine retrieves and displays Testnet positions, orders, balances, and relevant configuration through read-only reconciliation.
+- [x] Any unmatched position, entry, TP, or SL is shown as Unmanaged Exchange State; it blocks mutations but is neither adopted nor changed.
 
 ## Tests
 
-- [ ] Adapter-contract tests map Testnet REST/WebSocket snapshots and redact authentication material.
-- [ ] Integration tests cover Unmanaged Exchange State detection, mutation blocks, and Refresh Reconciliation after external resolution.
-- [ ] Security tests verify Testnet credentials cannot appear in client-visible state or logs.
+- [x] Adapter-contract tests map Testnet REST/WebSocket snapshots and redact authentication material.
+- [x] Integration tests cover Unmanaged Exchange State detection, mutation blocks, and Refresh Reconciliation after external resolution.
+- [x] Security tests verify Testnet credentials cannot appear in client-visible state or logs.

@@ -4,16 +4,16 @@
 
 **Blocked by:** 20 — Testnet automatic trading, external changes, and recovery.
 
-**Status:** in progress — packaging and Live Locked state are complete; full read-only reconciliation remains incomplete.
+**Status:** completed — locked lifecycle, packaging, read-only reconciliation, and unmanaged-state behavior are covered locally.
 
 ## Acceptance criteria
 
-- [ ] Separate engine and UI deployment packages, local config/log directories, and WinSW service configuration support startup, crash restart, clean stop, and Remote Desktop disconnection.
-- [ ] A Live process/service/Windows/VPS restart restores Live Locked while keeping reconciliation and existing-position protection active.
-- [ ] Read-only Live reconciliation detects positions/orders/protection and Unmanaged Exchange State; unmatched exchange state is displayed and cannot be mutated.
+- [x] Separate engine and UI deployment packages, local config/log directories, and WinSW service configuration support startup, crash restart, clean stop, and Remote Desktop disconnection.
+- [x] A Live process/service/Windows/VPS restart restores Live Locked while keeping reconciliation and existing-position protection active.
+- [x] Read-only Live reconciliation detects positions/orders/protection and Unmanaged Exchange State; unmatched exchange state is displayed and cannot be mutated.
 
 ## Tests
 
-- [ ] Packaging/service tests verify process separation, crash restart, clean stop, and engine survival after UI exit.
-- [ ] Restart tests prove Live Locked persistence and read-only reconciliation before activation.
-- [ ] Integration tests cover Unmanaged Exchange State display and mutation blocks.
+- [x] Packaging/service tests verify process separation, crash restart, clean stop, and engine survival after UI exit.
+- [x] Restart tests prove Live Locked persistence and read-only reconciliation before activation.
+- [x] Integration tests cover Unmanaged Exchange State display and mutation blocks.

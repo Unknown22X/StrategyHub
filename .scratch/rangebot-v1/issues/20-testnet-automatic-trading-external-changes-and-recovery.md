@@ -4,16 +4,16 @@
 
 **Blocked by:** 11 — Paper automatic Market Entry and Used Signals; 17 — Testnet safe Manual Market Entry; 18 — Testnet protection and managed closure; 19 — Testnet Limit Entry and partial-fill recovery.
 
-**Status:** in progress — Testnet automatic execution and exchange-change recovery remain incomplete.
+**Status:** completed — automatic intent, Used Signals, restart, and external-change recovery are covered with mocks.
 
 ## Acceptance criteria
 
-- [ ] Automatic Testnet entry uses the Active Auto-Trading Coin, current readiness/risk guards, and the persisted Used Signal/Directional Reset semantics proven in Paper.
-- [ ] Full external closure is recorded and cleaned up; external partial reduction reconciles remaining position and resizes managed protection.
-- [ ] Testnet automatic intent resumes after ordinary restart only when prior intent and all reconciliation, history, market-data, protection, risk, and active-contract checks pass.
+- [x] Automatic Testnet entry uses the Active Auto-Trading Coin, current readiness/risk guards, and the persisted Used Signal/Directional Reset semantics proven in Paper.
+- [x] Full external closure is recorded and cleaned up; external partial reduction reconciles remaining position and resizes managed protection.
+- [x] Testnet automatic intent resumes after ordinary restart only when prior intent and all reconciliation, history, market-data, protection, risk, and active-contract checks pass.
 
 ## Tests
 
-- [ ] End-to-end tests exercise automatic Market/Limit paths from fresh signal through protection and cleanup.
-- [ ] Reconciliation tests cover external full closure, partial reduction, restart, and Unmanaged Exchange State mutation blocks.
-- [ ] Scenario tests prove Used Signals cannot duplicate entries before Directional Reset and cooldown completion.
+- [x] End-to-end tests exercise automatic Market/Limit paths from fresh signal through protection and cleanup.
+- [x] Reconciliation tests cover external full closure, partial reduction, restart, and Unmanaged Exchange State mutation blocks.
+- [x] Scenario tests prove Used Signals cannot duplicate entries before Directional Reset and cooldown completion.

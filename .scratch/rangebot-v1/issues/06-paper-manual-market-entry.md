@@ -8,12 +8,12 @@
 
 ## Acceptance criteria
 
-- [ ] Manual Paper Market Entry requires final confirmation and consumes the account's one active trade state.
-- [ ] Long and Short fills apply configured adverse slippage and Taker fees, with actual fill and account effects persisted.
-- [ ] Manual entry bypasses only automatic-strategy conditions; balance, reserve, one-trade, history, and market-data safety checks remain enforced.
+- [x] Manual Paper Market Entry requires final confirmation and consumes the account's one active trade state.
+- [x] Long and Short fills apply configured adverse slippage and Taker fees, with actual fill and account effects persisted.
+- [x] Manual entry bypasses only automatic-strategy conditions; balance, reserve, one-trade, history, and market-data safety checks remain enforced.
 
 ## Tests
 
-- [ ] Integration tests cover confirmed Long/Short fill, slippage, fees, and Arabic activity output.
-- [ ] Negative tests cover each manual-entry safety block and duplicate-position rejection.
-- [ ] Restart test verifies a filled Paper position remains visible after engine recreation.
+- [x] Integration tests cover confirmed Long/Short fill, slippage, fees, and Arabic activity output.
+- [x] Negative tests cover each manual-entry safety block and duplicate-position rejection.
+- [x] Restart test verifies a filled Paper position remains visible after engine recreation.

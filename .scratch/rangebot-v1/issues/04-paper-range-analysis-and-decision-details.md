@@ -8,12 +8,12 @@
 
 ## Acceptance criteria
 
-- [ ] Rolling Window uses the specified one-minute candle counts including the forming candle; Current Gate Candle follows Gate.io interval boundaries.
-- [ ] Exact and interval range modes, proximity, direction settings, and conflicting Long/Short rejection produce structured decision reasons and Arabic explanations.
-- [ ] Missing, invalid, insufficient, or non-contiguous history shows Warming Up / History Gap and blocks entries while protective controls remain available.
+- [x] Rolling Window uses the specified one-minute candle counts including the forming candle; Current Gate Candle follows Gate.io interval boundaries.
+- [x] Exact and interval range modes, proximity, direction settings, and conflicting Long/Short rejection produce structured decision reasons and Arabic explanations.
+- [x] Missing, invalid, insufficient, or non-contiguous history shows Warming Up / History Gap and blocks entries while protective controls remain available.
 
 ## Tests
 
-- [ ] Unit and property tests cover Decimal range/proximity boundaries, candle selection, and conflicting signals.
-- [ ] Adapter tests cover candle ordering, gaps, and timestamp-boundary behavior.
-- [ ] API/UI tests verify the complete condition-details view and Arabic decision text.
+- [x] Unit and property tests cover Decimal range/proximity boundaries, candle selection, and conflicting signals.
+- [x] Adapter tests cover candle ordering, gaps, and timestamp-boundary behavior.
+- [x] API/UI tests verify the complete condition-details view and Arabic decision text.

@@ -8,12 +8,12 @@
 
 ## Acceptance criteria
 
-- [ ] Profiles can be saved, duplicated, renamed, edited, applied with a confirmed change summary, and deleted; they exclude credentials and runtime trading state.
-- [ ] Applying a profile affects only future activity and never enables Live Trading or clears runtime locks.
-- [ ] Activity records and Help Center present Arabic explanations for trading decisions, protection, risk, modes, cooldown, Emergency Stop, and rejection reasons without exposing secrets.
+- [x] Profiles can be saved, duplicated, renamed, edited, applied with a confirmed change summary, and deleted; they exclude credentials and runtime trading state.
+- [x] Applying a profile affects only future activity and never enables Live Trading or clears runtime locks.
+- [x] Activity records and Help Center present Arabic explanations for trading decisions, protection, risk, modes, cooldown, Emergency Stop, and rejection reasons without exposing secrets.
 
 ## Tests
 
-- [ ] Integration tests prove profile isolation and rejected application of credentials/runtime state.
-- [ ] Log tests prove credentials, signatures, headers, database passwords, and environment contents are redacted.
-- [ ] UI tests verify RTL activity, banners, and Help Center navigation/content coverage.
+- [x] Integration tests prove profile isolation and rejected application of credentials/runtime state.
+- [x] Log tests prove credentials, signatures, headers, database passwords, and environment contents are redacted.
+- [x] UI tests verify RTL activity, banners, and Help Center navigation/content coverage.
