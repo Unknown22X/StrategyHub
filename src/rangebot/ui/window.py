@@ -340,7 +340,7 @@ class RangeBotWindow(QWidget):
         if mode == "paper":
             self.position_summary.setText("يتطلب الإغلاق الطارئ في Paper سعراً حديثاً من المحرك.")
             return
-        self._confirm("إغلاق طارئ", "سيفعّل المحرك الإيقاف الطارئ أولاً ثم يغلق الكمية المتبقية بعد المصالحة.", lambda: self._request("post", f"/v1/exchange/{mode}/emergency-stop", success="تم تفعيل الإيقاف الطارئ؛ نفّذ إغلاقاً محمياً بعد المصالحة."))
+        self._confirm("إغلاق طارئ", "سيفعّل المحرك الإيقاف الطارئ أولاً ثم يغلق الكمية المتبقية بعد المصالحة.", lambda: self._request("post", f"/v1/exchange/{mode}/emergency-close", success="تم تنفيذ طلب الإغلاق الطارئ المُصالح."))
 
     def reconcile_selected_exchange(self) -> None:
         mode = self.mode_selector.currentData()
