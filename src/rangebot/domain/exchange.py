@@ -79,6 +79,7 @@ class LiveEntryRequest(BaseModel):
     confirmation: str = ""
     protections_enabled: bool = True
     market_guard: "MarketEntryGuardRequest | None" = None
+    client_request_id: str | None = None
 
 
 class ExchangeEntryRequest(BaseModel):

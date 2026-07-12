@@ -190,6 +190,25 @@ def test_market_entry_cannot_submit_without_guard_payload(tmp_path) -> None:
     assert adapter.submitted == []
 
 
+def test_unknown_exchange_outcome_blocks_retry_with_same_identity(tmp_path) -> None:
+    class UnknownAdapter(FakeGateAdapter):
+        def submit_entry(self, mode: str, request: ExchangeEntryRequest) -> ExchangeOperationResult:
+            self.submitted.append(request)
+            return ExchangeOperationResult(accepted=False, pending_unknown=True, client_request_id=request.client_request_id, message_ar="نتيجة غير معروفة")
+
+    database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
+    adapter = UnknownAdapter(_ready_snapshot())
+    payload = {"symbol": "BTC_USDT", "direction": "long", "quantity": "1", "market_guard": _market_guard_payload(), "client_request_id": "stable-request"}
+    with TestClient(create_app(database_url, exchange_adapter=adapter)) as client:
+        client.post("/v1/exchange/testnet/reconcile")
+        first = client.post("/v1/exchange/testnet/entries", json=payload)
+        retry = client.post("/v1/exchange/testnet/entries", json=payload)
+
+    assert first.status_code == 503
+    assert retry.status_code == 409
+    assert len(adapter.submitted) == 1
+
+
 def test_gate_configuration_stays_engine_private_and_redacts_values(monkeypatch) -> None:
     monkeypatch.setenv("GATE_TESTNET_KEY", "abc-secret-key")
     monkeypatch.setenv("GATE_TESTNET_SECRET", "do-not-show")

@@ -214,12 +214,16 @@ def create_app(
             guard = guard_market_entry(request.market_guard)
             if not guard.allowed:
                 raise HTTPException(status_code=409, detail=guard.reason_ar)
+        client_request_id = request.client_request_id or str(uuid4())
+        prior_status = exchange_repository.intent_status(client_request_id)
+        if prior_status == "pending_unknown":
+            raise HTTPException(status_code=409, detail="نتيجة الطلب السابق غير معروفة؛ يلزم إجراء المصالحة قبل المحاولة.")
         exchange_request = ExchangeEntryRequest(
                 symbol=request.symbol,
                 direction=request.direction,
                 order_type=request.order_type,
                 quantity=request.quantity,
-                client_request_id=str(uuid4()),
+                client_request_id=client_request_id,
                 protections_enabled=request.protections_enabled,
             )
         exchange_repository.persist_intent(

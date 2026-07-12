@@ -1832,6 +1832,11 @@ class ExchangeModeRepository:
             record.status = status
             session.commit()
 
+    def intent_status(self, client_request_id: str) -> str | None:
+        with Session(self._database_engine) as session:
+            record = session.get(ExchangeRequestRecord, client_request_id)
+            return None if record is None else record.status
+
     def live_locked(self) -> bool:
         with Session(self._database_engine) as session:
             return self._state(session, "live").live_locked
