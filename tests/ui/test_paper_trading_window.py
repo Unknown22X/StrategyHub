@@ -21,6 +21,8 @@ class FakeEngineClient:
 
     def get(self, path: str) -> Any:
         self.calls.append(("get", path, None))
+        if path == "/v1/exchange/live/credentials":
+            return {"mode": "live", "configured": True}
         if path.endswith("watchlist"):
             return {
                 "items": [
@@ -69,6 +71,42 @@ def test_operator_window_is_rtl_form_based_and_has_no_json_debug_surface() -> No
     assert window.watchlist_table.rowCount() == 1
     assert window.watchlist_table.item(0, 0).text() == "BTC_USDT"
     assert window.contract_input.placeholderText() == "ابحث عن عقد مثل BTC_USDT"
+    window.close()
+    application.quit()
+
+
+def test_add_coin_uses_symbol_route_and_immediately_refreshes_watchlist() -> None:
+    application = QApplication.instance() or QApplication([])
+    client = FakeEngineClient()
+    window = RangeBotWindow(
+        client.fetch_runtime_state,
+        refresh_interval_ms=60_000,
+        engine_client=client,  # type: ignore[arg-type]
+    )
+    window.symbol_input.setText("BTC_USDT")
+
+    window.add_watchlist()
+
+    assert ("post", "/v1/paper/watchlist/BTC_USDT", None) in client.calls
+    assert window.watchlist_table.rowCount() == 1
+    window.close()
+    application.quit()
+
+
+def test_saved_api_status_is_visible_after_window_reopens() -> None:
+    application = QApplication.instance() or QApplication([])
+    client = FakeEngineClient()
+
+    window = RangeBotWindow(
+        client.fetch_runtime_state,
+        refresh_interval_ms=60_000,
+        engine_client=client,  # type: ignore[arg-type]
+    )
+
+    assert "Live: محفوظة ✓" in window.api_status.text()
+    assert ("get", "/v1/exchange/live/credentials", None) in client.calls
+    assert window.api_key.text() == ""
+    assert window.api_secret.text() == ""
     window.close()
     application.quit()
 

@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 import sys
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from PySide6.QtCore import Qt, QTimer
@@ -461,6 +462,7 @@ class RangeBotWindow(QWidget):
         self.api_mode = QComboBox()
         self.api_mode.addItem("Gate.io Testnet", "testnet")
         self.api_mode.addItem("Live", "live")
+        self.api_mode.currentIndexChanged.connect(self.load_api_status)
         self.api_key = QLineEdit()
         self.api_key.setEchoMode(QLineEdit.EchoMode.Password)
         self.api_secret = QLineEdit()
@@ -468,11 +470,15 @@ class RangeBotWindow(QWidget):
         api_form.addRow("الحساب", self.api_mode)
         api_form.addRow("API Key", self.api_key)
         api_form.addRow("API Secret", self.api_secret)
+        self.api_status = QLabel("حالة المفاتيح: جارٍ التحقق")
+        self.api_status.setObjectName("muted")
+        api_form.addRow("الحالة", self.api_status)
         save = QPushButton("حفظ المفاتيح بأمان")
         save.clicked.connect(self.save_api_credentials)
         api_form.addRow(save)
         api_panel.layout().addLayout(api_form)
         layout.addWidget(api_panel)
+        self.load_api_status()
         live_panel = self._panel("فتح وضع Live")
         self.live_confirmation = QLineEdit()
         self.live_confirmation.setPlaceholderText("اكتب LIVE")
@@ -683,14 +689,19 @@ class RangeBotWindow(QWidget):
     def add_watchlist(self) -> None:
         symbol = self.symbol_input.text().strip().upper()
         if symbol:
-            self._request("post", "/v1/paper/watchlist", {"symbol": symbol})
+            self._request("post", f"/v1/paper/watchlist/{quote(symbol, safe='_')}")
             self.load_watchlist()
 
     def activate_watchlist(self) -> None:
         symbol = self.symbol_input.text().strip().upper()
         if symbol:
-            self.contract_input.setText(symbol)
-            self.choose_contract()
+            result = self._request(
+                "post", f"/v1/paper/watchlist/{quote(symbol, safe='_')}/active"
+            )
+            if isinstance(result, dict):
+                self.contract_input.setText(symbol)
+                self.choose_contract()
+                self.load_watchlist()
 
     def start_automation(self) -> None:
         symbol = self.contract_input.text().strip().upper()
@@ -884,8 +895,17 @@ class RangeBotWindow(QWidget):
             self.api_key.clear()
             self.api_secret.clear()
             self.warning_banner.setText(
-                "تم حفظ مفاتيح API محلياً بصلاحيات مقيدة. أعد تشغيل خدمة المحرك لتطبيقها."
+                "تم حفظ المفاتيح. لا تغلق الواجهة؛ أعد تشغيل خدمة المحرك فقط لتطبيق الاتصال."
             )
+            self.api_status.setText("محفوظة ✓ — يلزم إعادة تشغيل خدمة المحرك للتطبيق")
+
+    def load_api_status(self) -> None:
+        states: list[str] = []
+        for mode, label in (("testnet", "Testnet"), ("live", "Live")):
+            result = self._request("get", f"/v1/exchange/{mode}/credentials")
+            configured = isinstance(result, dict) and result.get("configured") is True
+            states.append(f"{label}: {'محفوظة ✓' if configured else 'غير محفوظة'}")
+        self.api_status.setText("  •  ".join(states))
 
     def load_audit(self) -> None:
         mode = str(self.mode_selector.currentData())

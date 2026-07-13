@@ -39,6 +39,8 @@ pgdata/
 # PyInstaller output
 build/
 dist/
+build-*/
+dist-*/
 
 # IDE and editor files
 .idea/
