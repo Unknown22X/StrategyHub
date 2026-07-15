@@ -111,6 +111,25 @@ def test_saved_api_status_is_visible_after_window_reopens() -> None:
     application.quit()
 
 
+def test_typed_live_confirmation_visibly_unlocks_live_mode() -> None:
+    application = QApplication.instance() or QApplication([])
+    client = FakeEngineClient()
+    window = RangeBotWindow(
+        client.fetch_runtime_state,
+        refresh_interval_ms=60_000,
+        engine_client=client,  # type: ignore[arg-type]
+    )
+    window.live_confirmation.setText("LIVE")
+
+    window.activate_live()
+
+    assert ("post", "/v1/live/activate", {"confirmation": "LIVE"}) in client.calls
+    assert window.mode_selector.itemText(2) == "Live — جاهز"
+    assert window.live_confirmation.text() == ""
+    window.close()
+    application.quit()
+
+
 def test_exchange_mode_ui_uses_engine_preview_and_typed_protection_controls() -> None:
     application = QApplication.instance() or QApplication([])
     client = FakeEngineClient()

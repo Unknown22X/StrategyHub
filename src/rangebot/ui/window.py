@@ -877,12 +877,16 @@ class RangeBotWindow(QWidget):
             )
 
     def activate_live(self) -> None:
-        self._request(
+        result = self._request(
             "post",
             "/v1/live/activate",
             {"confirmation": self.live_confirmation.text()},
             "تم فتح Live. ستظل أوامر التداول خاضعة لفحوص الأمان الفورية.",
         )
+        if isinstance(result, dict):
+            self.mode_selector.setItemText(2, "Live — جاهز")
+            self.mode_label.setText("النمط: Live — جاهز")
+            self.live_confirmation.clear()
 
     def save_api_credentials(self) -> None:
         payload = {

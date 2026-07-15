@@ -7,6 +7,7 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 from rangebot.ui.client import EngineClient
+from rangebot.ui.engine_bootstrap import start_bundled_engine_if_needed
 from rangebot.ui.window import RangeBotWindow
 
 
@@ -25,6 +26,7 @@ def main() -> None:
     arguments = parse_arguments()
     if arguments.once:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    start_bundled_engine_if_needed()
     application = QApplication([])
     client = EngineClient(arguments.engine_url)
     window = RangeBotWindow(client.fetch_runtime_state, engine_client=client)
