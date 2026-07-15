@@ -1,10 +1,22 @@
+from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt
+import pytest
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import QApplication, QPushButton
 
 from rangebot.domain.runtime import RuntimeState
 from rangebot.ui.window import RangeBotWindow
+
+
+@pytest.fixture(autouse=True)
+def isolate_desktop_settings(tmp_path: Path) -> None:
+    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+    QSettings.setPath(
+        QSettings.Format.IniFormat,
+        QSettings.Scope.UserScope,
+        str(tmp_path),
+    )
 
 
 class FakeEngineClient:
@@ -51,6 +63,34 @@ class FakeEngineClient:
 
     def delete(self, path: str) -> None:
         self.calls.append(("delete", path, None))
+
+
+class UnlockedLiveClient(FakeEngineClient):
+    def get(self, path: str) -> Any:
+        if path == "/v1/exchange/live/state":
+            self.calls.append(("get", path, None))
+            return {
+                "mode": "live",
+                "live_locked": False,
+                "emergency_stop": False,
+                "can_enter": False,
+                "blocked_reasons_ar": ["لم تكتمل المصالحة مع Gate.io."],
+                "snapshot": None,
+            }
+        return super().get(path)
+
+    def post(self, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        self.calls.append(("post", path, payload))
+        if path == "/v1/live/activate":
+            return {
+                "mode": "live",
+                "live_locked": False,
+                "emergency_stop": False,
+                "can_enter": False,
+                "blocked_reasons_ar": ["لم تكتمل المصالحة مع Gate.io."],
+                "snapshot": None,
+            }
+        return {}
 
 
 def test_operator_window_is_rtl_form_based_and_has_no_json_debug_surface() -> None:
@@ -113,7 +153,7 @@ def test_saved_api_status_is_visible_after_window_reopens() -> None:
 
 def test_typed_live_confirmation_visibly_unlocks_live_mode() -> None:
     application = QApplication.instance() or QApplication([])
-    client = FakeEngineClient()
+    client = UnlockedLiveClient()
     window = RangeBotWindow(
         client.fetch_runtime_state,
         refresh_interval_ms=60_000,
@@ -124,9 +164,76 @@ def test_typed_live_confirmation_visibly_unlocks_live_mode() -> None:
     window.activate_live()
 
     assert ("post", "/v1/live/activate", {"confirmation": "LIVE"}) in client.calls
-    assert window.mode_selector.itemText(2) == "Live — جاهز"
+    assert window.mode_selector.itemText(2) == "Live — مفتوح"
+    assert "لم تكتمل المصالحة" in window.warning_banner.text()
     assert window.live_confirmation.text() == ""
     window.close()
+    application.quit()
+
+
+def test_selecting_unlocked_live_shows_real_block_reason_instead_of_locked_banner() -> None:
+    application = QApplication.instance() or QApplication([])
+    client = UnlockedLiveClient()
+    window = RangeBotWindow(
+        client.fetch_runtime_state,
+        refresh_interval_ms=60_000,
+        engine_client=client,  # type: ignore[arg-type]
+    )
+
+    window.mode_selector.setCurrentIndex(2)
+
+    assert window.mode_selector.currentData() == "live"
+    assert window.mode_selector.itemText(2) == "Live — مفتوح"
+    assert "Live مفتوح" in window.warning_banner.text()
+    assert "لم تكتمل المصالحة" in window.warning_banner.text()
+    assert "مقفل حتى تكتب" not in window.warning_banner.text()
+    assert ("get", "/v1/exchange/live/state", None) in client.calls
+    window.close()
+    application.quit()
+
+
+def test_desktop_form_state_is_restored_without_storing_secrets(tmp_path: Path) -> None:
+    application = QApplication.instance() or QApplication([])
+    settings_path = tmp_path / "ui.ini"
+    client = UnlockedLiveClient()
+    first_settings = QSettings(str(settings_path), QSettings.Format.IniFormat)
+    first = RangeBotWindow(
+        client.fetch_runtime_state,
+        refresh_interval_ms=60_000,
+        engine_client=client,  # type: ignore[arg-type]
+        settings=first_settings,
+    )
+    first.mode_selector.setCurrentIndex(2)
+    first.contract_input.setText("BTC_USDT")
+    first.entry_type.setCurrentText("Limit")
+    first.entry_quantity.setText("0.004")
+    first.entry_allocation.setCurrentText("50%")
+    first.leverage.setCurrentText("10")
+    first.take_profit.setText("15")
+    first.stop_loss.setText("5")
+    first.api_key.setText("must-not-be-saved")
+    first.api_secret.setText("must-not-be-saved")
+    first.close()
+
+    second_settings = QSettings(str(settings_path), QSettings.Format.IniFormat)
+    second = RangeBotWindow(
+        client.fetch_runtime_state,
+        refresh_interval_ms=60_000,
+        engine_client=client,  # type: ignore[arg-type]
+        settings=second_settings,
+    )
+
+    assert second.mode_selector.currentData() == "live"
+    assert second.contract_input.text() == "BTC_USDT"
+    assert second.entry_type.currentText() == "Limit"
+    assert second.entry_quantity.text() == "0.004"
+    assert second.entry_allocation.currentText() == "50%"
+    assert second.leverage.currentText() == "10"
+    assert second.take_profit.text() == "15"
+    assert second.stop_loss.text() == "5"
+    assert second.api_key.text() == ""
+    assert second.api_secret.text() == ""
+    second.close()
     application.quit()
 
 
@@ -169,6 +276,7 @@ def test_dashboard_has_obvious_first_action_and_separate_manual_sides() -> None:
     assert "بيع / Short" in button_labels
     assert window.auto_toggle.text().startswith("تداول تلقائي")
 
+    window.mode_selector.setCurrentIndex(0)
     window.contract_input.setText("BTC_USDT")
     window.choose_contract()
     calls_before_monitoring = len(client.calls)

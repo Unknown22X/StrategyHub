@@ -8,8 +8,8 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QFontDatabase
+from PySide6.QtCore import QSettings, Qt, QTimer
+from PySide6.QtGui import QCloseEvent, QFontDatabase
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -61,10 +61,14 @@ class RangeBotWindow(QWidget):
         fetch_state: Callable[[], RuntimeState],
         refresh_interval_ms: int = 1_000,
         engine_client: EngineClient | None = None,
+        settings: QSettings | None = None,
     ) -> None:
         super().__init__()
         self._fetch_state = fetch_state
         self._client = engine_client
+        self._settings = (
+            settings if settings is not None else QSettings("RangeBot", "ControlUI")
+        )
         self._last_market_guard: dict[str, Any] | None = None
         self._last_paper_preview: dict[str, Any] | None = None
         self._last_paper_preview_request: dict[str, Any] | None = None
@@ -107,6 +111,7 @@ class RangeBotWindow(QWidget):
         self.tabs.addTab(self._operator_page(), "السجل والمساعدة")
         content_layout.addWidget(self.tabs, 1)
         shell.addWidget(content, 1)
+        self._restore_ui_settings()
         self._mode_changed()
 
         self._timer = QTimer(self)
@@ -341,8 +346,8 @@ class RangeBotWindow(QWidget):
         self.position_summary.setObjectName("positionSummary")
         panel.layout().addWidget(self.position_summary)
         row = QHBoxLayout()
-        refresh = QPushButton("تحديث المركز")
-        refresh.clicked.connect(self.load_position)
+        refresh = QPushButton("تحديث بيانات الحساب")
+        refresh.clicked.connect(self.refresh_account_state)
         protect = QPushButton("فحص الحماية")
         protect.clicked.connect(self.check_protection)
         close = QPushButton("إغلاق المركز")
@@ -560,14 +565,14 @@ class RangeBotWindow(QWidget):
         )
         names = {"paper": "Paper", "testnet": "Testnet", "live": "Live"}
         self.mode_label.setText(f"النمط: {names[mode]}")
-        if mode == "live":
-            self.warning_banner.setText(
-                "Live مقفل حتى تكتب LIVE. فتح الصفحة لا يرسل أي أمر."
+        if mode == "paper":
+            self._set_banner(
+                "أنت الآن في Paper. هذا الحساب مستقل تماماً عن Testnet وLive.",
+                "info",
             )
-        else:
-            self.warning_banner.setText(
-                f"أنت الآن في {names[mode]}. الحالات بين الحسابات منفصلة."
-            )
+            self.load_position()
+            return
+        self.load_position()
 
     def create_preview(self) -> None:
         mode = str(self.mode_selector.currentData())
@@ -777,14 +782,96 @@ class RangeBotWindow(QWidget):
         mode = str(self.mode_selector.currentData())
         result = self._request(
             "get",
-            "/v1/paper/position" if mode == "paper" else f"/v1/exchange/{mode}/state",
+            "/v1/paper/position"
+            if mode == "paper"
+            else f"/v1/exchange/{mode}/state",
         )
-        if isinstance(result, dict):
-            snapshot = result.get("snapshot", result) or {}
-            quantity = snapshot.get("quantity", snapshot.get("position_quantity", "0"))
-            self.position_summary.setText(
-                f"الكمية: {self._ltr(str(quantity))}  •  الحماية: {self._ltr('TP / SL')}"
+
+        if not isinstance(result, dict):
+            return
+
+        if mode != "paper":
+            self._apply_exchange_state(result)
+            snapshot = result.get("snapshot")
+            if not isinstance(snapshot, dict):
+                self._metric_value(
+                    self.balance_card, "غير متاح — لم تتم المصالحة"
+                )
+                self.position_summary.setText(
+                    "لا توجد بيانات حساب مؤكدة بعد. اضغط «تحديث بيانات الحساب» "
+                    "لإجراء مصالحة قراءة فقط."
+                )
+                return
+
+        snapshot = result.get("snapshot", result) or {}
+
+        quantity = snapshot.get(
+            "quantity",
+            snapshot.get("position_quantity", "0"),
+        )
+        self.position_summary.setText(
+            f"الكمية: {self._ltr(str(quantity))}"
+            f"  •  "
+            f"الحماية: {self._ltr('TP / SL')}"
+        )
+
+        if mode != "paper":
+            balance = snapshot.get("available_futures_balance")
+            balance_text = (
+                "— USDT"
+                if balance is None
+                else self._ltr(f"{balance} USDT")
             )
+            self._metric_value(self.balance_card, balance_text)
+
+    def refresh_account_state(self) -> None:
+        mode = str(self.mode_selector.currentData())
+        if mode == "paper":
+            self.load_position()
+        else:
+            self.reconcile_selected_exchange()
+
+    def _apply_exchange_state(self, state: dict[str, Any]) -> None:
+        mode = str(state.get("mode", self.mode_selector.currentData()))
+        reasons = [
+            str(reason)
+            for reason in state.get("blocked_reasons_ar", [])
+            if str(reason).strip()
+        ]
+        reason_text = " • ".join(reasons) or "بيانات الحساب غير جاهزة بعد."
+
+        if mode == "live":
+            if state.get("live_locked", True):
+                self.mode_selector.setItemText(2, "Live — مقفل")
+                self.mode_label.setText("النمط: Live — مقفل")
+                self._set_banner(
+                    "Live مقفل. اكتب LIVE في صفحة الإعدادات لفتحه.", "warning"
+                )
+                self._metric_value(self.risk_card, "Live مقفل")
+                return
+            if state.get("can_enter") is True:
+                self.mode_selector.setItemText(2, "Live — جاهز")
+                self.mode_label.setText("النمط: Live — جاهز")
+                self._set_banner(
+                    "Live مفتوح وبيانات الحساب متصالحة. فحوص الأمان الفورية ما زالت فعالة.",
+                    "success",
+                )
+                self._metric_value(self.risk_card, "جاهز")
+                return
+            self.mode_selector.setItemText(2, "Live — مفتوح")
+            self.mode_label.setText("النمط: Live — مفتوح")
+            self._set_banner(
+                f"Live مفتوح، لكن الدخول غير جاهز: {reason_text}", "warning"
+            )
+            self._metric_value(self.risk_card, reason_text)
+            return
+
+        if state.get("can_enter") is True:
+            self._set_banner("Testnet متصالح وجاهز.", "success")
+            self._metric_value(self.risk_card, "جاهز")
+        else:
+            self._set_banner(f"Testnet غير جاهز: {reason_text}", "warning")
+            self._metric_value(self.risk_card, reason_text)
 
     def check_protection(self) -> None:
         mode = str(self.mode_selector.currentData())
@@ -869,11 +956,41 @@ class RangeBotWindow(QWidget):
 
     def reconcile_selected_exchange(self) -> None:
         mode = str(self.mode_selector.currentData())
-        if mode != "paper":
-            self._request(
-                "post",
-                f"/v1/exchange/{mode}/reconcile",
-                success="اكتملت المصالحة الآمنة.",
+        if mode == "paper":
+            return
+
+        result = self._request(
+            "post",
+            f"/v1/exchange/{mode}/reconcile",
+            success=(
+                "اكتملت "
+                "المصالحة "
+                "الآمنة."
+            ),
+        )
+
+        if isinstance(result, dict):
+            self._apply_exchange_state(result)
+            snapshot = result.get("snapshot", result) or {}
+
+            balance = snapshot.get("available_futures_balance")
+            balance_text = (
+                "— USDT"
+                if balance is None
+                else self._ltr(f"{balance} USDT")
+            )
+            self._metric_value(self.balance_card, balance_text)
+
+            quantity = snapshot.get(
+                "quantity",
+                snapshot.get("position_quantity", "0"),
+            )
+            self.position_summary.setText(
+                f"الكمية: "
+                f"{self._ltr(str(quantity))}"
+                f"  •  "
+                f"الحماية: "
+                f"{self._ltr('TP / SL')}"
             )
 
     def activate_live(self) -> None:
@@ -884,9 +1001,61 @@ class RangeBotWindow(QWidget):
             "تم فتح Live. ستظل أوامر التداول خاضعة لفحوص الأمان الفورية.",
         )
         if isinstance(result, dict):
-            self.mode_selector.setItemText(2, "Live — جاهز")
-            self.mode_label.setText("النمط: Live — جاهز")
+            self._apply_exchange_state(result)
             self.live_confirmation.clear()
+
+    def _restore_ui_settings(self) -> None:
+        values = {
+            self.contract_input: "contract",
+            self.entry_quantity: "quantity",
+            self.entry_price: "limit_price",
+            self.take_profit: "take_profit",
+            self.stop_loss: "stop_loss",
+        }
+        for widget, key in values.items():
+            saved = self._settings.value(key)
+            if saved is not None:
+                widget.setText(str(saved))
+
+        combos = {
+            self.entry_type: "order_type",
+            self.entry_allocation: "allocation",
+            self.leverage: "leverage",
+        }
+        for combo, key in combos.items():
+            saved = self._settings.value(key)
+            index = combo.findText(str(saved)) if saved is not None else -1
+            if index >= 0:
+                combo.setCurrentIndex(index)
+
+        mode = str(self._settings.value("trading_mode", "paper"))
+        mode_index = self.mode_selector.findData(mode)
+        if mode_index >= 0:
+            self.mode_selector.setCurrentIndex(mode_index)
+        if self.contract_input.text().strip():
+            self.choose_contract()
+
+    def _save_ui_settings(self) -> None:
+        self._settings.setValue("trading_mode", self.mode_selector.currentData())
+        self._settings.setValue("contract", self.contract_input.text().strip())
+        self._settings.setValue("order_type", self.entry_type.currentText())
+        self._settings.setValue("quantity", self.entry_quantity.text())
+        self._settings.setValue("limit_price", self.entry_price.text())
+        self._settings.setValue("allocation", self.entry_allocation.currentText())
+        self._settings.setValue("leverage", self.leverage.currentText())
+        self._settings.setValue("take_profit", self.take_profit.text())
+        self._settings.setValue("stop_loss", self.stop_loss.text())
+        self._settings.sync()
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
+        self._save_ui_settings()
+        super().closeEvent(event)
+
+    def _set_banner(self, text: str, tone: str) -> None:
+        self.warning_banner.setText(text)
+        self.warning_banner.setProperty("tone", tone)
+        self.warning_banner.style().unpolish(self.warning_banner)
+        self.warning_banner.style().polish(self.warning_banner)
 
     def save_api_credentials(self) -> None:
         payload = {
@@ -1059,7 +1228,10 @@ class RangeBotWindow(QWidget):
         #pageTitle { font-size:25px; font-weight:700; }
         #muted, #emptyHint { color:#8fa4a9; }
         #statusPill, #modeSelector { background:#101a21; border:1px solid #263842; border-radius:16px; padding:8px 12px; }
-        #safetyBanner { background:#171b19; border:1px solid #5f5037; color:#f4d392; border-radius:11px; padding:11px 15px; }
+        #safetyBanner { border-radius:11px; padding:11px 15px; }
+        #safetyBanner[tone="warning"] { background:#171b19; border:1px solid #5f5037; color:#f4d392; }
+        #safetyBanner[tone="success"] { background:#10231e; border:1px solid #286c59; color:#8de1ca; }
+        #safetyBanner[tone="info"] { background:#111d24; border:1px solid #304a56; color:#a9c4cb; }
         #panel, #metricCard { background:#111c23; border:1px solid #263842; border-radius:14px; }
         #panelTitle { font-size:16px; font-weight:700; }
         #metricCard { min-height:82px; padding:12px; }
