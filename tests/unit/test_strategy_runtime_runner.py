@@ -99,9 +99,7 @@ class Registry:
 
     def get(self, type_id):
         assert type_id == "test_strategy"
-        return SimpleNamespace(
-            metadata=SimpleNamespace(evaluation_cadence=self.cadence)
-        )
+        return SimpleNamespace(evaluation_cadence=self.cadence)
 
 
 class MarketData:

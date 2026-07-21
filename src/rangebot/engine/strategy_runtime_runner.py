@@ -92,9 +92,9 @@ class StrategyRuntimeRunner:
         try:
             active_run = self._instances.active_run(instance.instance_id)
             runtime_instance = self._instance_from_run_snapshot(instance, active_run)
-            descriptor = self._registry.get(runtime_instance.type_id)
+            metadata = self._registry.get(runtime_instance.type_id)
             context = self._build_context(runtime_instance)
-            event_key = self._event_key(descriptor.metadata.evaluation_cadence, context)
+            event_key = self._event_key(metadata.evaluation_cadence, context)
         except Exception as error:
             reason = f"context_unavailable:{type(error).__name__}"
             self._record_runtime_error_once(instance, reason)
