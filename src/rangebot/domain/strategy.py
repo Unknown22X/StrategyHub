@@ -62,12 +62,54 @@ StrategyLifecycle = Literal["stopped", "running", "monitoring", "paused", "error
 StrategyDirection = Literal["long", "short", "both"]
 
 
+class BuiltInStrategyTemplate(BaseModel):
+    """Immutable product template projected from one registered implementation."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    template_id: str = Field(pattern=r"^builtin:[a-z][a-z0-9_-]{1,63}$")
+    type_id: str = Field(pattern=r"^[a-z][a-z0-9_-]{1,63}$")
+    name: str = Field(min_length=1, max_length=200)
+    description: str = Field(min_length=1, max_length=1000)
+    version: str = Field(min_length=1, max_length=50)
+    immutable: Literal[True] = True
+    supports_monitoring: bool
+    supports_automatic_trading: bool
+    supports_backtesting: bool
+    supports_scanning: bool
+    supported_directions: tuple[str, ...]
+    supported_timeframes: tuple[int, ...]
+    configuration_schema: dict[str, Any] = Field(default_factory=dict)
+
+
+class StrategyInstanceFromTemplateCreate(BaseModel):
+    """Create an Instance from an immutable Template and optional user Preset."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    template_id: str = Field(pattern=r"^builtin:[a-z][a-z0-9_-]{1,63}$")
+    preset_id: str | None = Field(default=None, max_length=64)
+    name: str = Field(min_length=1, max_length=200)
+    environment: StrategyEnvironment = "paper"
+    symbol: str = Field(min_length=1, max_length=64)
+    timeframe_minutes: int | None = Field(default=None, ge=1, le=10080)
+    direction: StrategyDirection | None = None
+    requested_margin: Decimal | None = Field(default=None, gt=0)
+    requested_leverage: int | None = Field(default=None, ge=1, le=100)
+    configuration_overrides: dict[str, Any] = Field(default_factory=dict)
+
+
 class StrategyInstanceCreate(BaseModel):
     """Create one saved configuration of a registered strategy type."""
 
     model_config = ConfigDict(extra="forbid")
 
     type_id: str = Field(pattern=r"^[a-z][a-z0-9_-]{1,63}$")
+    template_id: str | None = Field(
+        default=None,
+        pattern=r"^builtin:[a-z][a-z0-9_-]{1,63}$",
+    )
+    preset_id: str | None = Field(default=None, max_length=64)
     name: str = Field(min_length=1, max_length=200)
     environment: StrategyEnvironment = "live"
     symbol: str = Field(min_length=1, max_length=64)
@@ -107,6 +149,10 @@ class StrategyInstance(StrategyInstanceCreate):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     instance_id: str
+    template_id: str = Field(pattern=r"^builtin:[a-z][a-z0-9_-]{1,63}$")
+    template_version: str = Field(min_length=1, max_length=50)
+    preset_id: str | None = Field(default=None, max_length=64)
+    preset_revision: int | None = Field(default=None, ge=1)
     status: StrategyLifecycle
     created_at: datetime
     updated_at: datetime

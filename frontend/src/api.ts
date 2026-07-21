@@ -9,6 +9,7 @@ import type {
   BacktestStrategyCreateRequest,
   BacktestTrade,
   BackupDeleteResult,
+  BuiltInStrategyTemplate,
   BackupRecord,
   BackupRestoreResult,
   DashboardBundle,
@@ -35,6 +36,7 @@ import type {
   StrategyDecision,
   StrategyInstance,
   StrategyInstanceCreate,
+  StrategyInstanceFromTemplateCreate,
   StrategyOverviewItem,
   StrategyInstanceUpdate,
   StrategyRun,
@@ -385,6 +387,23 @@ export function removeCredentials(
     `/v1/exchange/${mode}/credentials`,
     { method: "DELETE" },
   );
+}
+
+export function loadBuiltInStrategyTemplates(
+  signal?: AbortSignal,
+): Promise<BuiltInStrategyTemplate[]> {
+  return request<BuiltInStrategyTemplate[]>("/v1/strategy-catalog/templates", {
+    signal,
+  });
+}
+
+export function createStrategyFromTemplate(
+  strategy: StrategyInstanceFromTemplateCreate,
+): Promise<StrategyInstance> {
+  return request<StrategyInstance>("/v1/strategy-instances", {
+    method: "POST",
+    body: JSON.stringify(strategy),
+  });
 }
 
 export function createStrategy(

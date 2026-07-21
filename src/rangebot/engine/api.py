@@ -142,11 +142,13 @@ from rangebot.domain.paper import (
 from rangebot.domain.runtime import RuntimeState
 from rangebot.domain.trades import TradeFill, TradeFillCreate, TradeHistorySummary
 from rangebot.domain.strategy import (
+    BuiltInStrategyTemplate,
     StrategyConfigurationVersion,
     StrategyDecision,
     StrategyInstance,
     StrategyInstanceCreate,
     StrategyInstanceDuplicate,
+    StrategyInstanceFromTemplateCreate,
     StrategyInstanceUpdate,
     StrategyLifecycle,
     StrategyOverviewItem,
@@ -169,6 +171,10 @@ from rangebot.domain.strategy_workflow import (
     StrategyCoinSetupUpdate,
     StrategyCoinSetupVersion,
     StrategyOpportunity,
+    StrategyPreset,
+    StrategyPresetCreate,
+    StrategyPresetUpdate,
+    StrategyPresetVersion,
     StrategySetupApproval,
     StrategyTemplate,
     StrategyTemplateCreate,
@@ -2408,6 +2414,149 @@ def create_app(
                 detail=f"Invalid strategy configuration: {error}",
             ) from error
 
+    def _validate_template_selection(
+        template: BuiltInStrategyTemplate,
+        *,
+        timeframe_minutes: int,
+        direction: str,
+    ) -> None:
+        if timeframe_minutes not in template.supported_timeframes:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Timeframe {timeframe_minutes} is not supported by "
+                    f"Template {template.template_id}."
+                ),
+            )
+        supported = set(template.supported_directions)
+        direction_supported = (
+            direction == "both" and {"long", "short"}.issubset(supported)
+        ) or direction in supported
+        if not direction_supported:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Direction {direction} is not supported by "
+                    f"Template {template.template_id}."
+                ),
+            )
+
+    def _resolve_strategy_lineage(
+        change: StrategyInstanceCreate,
+    ) -> tuple[StrategyInstanceCreate, str, int | None]:
+        template_id = change.template_id or registered_strategies.template_id(
+            change.type_id
+        )
+        try:
+            template = registered_strategies.template(template_id)
+        except LookupError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        if template.type_id != change.type_id:
+            raise HTTPException(
+                status_code=422,
+                detail="Strategy Template type does not match the requested type_id.",
+            )
+        _validate_template_selection(
+            template,
+            timeframe_minutes=change.timeframe_minutes,
+            direction=change.direction,
+        )
+        preset_revision: int | None = None
+        if change.preset_id is not None:
+            try:
+                preset = strategy_workflow_repository.get_preset(change.preset_id)
+            except LookupError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+            if preset.type_id != template.type_id:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Strategy Preset is not compatible with the selected Template.",
+                )
+            if preset.status == "archived":
+                raise HTTPException(
+                    status_code=422,
+                    detail="Archived Strategy Presets cannot create new Instances.",
+                )
+            preset_revision = preset.current_revision
+        return (
+            change.model_copy(update={"template_id": template.template_id}),
+            template.version,
+            preset_revision,
+        )
+
+    def _instance_change_from_template(
+        request: StrategyInstanceFromTemplateCreate,
+    ) -> tuple[StrategyInstanceCreate, str, int | None]:
+        try:
+            template = registered_strategies.template(request.template_id)
+        except LookupError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        preset = None
+        if request.preset_id is not None:
+            try:
+                preset = strategy_workflow_repository.get_preset(request.preset_id)
+            except LookupError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+            if preset.type_id != template.type_id:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Strategy Preset is not compatible with the selected Template.",
+                )
+            if preset.status == "archived":
+                raise HTTPException(
+                    status_code=422,
+                    detail="Archived Strategy Presets cannot create new Instances.",
+                )
+        configuration = dict(preset.configuration) if preset is not None else {}
+        configuration.update(request.configuration_overrides)
+        supported = set(template.supported_directions)
+        default_direction = (
+            "both"
+            if {"long", "short"}.issubset(supported)
+            else "long"
+            if "long" in supported
+            else "short"
+        )
+        timeframe_minutes = request.timeframe_minutes or (
+            preset.timeframe_minutes
+            if preset is not None
+            else template.supported_timeframes[0]
+        )
+        direction = request.direction or (
+            preset.direction if preset is not None else default_direction
+        )
+        _validate_template_selection(
+            template,
+            timeframe_minutes=timeframe_minutes,
+            direction=direction,
+        )
+        requested_margin = request.requested_margin or (
+            preset.setup_defaults.risk.requested_margin
+            if preset is not None
+            else Decimal("20")
+        )
+        requested_leverage = request.requested_leverage or (
+            preset.setup_defaults.risk.requested_leverage if preset is not None else 3
+        )
+        change = StrategyInstanceCreate(
+            type_id=template.type_id,
+            template_id=template.template_id,
+            preset_id=preset.preset_id if preset is not None else None,
+            name=request.name,
+            environment=request.environment,
+            symbol=request.symbol,
+            timeframe_minutes=timeframe_minutes,
+            direction=direction,
+            requested_margin=requested_margin,
+            requested_leverage=requested_leverage,
+            configuration=configuration,
+        )
+        return (
+            change,
+            template.version,
+            preset.current_revision if preset is not None else None,
+        )
+
     def _transition_strategy(
         instance_id: str, target: StrategyLifecycle
     ) -> StrategyInstance:
@@ -2457,6 +2606,81 @@ def create_app(
     @app.get("/v1/workflow/summary", response_model=WorkflowSummary)
     def workflow_summary() -> WorkflowSummary:
         return strategy_workflow_repository.summary()
+
+    @app.get(
+        "/v1/strategy-catalog/templates",
+        response_model=list[BuiltInStrategyTemplate],
+    )
+    def built_in_strategy_templates() -> list[BuiltInStrategyTemplate]:
+        return registered_strategies.templates()
+
+    @app.get(
+        "/v1/strategy-catalog/templates/{template_id}",
+        response_model=BuiltInStrategyTemplate,
+    )
+    def built_in_strategy_template(template_id: str) -> BuiltInStrategyTemplate:
+        try:
+            return registered_strategies.template(template_id)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.get("/v1/strategy-presets", response_model=list[StrategyPreset])
+    def strategy_presets(include_archived: bool = False) -> list[StrategyPreset]:
+        return strategy_workflow_repository.list_presets(include_archived)
+
+    @app.post(
+        "/v1/strategy-presets",
+        response_model=StrategyPreset,
+        status_code=201,
+    )
+    def create_strategy_preset(change: StrategyPresetCreate) -> StrategyPreset:
+        try:
+            return strategy_workflow_repository.create_preset(change)
+        except Exception as error:
+            raise _workflow_http_exception(error) from error
+
+    @app.get("/v1/strategy-presets/{preset_id}", response_model=StrategyPreset)
+    def strategy_preset(preset_id: str) -> StrategyPreset:
+        try:
+            return strategy_workflow_repository.get_preset(preset_id)
+        except Exception as error:
+            raise _workflow_http_exception(error) from error
+
+    @app.put("/v1/strategy-presets/{preset_id}", response_model=StrategyPreset)
+    def update_strategy_preset(
+        preset_id: str, change: StrategyPresetUpdate
+    ) -> StrategyPreset:
+        try:
+            return strategy_workflow_repository.update_preset(preset_id, change)
+        except Exception as error:
+            raise _workflow_http_exception(error) from error
+
+    @app.get(
+        "/v1/strategy-presets/{preset_id}/versions",
+        response_model=list[StrategyPresetVersion],
+    )
+    def strategy_preset_versions(preset_id: str) -> list[StrategyPresetVersion]:
+        try:
+            return strategy_workflow_repository.preset_versions(preset_id)
+        except Exception as error:
+            raise _workflow_http_exception(error) from error
+
+    @app.post(
+        "/v1/strategy-presets/{preset_id}/archive",
+        response_model=StrategyPreset,
+    )
+    def archive_strategy_preset(preset_id: str) -> StrategyPreset:
+        try:
+            return strategy_workflow_repository.archive_preset(preset_id)
+        except Exception as error:
+            raise _workflow_http_exception(error) from error
+
+    @app.delete("/v1/strategy-presets/{preset_id}", status_code=204)
+    def delete_strategy_preset(preset_id: str) -> None:
+        try:
+            strategy_workflow_repository.delete_preset(preset_id)
+        except Exception as error:
+            raise _workflow_http_exception(error) from error
 
     @app.get("/v1/strategy-templates", response_model=list[StrategyTemplate])
     def strategy_templates(include_archived: bool = False) -> list[StrategyTemplate]:
@@ -2783,13 +3007,43 @@ def create_app(
 
     @app.post("/v1/strategies", response_model=StrategyInstance, status_code=201)
     def create_strategy_instance(change: StrategyInstanceCreate) -> StrategyInstance:
+        resolved, template_version, preset_revision = _resolve_strategy_lineage(change)
+        _validate_strategy_configuration(
+            resolved.type_id,
+            resolved.configuration,
+            resolved.timeframe_minutes,
+            resolved.direction,
+        )
+        created = strategy_instance_repository.create(
+            resolved,
+            template_version=template_version,
+            preset_revision=preset_revision,
+        )
+        _sync_market_subscriptions()
+        return created
+
+    @app.post(
+        "/v1/strategy-instances",
+        response_model=StrategyInstance,
+        status_code=201,
+    )
+    def create_strategy_instance_from_template(
+        request: StrategyInstanceFromTemplateCreate,
+    ) -> StrategyInstance:
+        change, template_version, preset_revision = _instance_change_from_template(
+            request
+        )
         _validate_strategy_configuration(
             change.type_id,
             change.configuration,
             change.timeframe_minutes,
             change.direction,
         )
-        created = strategy_instance_repository.create(change)
+        created = strategy_instance_repository.create(
+            change,
+            template_version=template_version,
+            preset_revision=preset_revision,
+        )
         _sync_market_subscriptions()
         return created
 

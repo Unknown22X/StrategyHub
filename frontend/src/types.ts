@@ -657,8 +657,39 @@ export interface BacktestStrategyCreateRequest {
 
 export type StrategyStatus = "stopped" | "running" | "monitoring" | "paused" | "error";
 
+export interface BuiltInStrategyTemplate {
+  template_id: string;
+  type_id: string;
+  name: string;
+  description: string;
+  version: string;
+  immutable: true;
+  supports_monitoring: boolean;
+  supports_automatic_trading: boolean;
+  supports_backtesting: boolean;
+  supports_scanning: boolean;
+  supported_directions: string[];
+  supported_timeframes: number[];
+  configuration_schema: Record<string, JsonValue>;
+}
+
+export interface StrategyInstanceFromTemplateCreate {
+  template_id: string;
+  preset_id?: string | null;
+  name: string;
+  environment: Environment;
+  symbol: string;
+  timeframe_minutes?: number | null;
+  direction?: "long" | "short" | "both" | null;
+  requested_margin?: string | null;
+  requested_leverage?: number | null;
+  configuration_overrides?: Record<string, JsonValue>;
+}
+
 export interface StrategyInstanceCreate {
   type_id: string;
+  template_id?: string | null;
+  preset_id?: string | null;
   name: string;
   environment: Environment;
   symbol: string;
@@ -703,6 +734,10 @@ export interface StrategyRun {
 
 export interface StrategyInstance {
   type_id: string;
+  template_id: string;
+  template_version: string;
+  preset_id: string | null;
+  preset_revision: number | null;
   name: string;
   environment: Environment;
   symbol: string;
@@ -814,6 +849,24 @@ export type StrategyTemplate = Omit<StrategyTemplateCreate, "status"> & {
 export interface StrategyTemplateVersion {
   version_id: number;
   template_id: string;
+  revision: number;
+  timeframe_minutes: number;
+  direction: "long" | "short" | "both";
+  configuration: Record<string, JsonValue>;
+  setup_defaults: StrategySetupDefaults;
+  created_at: string;
+}
+
+export type StrategyPresetCreate = StrategyTemplateCreate;
+
+export type StrategyPreset = Omit<StrategyTemplate, "template_id"> & {
+  preset_id: string;
+  legacy_template_id: string;
+};
+
+export interface StrategyPresetVersion {
+  version_id: number;
+  preset_id: string;
   revision: number;
   timeframe_minutes: number;
   direction: "long" | "short" | "both";

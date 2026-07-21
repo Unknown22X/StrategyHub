@@ -23,6 +23,8 @@ NOW = datetime(2026, 7, 17, 12, 0, tzinfo=UTC)
 def _instance(status: str = "running") -> StrategyInstance:
     return StrategyInstance(
         type_id="test_strategy",
+        template_id="builtin:test_strategy",
+        template_version="test",
         name="Test strategy",
         environment="paper",
         symbol="BTC_USDT",
@@ -88,7 +90,9 @@ class Registry:
 
     def get(self, type_id):
         assert type_id == "test_strategy"
-        return SimpleNamespace(metadata=SimpleNamespace(evaluation_cadence=self.cadence))
+        return SimpleNamespace(
+            metadata=SimpleNamespace(evaluation_cadence=self.cadence)
+        )
 
 
 class MarketData:
@@ -174,7 +178,9 @@ def test_monitoring_evaluates_once_per_closed_candle_without_order_submission() 
     assert orders.calls == []
 
 
-def test_running_strategy_submits_protected_intent_through_central_order_manager() -> None:
+def test_running_strategy_submits_protected_intent_through_central_order_manager() -> (
+    None
+):
     runner, _, manager, orders = _runner(_instance("running"))
 
     outcome = asyncio.run(runner.run_once())[0]

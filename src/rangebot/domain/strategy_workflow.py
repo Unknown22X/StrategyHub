@@ -71,7 +71,9 @@ class EntryExecutionSettings(BaseModel):
     def validate_limit_settings(self) -> "EntryExecutionSettings":
         has_limit_value = self.limit_price is not None or bool(self.limit_price_formula)
         if self.order_type == "limit" and not has_limit_value:
-            raise ValueError("Limit entry requires a price or a documented price formula.")
+            raise ValueError(
+                "Limit entry requires a price or a documented price formula."
+            )
         if self.order_type == "market" and has_limit_value:
             raise ValueError("Market entry cannot include a limit price or formula.")
         return self
@@ -138,9 +140,7 @@ class StrategyRiskDefaults(BaseModel):
     requested_margin: Decimal = Field(default=Decimal("20"), gt=0)
     requested_leverage: int = Field(default=3, ge=1, le=100)
     maximum_positions: int = Field(default=1, ge=1, le=100)
-    maximum_exposure_percentage: Decimal = Field(
-        default=Decimal("25"), gt=0, le=100
-    )
+    maximum_exposure_percentage: Decimal = Field(default=Decimal("25"), gt=0, le=100)
 
 
 class StrategySetupDefaults(BaseModel):
@@ -200,6 +200,47 @@ class StrategyTemplateVersion(BaseModel):
 
     version_id: int
     template_id: str
+    revision: int = Field(ge=1)
+    timeframe_minutes: int
+    direction: StrategyDirection
+    configuration: dict[str, Any]
+    setup_defaults: StrategySetupDefaults
+    created_at: datetime
+
+
+class StrategyPresetCreate(StrategyTemplateCreate):
+    """Create an editable user Preset; legacy Template records use this model."""
+
+
+class StrategyPresetUpdate(StrategyTemplateUpdate):
+    """Update an editable user Preset."""
+
+
+class StrategyPreset(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    preset_id: str
+    type_id: str
+    name: str
+    description: str
+    status: StrategyTemplateStatus
+    current_revision: int = Field(ge=1)
+    timeframe_minutes: int
+    direction: StrategyDirection
+    configuration: dict[str, Any]
+    setup_defaults: StrategySetupDefaults
+    setup_count: int = Field(default=0, ge=0)
+    created_at: datetime
+    updated_at: datetime
+    archived_at: datetime | None = None
+    legacy_template_id: str
+
+
+class StrategyPresetVersion(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    version_id: int
+    preset_id: str
     revision: int = Field(ge=1)
     timeframe_minutes: int
     direction: StrategyDirection

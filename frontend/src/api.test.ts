@@ -5,6 +5,7 @@ import {
   createBackup,
   createStrategy,
   createStrategyFromBacktest,
+  createStrategyFromTemplate,
   deleteBackup,
   deleteStrategy,
   duplicateStrategy,
@@ -14,6 +15,7 @@ import {
   listDiscoveryScans,
   loadAccountPerformance,
   loadAccountRiskPolicy,
+  loadBuiltInStrategyTemplates,
   loadBacktestEquity,
   loadBacktestTrades,
   loadCredentialStatus,
@@ -399,6 +401,70 @@ describe("dashboard API boundary", () => {
     expect(created.instance_id).toBe("strategy-1");
     expect(fetchMock).toHaveBeenCalledWith(
       "/v1/strategies",
+      expect.objectContaining({ method: "POST", body: JSON.stringify(request) }),
+    );
+  });
+
+  it("loads immutable Templates and creates an Instance from a Template and Preset", async () => {
+    const templates = [{
+      template_id: "builtin:adaptive_trend",
+      type_id: "adaptive_trend",
+      name: "Adaptive Trend",
+      description: "Trend Template",
+      version: "1.0.0",
+      immutable: true,
+      supports_monitoring: true,
+      supports_automatic_trading: true,
+      supports_backtesting: true,
+      supports_scanning: true,
+      supported_directions: ["long", "short"],
+      supported_timeframes: [5, 15],
+      configuration_schema: {},
+    }];
+    const request = {
+      template_id: "builtin:adaptive_trend",
+      preset_id: "preset-1",
+      name: "BTC Trend",
+      environment: "paper" as const,
+      symbol: "BTC_USDT",
+      configuration_overrides: {},
+    };
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(templates))
+      .mockResolvedValueOnce(jsonResponse({
+        type_id: "adaptive_trend",
+        template_id: "builtin:adaptive_trend",
+        template_version: "1.0.0",
+        preset_id: "preset-1",
+        preset_revision: 2,
+        name: "BTC Trend",
+        environment: "paper",
+        symbol: "BTC_USDT",
+        timeframe_minutes: 15,
+        direction: "both",
+        requested_margin: "20",
+        requested_leverage: 3,
+        configuration: {},
+        instance_id: "strategy-2",
+        status: "stopped",
+        created_at: "2026-07-21T12:00:00Z",
+        updated_at: "2026-07-21T12:00:00Z",
+        revision: 1,
+      }, 201));
+
+    const loaded = await loadBuiltInStrategyTemplates();
+    const created = await createStrategyFromTemplate(request);
+
+    expect(loaded[0].immutable).toBe(true);
+    expect(created.preset_revision).toBe(2);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/v1/strategy-catalog/templates",
+      expect.any(Object),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/v1/strategy-instances",
       expect.objectContaining({ method: "POST", body: JSON.stringify(request) }),
     );
   });

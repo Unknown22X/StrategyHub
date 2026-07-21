@@ -38,6 +38,10 @@ class StrategyInstanceRecord(StrategyInstanceBase):
 
     instance_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     type_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    template_id: Mapped[str] = mapped_column(String(72), nullable=False)
+    template_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    preset_id: Mapped[str | None] = mapped_column(String(64))
+    preset_revision: Mapped[int | None] = mapped_column(Integer)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     environment: Mapped[str] = mapped_column(String(16), nullable=False)
     symbol: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -47,21 +51,29 @@ class StrategyInstanceRecord(StrategyInstanceBase):
     requested_leverage: Mapped[int] = mapped_column(Integer, nullable=False)
     configuration_json: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     revision: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
 class StrategyConfigurationVersionRecord(StrategyInstanceBase):
     __tablename__ = "strategy_configuration_version"
 
-    version_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    version_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
     instance_id: Mapped[str] = mapped_column(String(36), nullable=False)
     revision: Mapped[int] = mapped_column(Integer, nullable=False)
     requested_margin: Mapped[Decimal] = mapped_column(Numeric(30, 12), nullable=False)
     requested_leverage: Mapped[int] = mapped_column(Integer, nullable=False)
     configuration_json: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
 
 class StrategyRunRecord(StrategyInstanceBase):
@@ -72,7 +84,9 @@ class StrategyRunRecord(StrategyInstanceBase):
     mode: Mapped[str] = mapped_column(String(16), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     configuration_revision: Mapped[int] = mapped_column(Integer, nullable=False)
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     end_reason: Mapped[str | None] = mapped_column(String(200))
 
@@ -80,11 +94,15 @@ class StrategyRunRecord(StrategyInstanceBase):
 class StrategyDecisionRecord(StrategyInstanceBase):
     __tablename__ = "strategy_decision"
 
-    decision_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    decision_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
     run_id: Mapped[str] = mapped_column(String(36), nullable=False)
     instance_id: Mapped[str] = mapped_column(String(36), nullable=False)
     symbol: Mapped[str] = mapped_column(String(64), nullable=False)
-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     signal: Mapped[str] = mapped_column(String(100), nullable=False)
     eligible: Mapped[bool] = mapped_column(Boolean, nullable=False)
     reason_codes_json: Mapped[str] = mapped_column(Text, nullable=False)
@@ -94,7 +112,9 @@ class StrategyDecisionRecord(StrategyInstanceBase):
 class TradeOwnershipRecord(StrategyInstanceBase):
     __tablename__ = "trade_ownership"
 
-    ownership_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ownership_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
     identity_kind: Mapped[str] = mapped_column(String(16), nullable=False)
     external_identity: Mapped[str] = mapped_column(String(200), nullable=False)
     origin: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -106,10 +126,14 @@ class TradeOwnershipRecord(StrategyInstanceBase):
     trailing_state: Mapped[str | None] = mapped_column(String(16))
     trailing_order_id: Mapped[str | None] = mapped_column(String(200))
     trailing_last_error: Mapped[str | None] = mapped_column(String(500))
-    trailing_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    trailing_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     instance_id: Mapped[str | None] = mapped_column(String(36))
     run_id: Mapped[str | None] = mapped_column(String(36))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
 
 _ALLOWED_TRANSITIONS: dict[str, set[str]] = {
@@ -131,7 +155,9 @@ class StrategyInstanceRepository:
     def list(self) -> list[StrategyInstance]:
         with Session(self._database_engine) as session:
             records = session.scalars(
-                select(StrategyInstanceRecord).order_by(StrategyInstanceRecord.created_at)
+                select(StrategyInstanceRecord).order_by(
+                    StrategyInstanceRecord.created_at
+                )
             )
             return [self._to_domain(record) for record in records]
 
@@ -139,12 +165,23 @@ class StrategyInstanceRepository:
         with Session(self._database_engine) as session:
             return self._to_domain(self._instance(session, instance_id))
 
-    def create(self, change: StrategyInstanceCreate) -> StrategyInstance:
+    def create(
+        self,
+        change: StrategyInstanceCreate,
+        *,
+        template_version: str = "unknown",
+        preset_revision: int | None = None,
+    ) -> StrategyInstance:
         now = datetime.now(UTC)
         configuration_json = self._configuration_json(change.configuration)
+        template_id = change.template_id or f"builtin:{change.type_id}"
         record = StrategyInstanceRecord(
             instance_id=str(uuid4()),
             type_id=change.type_id,
+            template_id=template_id,
+            template_version=template_version,
+            preset_id=change.preset_id,
+            preset_revision=preset_revision,
             name=change.name,
             environment=change.environment,
             symbol=change.symbol,
@@ -183,6 +220,8 @@ class StrategyInstanceRepository:
         return self.create(
             StrategyInstanceCreate(
                 type_id=source.type_id,
+                template_id=source.template_id,
+                preset_id=source.preset_id,
                 name=name,
                 environment=source.environment,
                 symbol=source.symbol,
@@ -191,7 +230,9 @@ class StrategyInstanceRepository:
                 requested_margin=source.requested_margin,
                 requested_leverage=source.requested_leverage,
                 configuration=source.configuration,
-            )
+            ),
+            template_version=source.template_version,
+            preset_revision=source.preset_revision,
         )
 
     def update(
@@ -370,9 +411,7 @@ class StrategyInstanceRepository:
             session.refresh(record)
             return self._decision_to_domain(record)
 
-    def record_trade_ownership(
-        self, change: TradeOwnershipCreate
-    ) -> TradeOwnership:
+    def record_trade_ownership(self, change: TradeOwnershipCreate) -> TradeOwnership:
         with self._lock, Session(self._database_engine) as session:
             if change.origin in {"automatic_strategy", "monitoring_conversion"}:
                 if change.instance_id is None or change.run_id is None:
@@ -385,8 +424,13 @@ class StrategyInstanceRepository:
                 run = session.get(StrategyRunRecord, change.run_id)
                 if run is None:
                     raise LookupError(f"Unknown strategy run: {change.run_id}")
-                if change.instance_id is not None and run.instance_id != change.instance_id:
-                    raise ValueError("Trade run does not belong to the supplied strategy.")
+                if (
+                    change.instance_id is not None
+                    and run.instance_id != change.instance_id
+                ):
+                    raise ValueError(
+                        "Trade run does not belong to the supplied strategy."
+                    )
             record = TradeOwnershipRecord(
                 identity_kind=change.identity_kind,
                 external_identity=change.external_identity,
@@ -401,7 +445,9 @@ class StrategyInstanceRepository:
                 trailing_last_error=change.trailing_last_error,
                 trailing_updated_at=(
                     change.trailing_updated_at
-                    or (datetime.now(UTC) if change.trailing_state is not None else None)
+                    or (
+                        datetime.now(UTC) if change.trailing_state is not None else None
+                    )
                 ),
                 instance_id=change.instance_id,
                 run_id=change.run_id,
@@ -412,7 +458,9 @@ class StrategyInstanceRepository:
                 session.commit()
             except IntegrityError as error:
                 session.rollback()
-                raise ValueError("Trade identity ownership is already recorded.") from error
+                raise ValueError(
+                    "Trade identity ownership is already recorded."
+                ) from error
             session.refresh(record)
             return self._ownership_to_domain(record)
 
@@ -563,6 +611,10 @@ class StrategyInstanceRepository:
         return StrategyInstance(
             instance_id=record.instance_id,
             type_id=record.type_id,
+            template_id=record.template_id,
+            template_version=record.template_version,
+            preset_id=record.preset_id,
+            preset_revision=record.preset_revision,
             name=record.name,
             environment=record.environment,
             symbol=record.symbol,

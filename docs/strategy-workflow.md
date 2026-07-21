@@ -10,32 +10,48 @@ decision, ownership, and trade history are preserved.
 
 ## 1. Domain model
 
-### Strategy Type
+### Strategy implementation
 
-A registered Python implementation and its capability metadata. It owns the
-configuration schema, supported timeframes, scanner/backtest support, strategy
-version, and evaluator factory.
+A registered Python implementation and its capability metadata. This is an internal
+engine concept. It owns the configuration schema, supported timeframes,
+scanner/backtest support, implementation version, and evaluator factory.
 
 ### Strategy Template
 
-A reusable user-owned rule set. A template contains:
+An immutable built-in product definition projected from one registered
+implementation. Its stable ID is `builtin:<type_id>`. A Template exposes its English
+strategy name, implementation version, capabilities, supported timeframes and
+directions, and configuration schema. It cannot be edited, archived, or deleted by
+the user.
 
-- a Strategy Type;
-- name and description;
-- default timeframe and direction;
-- strategy configuration;
-- default execution, DCA, and risk settings;
-- `draft`, `active`, or `archived` state;
-- immutable template revisions.
+### Strategy Preset
 
-Updating a template creates a new revision. Existing coin setups remain pinned to
-the revision they were created or last rebased against; they do not change
+A user-owned editable set of defaults layered over a compatible Template. Presets
+contain name and description, default timeframe and direction, strategy
+configuration, execution/DCA/risk defaults, status, and immutable revisions.
+
+The records historically named `strategy_template` are preserved in place and
+exposed as Presets. Their IDs and revision rows are not rewritten, so existing coin
+setups, Backtests, deployments, and audit history keep their original references.
+The legacy `/v1/strategy-templates` API remains a compatibility alias; new clients
+use `/v1/strategy-presets`.
+
+Updating a Preset creates a new revision. Existing coin setups and Strategy
+Instances remain pinned to the revision they were created from and never change
 silently.
+
+### Strategy Instance
+
+A saved runnable configuration created from exactly one immutable Template and,
+optionally, one Preset revision. The Instance stores `template_id`,
+`template_version`, `preset_id`, and `preset_revision` alongside its effective
+configuration. Existing Instance IDs, runs, decisions, Trades, ownership, and
+deployments remain unchanged by migration `0033_strategy_template_preset_lineage`.
 
 ### Strategy Coin Setup
 
-A configured use of one immutable Strategy Template revision on one Gate.io USDT
-perpetual symbol. A setup stores:
+A configured use of one user Preset revision, backed by its compatible immutable
+Strategy Template, on one Gate.io USDT perpetual symbol. A setup stores:
 
 - exchange, market type, symbol, and quote currency;
 - current price, observation timestamp, and `fresh`/`delayed`/`unavailable` state;

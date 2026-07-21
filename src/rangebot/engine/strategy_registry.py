@@ -1,12 +1,14 @@
 """Dynamic discovery and lookup of strategy metadata and evaluator factories."""
 
+from __future__ import annotations
+
 from collections.abc import Callable
 from importlib import import_module
 import pkgutil
 from types import ModuleType
 
 from rangebot.domain.discovery import StrategyScanner
-from rangebot.domain.strategy import StrategyTypeMetadata
+from rangebot.domain.strategy import BuiltInStrategyTemplate, StrategyTypeMetadata
 from rangebot.domain.strategy_runtime import StrategyEvaluator
 
 
@@ -78,13 +80,41 @@ class StrategyRegistry:
         evaluator = self.evaluator(type_id)
         model = getattr(evaluator, "configuration_model", None)
         if model is None or not hasattr(model, "model_validate"):
-            raise TypeError(
-                f"Strategy evaluator has no configuration model: {type_id}"
-            )
+            raise TypeError(f"Strategy evaluator has no configuration model: {type_id}")
         model.model_validate(configuration)
 
     def list(self) -> list[StrategyTypeMetadata]:
         return [self._types[type_id] for type_id in sorted(self._types)]
+
+    def templates(self) -> list[BuiltInStrategyTemplate]:
+        return [self._template(metadata) for metadata in self.list()]
+
+    def template(self, template_id: str) -> BuiltInStrategyTemplate:
+        prefix = "builtin:"
+        if not template_id.startswith(prefix):
+            raise LookupError(f"Unknown built-in strategy template: {template_id}")
+        return self._template(self.get(template_id.removeprefix(prefix)))
+
+    @staticmethod
+    def template_id(type_id: str) -> str:
+        return f"builtin:{type_id}"
+
+    @classmethod
+    def _template(cls, metadata: StrategyTypeMetadata) -> BuiltInStrategyTemplate:
+        return BuiltInStrategyTemplate(
+            template_id=cls.template_id(metadata.type_id),
+            type_id=metadata.type_id,
+            name=metadata.display_name_en,
+            description=metadata.description_en,
+            version=metadata.version,
+            supports_monitoring=metadata.supports_monitoring,
+            supports_automatic_trading=metadata.supports_automatic_trading,
+            supports_backtesting=metadata.supports_backtesting,
+            supports_scanning=metadata.supports_scanning,
+            supported_directions=metadata.supported_directions,
+            supported_timeframes=metadata.supported_timeframes,
+            configuration_schema=metadata.configuration_schema,
+        )
 
 
 def _metadata_from_module(module: ModuleType) -> StrategyTypeMetadata | None:
@@ -99,9 +129,7 @@ def _evaluator_factory_from_module(module: ModuleType) -> EvaluatorFactory | Non
     if candidate is None:
         return None
     if not callable(candidate):
-        raise TypeError(
-            f"EVALUATOR_FACTORY in {module.__name__} must be callable."
-        )
+        raise TypeError(f"EVALUATOR_FACTORY in {module.__name__} must be callable.")
     return candidate
 
 
@@ -110,9 +138,7 @@ def _scanner_factory_from_module(module: ModuleType) -> ScannerFactory | None:
     if candidate is None:
         return None
     if not callable(candidate):
-        raise TypeError(
-            f"SCANNER_FACTORY in {module.__name__} must be callable."
-        )
+        raise TypeError(f"SCANNER_FACTORY in {module.__name__} must be callable.")
     return candidate
 
 

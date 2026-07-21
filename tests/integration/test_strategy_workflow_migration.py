@@ -67,18 +67,116 @@ def test_existing_strategy_instances_are_backfilled_without_losing_runtime_state
             )
         connection.commit()
 
+    command.upgrade(configuration, "0032_account_risk_controls")
+
+    with sqlite3.connect(database_path) as connection:
+        setup_id = connection.execute(
+            """
+            SELECT setup_id FROM strategy_coin_setup
+            WHERE runtime_instance_id = 'legacy-running'
+            """
+        ).fetchone()[0]
+        connection.execute(
+            """
+            INSERT INTO backtest_run (
+                backtest_id, scan_id, strategy_type_id, strategy_version,
+                symbol, timeframe_minutes, request_json, result_json,
+                started_at, ended_at, created_at, setup_id, setup_revision
+            ) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "legacy-backtest",
+                "range",
+                "legacy",
+                "BTC_USDT",
+                15,
+                "{}",
+                "{}",
+                now,
+                now,
+                now,
+                setup_id,
+                1,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO trade_fill (
+                environment, external_trade_id, order_id, contract, side,
+                position_effect, quantity, price, fee, role, close_quantity,
+                trade_value, realized_pnl, occurred_at, source, origin,
+                instance_id, run_id, strategy_name_snapshot, ingested_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+            """,
+            (
+                "paper",
+                "legacy-fill",
+                "legacy-order",
+                "BTC_USDT",
+                "buy",
+                "open",
+                1,
+                100,
+                0.1,
+                "taker",
+                0,
+                100,
+                None,
+                now,
+                "paper_engine",
+                "automatic_strategy",
+                "legacy-running",
+                "Legacy running",
+                now,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO trade_ownership (
+                identity_kind, external_identity, origin, environment,
+                symbol, direction, instance_id, run_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)
+            """,
+            (
+                "order",
+                "legacy-order",
+                "automatic_strategy",
+                "paper",
+                "BTC_USDT",
+                "long",
+                "legacy-running",
+                now,
+            ),
+        )
+        connection.commit()
+
     command.upgrade(configuration, "head")
 
     with sqlite3.connect(database_path) as connection:
         templates = connection.execute(
-            "SELECT type_id, status, current_revision FROM strategy_template"
+            "SELECT template_id, type_id, status, current_revision FROM strategy_template"
         ).fetchall()
         setups = connection.execute(
             """
-            SELECT runtime_instance_id, symbol, status, revision,
+            SELECT runtime_instance_id, template_id, symbol, status, revision,
                    template_revision
             FROM strategy_coin_setup
             ORDER BY runtime_instance_id
+            """
+        ).fetchall()
+        instances = connection.execute(
+            """
+            SELECT instance_id, type_id, template_id, template_version,
+                   preset_id, preset_revision, status
+            FROM strategy_instance
+            ORDER BY instance_id
+            """
+        ).fetchall()
+        configuration_versions = connection.execute(
+            """
+            SELECT instance_id, revision
+            FROM strategy_configuration_version
+            ORDER BY instance_id, revision
             """
         ).fetchall()
         approvals = connection.execute(
@@ -98,12 +196,58 @@ def test_existing_strategy_instances_are_backfilled_without_losing_runtime_state
             row[1]
             for row in connection.execute("PRAGMA table_info(backtest_run)").fetchall()
         }
+        preserved_backtests = connection.execute(
+            "SELECT backtest_id, setup_id, setup_revision FROM backtest_run"
+        ).fetchall()
+        preserved_trades = connection.execute(
+            """
+            SELECT external_trade_id, order_id, instance_id
+            FROM trade_fill
+            """
+        ).fetchall()
+        preserved_ownership = connection.execute(
+            """
+            SELECT external_identity, instance_id
+            FROM trade_ownership
+            """
+        ).fetchall()
 
-    assert templates == [("range", "active", 1), ("range", "active", 1)]
-    assert setups == [
+    assert [(row[1], row[2], row[3]) for row in templates] == [
+        ("range", "active", 1),
+        ("range", "active", 1),
+    ]
+    preset_by_instance = {row[0]: row[1] for row in setups}
+    assert [(row[0], row[2], row[3], row[4], row[5]) for row in setups] == [
         ("legacy-running", "BTC_USDT", "approved_paper", 1, 1),
         ("legacy-stopped", "ETH_USDT", "backtest_required", 1, 1),
+    ]
+    assert instances == [
+        (
+            "legacy-running",
+            "range",
+            "builtin:range",
+            "legacy",
+            preset_by_instance["legacy-running"],
+            1,
+            "running",
+        ),
+        (
+            "legacy-stopped",
+            "range",
+            "builtin:range",
+            "legacy",
+            preset_by_instance["legacy-stopped"],
+            1,
+            "stopped",
+        ),
+    ]
+    assert configuration_versions == [
+        ("legacy-running", 1),
+        ("legacy-stopped", 1),
     ]
     assert approvals == [(1, "paper", "approved")]
     assert deployments == [("legacy-running", "paper", "running", 1, 1)]
     assert {"setup_id", "setup_revision"}.issubset(backtest_columns)
+    assert preserved_backtests == [("legacy-backtest", setup_id, 1)]
+    assert preserved_trades == [("legacy-fill", "legacy-order", "legacy-running")]
+    assert preserved_ownership == [("legacy-order", "legacy-running")]

@@ -9,6 +9,9 @@ import type {
   StrategyCoinSetup,
   StrategyCoinSetupCreate,
   StrategyOpportunity,
+  StrategyPreset,
+  StrategyPresetCreate,
+  StrategyPresetVersion,
   StrategySetupApproval,
   StrategySetupDefaults,
   StrategyTemplate,
@@ -80,6 +83,63 @@ export function loadWorkflowSummary(signal?: AbortSignal): Promise<WorkflowSumma
   return workflowRequest<WorkflowSummary>("/v1/workflow/summary", { signal });
 }
 
+export function loadStrategyPresets(
+  includeArchived = false,
+  signal?: AbortSignal,
+): Promise<StrategyPreset[]> {
+  return workflowRequest<StrategyPreset[]>(
+    `/v1/strategy-presets?include_archived=${includeArchived}`,
+    { signal },
+  );
+}
+
+export function createStrategyPreset(
+  change: StrategyPresetCreate,
+): Promise<StrategyPreset> {
+  return workflowRequest<StrategyPreset>("/v1/strategy-presets", {
+    method: "POST",
+    body: JSON.stringify(change),
+  });
+}
+
+export function updateStrategyPreset(
+  presetId: string,
+  change: Partial<Omit<StrategyPresetCreate, "type_id">>,
+): Promise<StrategyPreset> {
+  return workflowRequest<StrategyPreset>(
+    `/v1/strategy-presets/${encodeURIComponent(presetId)}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(change),
+    },
+  );
+}
+
+export function loadStrategyPresetVersions(
+  presetId: string,
+  signal?: AbortSignal,
+): Promise<StrategyPresetVersion[]> {
+  return workflowRequest<StrategyPresetVersion[]>(
+    `/v1/strategy-presets/${encodeURIComponent(presetId)}/versions`,
+    { signal },
+  );
+}
+
+export function archiveStrategyPreset(presetId: string): Promise<StrategyPreset> {
+  return workflowRequest<StrategyPreset>(
+    `/v1/strategy-presets/${encodeURIComponent(presetId)}/archive`,
+    { method: "POST" },
+  );
+}
+
+export function deleteStrategyPreset(presetId: string): Promise<void> {
+  return workflowRequest<void>(
+    `/v1/strategy-presets/${encodeURIComponent(presetId)}`,
+    { method: "DELETE" },
+  );
+}
+
+/** @deprecated Existing routes remain for compatibility; use Preset APIs. */
 export function loadStrategyTemplates(includeArchived = false, signal?: AbortSignal): Promise<StrategyTemplate[]> {
   return workflowRequest<StrategyTemplate[]>(`/v1/strategy-templates?include_archived=${includeArchived}`, { signal });
 }

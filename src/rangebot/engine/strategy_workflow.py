@@ -31,6 +31,10 @@ from rangebot.domain.strategy_workflow import (
     StrategyCoinSetupVersion,
     StrategyOpportunity,
     StrategyExecutionPlan,
+    StrategyPreset,
+    StrategyPresetCreate,
+    StrategyPresetUpdate,
+    StrategyPresetVersion,
     StrategySetupApproval,
     StrategySetupDefaults,
     StrategyTemplate,
@@ -60,22 +64,30 @@ class StrategyTemplateRecord(StrategyWorkflowBase):
     direction: Mapped[str] = mapped_column(String(16), nullable=False)
     configuration_json: Mapped[str] = mapped_column(Text, nullable=False)
     setup_defaults_json: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class StrategyTemplateVersionRecord(StrategyWorkflowBase):
     __tablename__ = "strategy_template_version"
 
-    version_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    version_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
     template_id: Mapped[str] = mapped_column(String(36), nullable=False)
     revision: Mapped[int] = mapped_column(Integer, nullable=False)
     timeframe_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
     direction: Mapped[str] = mapped_column(String(16), nullable=False)
     configuration_json: Mapped[str] = mapped_column(Text, nullable=False)
     setup_defaults_json: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
 
 class StrategyCoinSetupRecord(StrategyWorkflowBase):
@@ -102,19 +114,27 @@ class StrategyCoinSetupRecord(StrategyWorkflowBase):
     latest_backtest_assessment: Mapped[str | None] = mapped_column(String(32))
     source_opportunity_id: Mapped[str | None] = mapped_column(String(36))
     revision: Mapped[int] = mapped_column(Integer, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class StrategyCoinSetupVersionRecord(StrategyWorkflowBase):
     __tablename__ = "strategy_coin_setup_version"
 
-    version_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    version_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
     setup_id: Mapped[str] = mapped_column(String(36), nullable=False)
     revision: Mapped[int] = mapped_column(Integer, nullable=False)
     snapshot_json: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
 
 class StrategySetupApprovalRecord(StrategyWorkflowBase):
@@ -126,7 +146,9 @@ class StrategySetupApprovalRecord(StrategyWorkflowBase):
     mode: Mapped[str] = mapped_column(String(16), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     note: Mapped[str] = mapped_column(Text, nullable=False)
-    approved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    approved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     invalidated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
@@ -152,8 +174,12 @@ class StrategyOpportunityRecord(StrategyWorkflowBase):
     qualifying_factors_json: Mapped[str] = mapped_column(Text, nullable=False)
     explanation_ar: Mapped[str] = mapped_column(Text, nullable=False)
     warnings_json: Mapped[str] = mapped_column(Text, nullable=False)
-    discovered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    discovered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     converted_setup_id: Mapped[str | None] = mapped_column(String(36))
 
@@ -172,8 +198,12 @@ class BotDeploymentRecord(StrategyWorkflowBase):
     strategy_version: Mapped[str] = mapped_column(String(32), nullable=False)
     configuration_snapshot_json: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_message: Mapped[str | None] = mapped_column(Text)
@@ -206,7 +236,9 @@ class StrategyWorkflowRepository:
 
     def get_template(self, template_id: str) -> StrategyTemplate:
         with Session(self._database_engine) as session:
-            return self._template_to_domain(session, self._template(session, template_id))
+            return self._template_to_domain(
+                session, self._template(session, template_id)
+            )
 
     def create_template(self, change: StrategyTemplateCreate) -> StrategyTemplate:
         self._validate_template(change)
@@ -318,6 +350,76 @@ class StrategyWorkflowRepository:
             session.delete(record)
             session.commit()
 
+    # User Presets -------------------------------------------------------
+    # The original persisted `strategy_template` records remain in place so
+    # every ID, version, setup, Backtest, deployment, and ownership reference
+    # stays valid. Public product language now exposes those editable records as
+    # Presets while registered strategy implementations are immutable Templates.
+    def list_presets(self, include_archived: bool = False) -> list[StrategyPreset]:
+        return [
+            self._preset_from_legacy_template(template)
+            for template in self.list_templates(include_archived)
+        ]
+
+    def get_preset(self, preset_id: str) -> StrategyPreset:
+        return self._preset_from_legacy_template(self.get_template(preset_id))
+
+    def create_preset(self, change: StrategyPresetCreate) -> StrategyPreset:
+        legacy = self.create_template(
+            StrategyTemplateCreate.model_validate(change.model_dump())
+        )
+        return self._preset_from_legacy_template(legacy)
+
+    def update_preset(
+        self, preset_id: str, change: StrategyPresetUpdate
+    ) -> StrategyPreset:
+        legacy = self.update_template(
+            preset_id,
+            StrategyTemplateUpdate.model_validate(change.model_dump()),
+        )
+        return self._preset_from_legacy_template(legacy)
+
+    def preset_versions(self, preset_id: str) -> list[StrategyPresetVersion]:
+        return [
+            StrategyPresetVersion(
+                version_id=version.version_id,
+                preset_id=version.template_id,
+                revision=version.revision,
+                timeframe_minutes=version.timeframe_minutes,
+                direction=version.direction,
+                configuration=version.configuration,
+                setup_defaults=version.setup_defaults,
+                created_at=version.created_at,
+            )
+            for version in self.template_versions(preset_id)
+        ]
+
+    def archive_preset(self, preset_id: str) -> StrategyPreset:
+        return self._preset_from_legacy_template(self.archive_template(preset_id))
+
+    def delete_preset(self, preset_id: str) -> None:
+        self.delete_template(preset_id)
+
+    @staticmethod
+    def _preset_from_legacy_template(template: StrategyTemplate) -> StrategyPreset:
+        return StrategyPreset(
+            preset_id=template.template_id,
+            type_id=template.type_id,
+            name=template.name,
+            description=template.description,
+            status=template.status,
+            current_revision=template.current_revision,
+            timeframe_minutes=template.timeframe_minutes,
+            direction=template.direction,
+            configuration=template.configuration,
+            setup_defaults=template.setup_defaults,
+            setup_count=template.setup_count,
+            created_at=template.created_at,
+            updated_at=template.updated_at,
+            archived_at=template.archived_at,
+            legacy_template_id=template.template_id,
+        )
+
     # Coin setups --------------------------------------------------------
     def list_setups(
         self,
@@ -335,7 +437,9 @@ class StrategyWorkflowRepository:
                     StrategyCoinSetupRecord.template_id == template_id
                 )
             if not include_archived:
-                statement = statement.where(StrategyCoinSetupRecord.status != "archived")
+                statement = statement.where(
+                    StrategyCoinSetupRecord.status != "archived"
+                )
             records = session.scalars(statement)
             return [self._setup_to_domain(session, record) for record in records]
 
@@ -355,7 +459,9 @@ class StrategyWorkflowRepository:
         with self._lock, Session(self._database_engine) as session:
             template = self._template(session, change.template_id)
             if template.status == "archived":
-                raise RuntimeError("Cannot add a coin to an archived strategy template.")
+                raise RuntimeError(
+                    "Cannot add a coin to an archived strategy template."
+                )
             version = self._template_version(
                 session, template.template_id, template.current_revision
             )
@@ -381,9 +487,7 @@ class StrategyWorkflowRepository:
                 price_state=price_state,
                 timeframe_minutes=timeframe,
                 direction=direction,
-                configuration_overrides_json=self._json(
-                    change.configuration_overrides
-                ),
+                configuration_overrides_json=self._json(change.configuration_overrides),
                 setup_defaults_override_json=(
                     change.setup_defaults_override.model_dump_json()
                     if change.setup_defaults_override is not None
@@ -486,7 +590,9 @@ class StrategyWorkflowRepository:
             if record.status == "archived":
                 raise RuntimeError("Archived coin setups cannot be rebased.")
             if self._active_deployment_for_setup(session, setup_id) is not None:
-                raise RuntimeError("Stop the active deployment before rebasing the setup.")
+                raise RuntimeError(
+                    "Stop the active deployment before rebasing the setup."
+                )
             template = self._template(session, record.template_id)
             if record.template_revision == template.current_revision:
                 return self._setup_to_domain(session, record)
@@ -544,7 +650,9 @@ class StrategyWorkflowRepository:
         with self._lock, Session(self._database_engine) as session:
             record = self._setup(session, setup_id)
             if self._active_deployment_for_setup(session, setup_id) is not None:
-                raise RuntimeError("Running or paused bot deployments must be stopped first.")
+                raise RuntimeError(
+                    "Running or paused bot deployments must be stopped first."
+                )
             record.status = "archived"
             record.archived_at = datetime.now(UTC)
             record.updated_at = record.archived_at
@@ -562,10 +670,13 @@ class StrategyWorkflowRepository:
                 )
             )
             deployment = session.scalar(
-                select(BotDeploymentRecord).where(BotDeploymentRecord.setup_id == setup_id)
+                select(BotDeploymentRecord).where(
+                    BotDeploymentRecord.setup_id == setup_id
+                )
             )
             if (
-                record.status not in {"draft", "ready_for_backtest", "backtest_required"}
+                record.status
+                not in {"draft", "ready_for_backtest", "backtest_required"}
                 or record.latest_backtest_id is not None
                 or record.runtime_instance_id is not None
                 or approval is not None
@@ -606,7 +717,9 @@ class StrategyWorkflowRepository:
             ),
         )
 
-    def record_backtest(self, setup_id: str, stored: StoredBacktestRun) -> StrategyCoinSetup:
+    def record_backtest(
+        self, setup_id: str, stored: StoredBacktestRun
+    ) -> StrategyCoinSetup:
         with self._lock, Session(self._database_engine) as session:
             record = self._setup(session, setup_id)
             if stored.request.setup_id != setup_id:
@@ -656,7 +769,10 @@ class StrategyWorkflowRepository:
                     "Approval without a current backtest requires the exact confirmation phrase: "
                     "APPROVE WITHOUT BACKTEST."
                 )
-            non_promising = has_current_backtest and record.latest_backtest_assessment != "promising"
+            non_promising = (
+                has_current_backtest
+                and record.latest_backtest_assessment != "promising"
+            )
             if non_promising and (
                 not request.accept_non_promising
                 or request.confirmation != "APPROVE NON-PROMISING BACKTEST"
@@ -778,7 +894,9 @@ class StrategyWorkflowRepository:
                     StrategyOpportunityRecord.strategy_type_id == strategy_type_id
                 )
             if scan_id is not None:
-                statement = statement.where(StrategyOpportunityRecord.scan_id == scan_id)
+                statement = statement.where(
+                    StrategyOpportunityRecord.scan_id == scan_id
+                )
             records = session.scalars(statement)
             return [self._opportunity_to_domain(record) for record in records]
 
@@ -796,7 +914,10 @@ class StrategyWorkflowRepository:
             record = self._opportunity(session, opportunity_id)
             if record.status == "converted":
                 raise RuntimeError("Converted opportunities keep their audit status.")
-            if self._utc(record.expires_at) <= datetime.now(UTC) and change.status != "expired":
+            if (
+                self._utc(record.expires_at) <= datetime.now(UTC)
+                and change.status != "expired"
+            ):
                 record.status = "expired"
                 session.commit()
                 raise RuntimeError("This opportunity has expired; run a fresh scan.")
@@ -851,9 +972,7 @@ class StrategyWorkflowRepository:
 
     def get_deployment(self, deployment_id: str) -> BotDeployment:
         with Session(self._database_engine) as session:
-            return self._deployment_to_domain(
-                self._deployment(session, deployment_id)
-            )
+            return self._deployment_to_domain(self._deployment(session, deployment_id))
 
     def create_deployment(
         self, setup_id: str, request: BotDeploymentCreate
@@ -920,9 +1039,7 @@ class StrategyWorkflowRepository:
             self._strategy_instances.delete(runtime.instance_id)
             raise
 
-    def transition_deployment(
-        self, deployment_id: str, action: str
-    ) -> BotDeployment:
+    def transition_deployment(self, deployment_id: str, action: str) -> BotDeployment:
         if action not in {"start", "monitor", "pause", "stop"}:
             raise ValueError(f"Unsupported deployment action: {action}")
         with Session(self._database_engine) as session:
@@ -1024,41 +1141,51 @@ class StrategyWorkflowRepository:
         with Session(self._database_engine) as session:
             return WorkflowSummary(
                 templates=session.scalar(
-                    select(func.count()).select_from(StrategyTemplateRecord).where(
-                        StrategyTemplateRecord.status != "archived"
-                    )
+                    select(func.count())
+                    .select_from(StrategyTemplateRecord)
+                    .where(StrategyTemplateRecord.status != "archived")
                 )
                 or 0,
                 setups=session.scalar(
-                    select(func.count()).select_from(StrategyCoinSetupRecord).where(
-                        StrategyCoinSetupRecord.status != "archived"
-                    )
+                    select(func.count())
+                    .select_from(StrategyCoinSetupRecord)
+                    .where(StrategyCoinSetupRecord.status != "archived")
                 )
                 or 0,
                 opportunities_new=session.scalar(
-                    select(func.count()).select_from(StrategyOpportunityRecord).where(
-                        StrategyOpportunityRecord.status.in_(("new", "reviewed", "approved"))
+                    select(func.count())
+                    .select_from(StrategyOpportunityRecord)
+                    .where(
+                        StrategyOpportunityRecord.status.in_(
+                            ("new", "reviewed", "approved")
+                        )
                     )
                 )
                 or 0,
                 backtests_required=session.scalar(
-                    select(func.count()).select_from(StrategyCoinSetupRecord).where(
+                    select(func.count())
+                    .select_from(StrategyCoinSetupRecord)
+                    .where(
                         StrategyCoinSetupRecord.status.in_(
-                            ("ready_for_backtest", "backtest_required", "backtest_failed")
+                            (
+                                "ready_for_backtest",
+                                "backtest_required",
+                                "backtest_failed",
+                            )
                         )
                     )
                 )
                 or 0,
                 approvals_ready=session.scalar(
-                    select(func.count()).select_from(StrategyCoinSetupRecord).where(
-                        StrategyCoinSetupRecord.status == "backtest_passed"
-                    )
+                    select(func.count())
+                    .select_from(StrategyCoinSetupRecord)
+                    .where(StrategyCoinSetupRecord.status == "backtest_passed")
                 )
                 or 0,
                 deployments_running=session.scalar(
-                    select(func.count()).select_from(BotDeploymentRecord).where(
-                        BotDeploymentRecord.status.in_(("running", "monitoring"))
-                    )
+                    select(func.count())
+                    .select_from(BotDeploymentRecord)
+                    .where(BotDeploymentRecord.status.in_(("running", "monitoring")))
                 )
                 or 0,
             )
@@ -1067,7 +1194,9 @@ class StrategyWorkflowRepository:
     def _validate_template(self, change: StrategyTemplateCreate) -> None:
         metadata = self._registry.get(change.type_id)
         if change.timeframe_minutes not in metadata.supported_timeframes:
-            raise ValueError("The selected timeframe is not supported by this strategy.")
+            raise ValueError(
+                "The selected timeframe is not supported by this strategy."
+            )
         if change.direction == "long" and not metadata.supports_long:
             raise ValueError("This strategy type does not support Long entries.")
         if change.direction == "short" and not metadata.supports_short:
@@ -1201,7 +1330,9 @@ class StrategyWorkflowRepository:
         return session.scalar(
             select(BotDeploymentRecord).where(
                 BotDeploymentRecord.setup_id == setup_id,
-                BotDeploymentRecord.status.in_(("starting", "running", "monitoring", "paused")),
+                BotDeploymentRecord.status.in_(
+                    ("starting", "running", "monitoring", "paused")
+                ),
             )
         )
 
@@ -1397,7 +1528,10 @@ class StrategyWorkflowRepository:
             ("خروج الاستراتيجية", plan.strategy_exit),
             ("الخروج اليدوي", plan.manual_exit),
         ):
-            if exit_settings.order_type == "limit" and not exit_settings.fallback_to_market:
+            if (
+                exit_settings.order_type == "limit"
+                and not exit_settings.fallback_to_market
+            ):
                 warnings.append(
                     f"{label} يستخدم Limit دون fallback إلى Market؛ قد لا يكتمل الخروج."
                 )
@@ -1523,7 +1657,9 @@ class StrategyWorkflowRepository:
 
     @staticmethod
     def _utc(value: datetime) -> datetime:
-        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+        return (
+            value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+        )
 
     @classmethod
     def _utc_optional(cls, value: datetime | None) -> datetime | None:
