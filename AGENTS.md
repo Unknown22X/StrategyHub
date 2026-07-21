@@ -61,6 +61,56 @@ example, `SAFE-014`), list tests run, and include screenshots for Qt UI or RTL
 text changes. Never commit `.env`, API keys, request signatures, database
 passwords, logs, or build output.
 
+## Git and Workspace Hygiene
+
+Before editing any files, inspect the current Git status.
+
+If modified or untracked files already exist:
+
+- Do not reset, discard, overwrite, or delete them.
+- Determine whether they are intentional source changes or generated local artifacts.
+- Inform the user when existing work makes attribution unclear.
+- Create or request a checkpoint commit before beginning a large implementation task.
+- Preserve all existing work unless the user explicitly approves its removal.
+
+Keep real source files, tests, migrations, documentation, and configuration under
+version control.
+
+Keep generated or machine-local content out of Git, including:
+
+- Virtual environments
+- Test caches and temporary test directories
+- Runtime databases and account state
+- Logs
+- Build and release output
+- Playwright-generated inspection files
+- Local AI-agent state
+- Credentials, secrets, API keys, signatures, and `.env` files
+
+Update `.gitignore` whenever a tool introduces a new generated directory.
+
+Implementation workflow:
+
+1. Begin from a clean working tree whenever practical.
+2. Create a dedicated branch for substantial work.
+3. Keep each commit focused on one milestone or coherent issue.
+4. Do not mix unrelated cleanup with feature changes.
+5. Run relevant tests before committing.
+6. Report the exact files changed and commands run.
+7. End each completed milestone with a focused commit.
+8. Leave the working tree clean at the end of the task.
+
+Never run destructive commands against existing user work without explicit approval,
+including:
+
+- `git reset --hard`
+- `git clean -fd`
+- `git restore .`
+- `git checkout -- .`
+
+Before staging or committing, verify that no secrets, credentials, private databases,
+logs, or generated build artifacts are included.
+
 ## Agent skills
 
 ### Issue tracker

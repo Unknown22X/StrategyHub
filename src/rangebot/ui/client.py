@@ -4,6 +4,7 @@ from typing import Any
 
 import httpx
 
+from rangebot.domain.application import ApplicationSettings, ApplicationSettingsUpdate
 from rangebot.domain.runtime import RuntimeState
 
 
@@ -15,6 +16,16 @@ class EngineClient:
 
     def fetch_runtime_state(self) -> RuntimeState:
         return RuntimeState.model_validate(self.get("/v1/runtime-state"))
+
+    def fetch_application_settings(self) -> ApplicationSettings:
+        return ApplicationSettings.model_validate(self.get("/v1/settings"))
+
+    def save_application_settings(
+        self, settings: ApplicationSettingsUpdate
+    ) -> ApplicationSettings:
+        return ApplicationSettings.model_validate(
+            self.put("/v1/settings", settings.model_dump(mode="json"))
+        )
 
     def get(self, path: str, params: dict[str, str] | None = None) -> Any:
         return self._request("GET", path, params=params)

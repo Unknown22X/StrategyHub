@@ -1,9 +1,14 @@
-"""Restricted local .env storage for Gate.io API credentials."""
+"""Windows machine-protected storage for Gate.io API credentials."""
 
+from ctypes import POINTER, Structure, byref, c_char, c_void_p, cast, memmove
+from ctypes import wintypes
 from dataclasses import dataclass
+import ctypes
+import json
 import os
 from pathlib import Path
-import subprocess
+
+from rangebot.engine.paths import application_paths
 
 
 @dataclass(frozen=True)
@@ -12,92 +17,167 @@ class StoredGateCredentials:
     api_secret: str
 
 
-def credential_file() -> Path:
-    return Path(os.getenv("RANGEBOT_ENV_FILE", "runtime/.env"))
+class _DataBlob(Structure):
+    _fields_ = [("cbData", wintypes.DWORD), ("pbData", POINTER(c_char))]
 
 
-def _names(mode: str) -> tuple[str, str]:
+def _credential_path(mode: str) -> Path:
+    _validate_mode(mode)
+    override = os.getenv("RANGEBOT_CREDENTIAL_DIRECTORY")
+    directory = (
+        Path(override).expanduser().resolve()
+        if override
+        else application_paths().config / "credentials"
+    )
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / f"gate-{mode}.bin"
+
+
+def _validate_mode(mode: str) -> None:
     if mode not in {"testnet", "live"}:
         raise ValueError("Credentials are supported only for Testnet and Live.")
-    prefix = "GATE_TESTNET" if mode == "testnet" else "GATE_LIVE"
-    return f"{prefix}_KEY", f"{prefix}_SECRET"
 
 
-def _read_values(path: Path) -> dict[str, str]:
-    if not path.exists():
-        return {}
-    values: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line and not line.lstrip().startswith("#") and "=" in line:
-            name, value = line.split("=", 1)
-            values[name.strip()] = value.strip()
-    return values
+def _blob_from_bytes(data: bytes) -> tuple[_DataBlob, ctypes.Array[c_char]]:
+    buffer = (c_char * len(data))()
+    if data:
+        memmove(buffer, data, len(data))
+    return _DataBlob(len(data), cast(buffer, POINTER(c_char))), buffer
+
+
+def _bytes_from_blob(blob: _DataBlob) -> bytes:
+    if not blob.pbData or blob.cbData == 0:
+        return b""
+    return bytes(cast(blob.pbData, POINTER(c_char * blob.cbData)).contents)
+
+
+def _protect_for_current_user(data: bytes) -> bytes:
+    """Protect bytes with machine DPAPI for the LocalService engine identity."""
+    if os.name != "nt":
+        raise OSError("Windows DPAPI is required for product credential storage.")
+    crypt32 = ctypes.windll.crypt32
+    kernel32 = ctypes.windll.kernel32
+    source, source_buffer = _blob_from_bytes(data)
+    destination = _DataBlob()
+    crypt32.CryptProtectData.argtypes = [
+        POINTER(_DataBlob),
+        wintypes.LPCWSTR,
+        POINTER(_DataBlob),
+        c_void_p,
+        c_void_p,
+        wintypes.DWORD,
+        POINTER(_DataBlob),
+    ]
+    crypt32.CryptProtectData.restype = wintypes.BOOL
+    if not crypt32.CryptProtectData(
+        byref(source),
+        "RangeBot Gate.io credentials",
+        None,
+        None,
+        None,
+        0x4,  # CRYPTPROTECT_LOCAL_MACHINE
+        byref(destination),
+    ):
+        raise ctypes.WinError()
+    try:
+        return _bytes_from_blob(destination)
+    finally:
+        kernel32.LocalFree(destination.pbData)
+        del source_buffer
+
+
+def _unprotect_for_current_user(data: bytes) -> bytes:
+    """Unprotect machine-scoped DPAPI bytes for the engine service identity."""
+    if os.name != "nt":
+        raise OSError("Windows DPAPI is required for product credential storage.")
+    crypt32 = ctypes.windll.crypt32
+    kernel32 = ctypes.windll.kernel32
+    source, source_buffer = _blob_from_bytes(data)
+    destination = _DataBlob()
+    crypt32.CryptUnprotectData.argtypes = [
+        POINTER(_DataBlob),
+        POINTER(wintypes.LPWSTR),
+        POINTER(_DataBlob),
+        c_void_p,
+        c_void_p,
+        wintypes.DWORD,
+        POINTER(_DataBlob),
+    ]
+    crypt32.CryptUnprotectData.restype = wintypes.BOOL
+    description = wintypes.LPWSTR()
+    if not crypt32.CryptUnprotectData(
+        byref(source),
+        byref(description),
+        None,
+        None,
+        None,
+        0,
+        byref(destination),
+    ):
+        raise ctypes.WinError()
+    try:
+        return _bytes_from_blob(destination)
+    finally:
+        if description:
+            kernel32.LocalFree(description)
+        kernel32.LocalFree(destination.pbData)
+        del source_buffer
 
 
 def save_gate_credentials(mode: str, api_key: str, api_secret: str) -> None:
-    """Write credentials locally and restrict the file to the current Windows user."""
-    if not api_key.strip() or not api_secret.strip():
+    """Atomically save credentials encrypted for the local machine."""
+    _validate_mode(mode)
+    key = api_key.strip()
+    secret = api_secret.strip()
+    if not key or not secret:
         raise ValueError("API key and secret are required.")
-    key_name, secret_name = _names(mode)
-    path = credential_file()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    values = _read_values(path)
-    values[key_name] = api_key.strip()
-    values[secret_name] = api_secret.strip()
+
+    payload = json.dumps(
+        {"api_key": key, "api_secret": secret},
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    protected = _protect_for_current_user(payload)
+    path = _credential_path(mode)
     temporary = path.with_suffix(path.suffix + ".tmp")
-    replaced = False
     try:
-        temporary.write_text(
-            "".join(f"{name}={value}\n" for name, value in sorted(values.items())),
-            encoding="utf-8",
-        )
-        _restrict_windows_file(temporary)
+        temporary.write_bytes(protected)
         temporary.replace(path)
-        replaced = True
-        _verify_windows_file(path)
     except Exception:
         temporary.unlink(missing_ok=True)
-        if replaced:
-            path.unlink(missing_ok=True)
         raise
 
 
-def _restrict_windows_file(path: Path) -> None:
-    if os.name != "nt" or not (username := os.environ.get("USERNAME")):
-        return
-    subprocess.run(
-        [
-            "icacls",
-            str(path),
-            "/inheritance:r",
-            "/grant:r",
-            f"{username}:(F)",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-
-def _verify_windows_file(path: Path) -> None:
-    if os.name != "nt":
-        return
-    result = subprocess.run(
-        ["icacls", str(path)],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    if "(F)" not in result.stdout:
-        raise PermissionError("Credential file ACL verification failed.")
-
-
 def load_gate_credentials(mode: str) -> StoredGateCredentials | None:
-    """Read the local credential file without exporting secrets to UI or logs."""
-    key_name, secret_name = _names(mode)
-    values = _read_values(credential_file())
-    key = os.getenv(key_name, values.get(key_name, ""))
-    secret = os.getenv(secret_name, values.get(secret_name, ""))
-    if not key or not secret:
+    """Load protected credentials without exposing them to UI responses or logs."""
+    path = _credential_path(mode)
+    if not path.exists():
         return None
+    try:
+        payload = json.loads(_unprotect_for_current_user(path.read_bytes()).decode("utf-8"))
+        key = str(payload["api_key"])
+        secret = str(payload["api_secret"])
+    except (KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("Stored Gate.io credentials are invalid.") from error
+    if not key or not secret:
+        raise ValueError("Stored Gate.io credentials are incomplete.")
     return StoredGateCredentials(api_key=key, api_secret=secret)
+
+
+def remove_gate_credentials(mode: str) -> bool:
+    """Remove credentials for one environment and any interrupted temporary write."""
+    path = _credential_path(mode)
+    existed = path.exists()
+    path.unlink(missing_ok=True)
+    path.with_suffix(path.suffix + ".tmp").unlink(missing_ok=True)
+    return existed
+
+
+def masked_gate_api_key(mode: str) -> str | None:
+    """Return a non-sensitive key hint suitable for a settings screen."""
+    stored = load_gate_credentials(mode)
+    if stored is None:
+        return None
+    if len(stored.api_key) <= 4:
+        return "••••"
+    return f"{stored.api_key[:3]}••••{stored.api_key[-2:]}"

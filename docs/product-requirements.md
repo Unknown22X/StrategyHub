@@ -7,10 +7,10 @@ RangeBot is a private cryptocurrency futures trading application for Gate.io USD
 It runs continuously on a Windows VPS and consists of:
 
 * A Python trading engine running as a WinSW Windows Service.
-* A separate PySide6/Qt Arabic RTL desktop control application.
-* Gate.io API v4 integration using REST and WebSockets.
+* A React + TypeScript Arabic RTL control panel served only on localhost.
+* Gate.io API v4 integration using REST and public/private WebSockets.
 * FastAPI bound only to `127.0.0.1` for communication between the UI and engine.
-* A local PostgreSQL database for settings, state, orders, positions, cooldowns, profiles, logs, and risk counters.
+* A local SQLite database under `%LOCALAPPDATA%\RangeBot` for settings, strategy instances, state, orders, positions, research records, logs, and risk counters.
 
 The engine must continue operating when the desktop UI is closed, Remote Desktop disconnects, or the user’s personal computer is turned off.
 
@@ -41,6 +41,10 @@ Version one is designed for a single private user who:
 
 ## 3. Goals
 
+* Separate reusable Strategy Templates from per-coin setups and runtime bot deployments.
+* Allow one strategy to own multiple Gate.io coin setups without duplicating the full rule set.
+* Keep current-market Opportunities separate from historical Backtesting.
+* Require revision-bound evidence, explicit environment approval, and an immutable deployment snapshot before workflow-backed trading starts.
 * Execute the confirmed range-and-proximity strategy consistently.
 * Support Paper Trading, Gate.io Testnet, and Live Trading.
 * Keep the trading engine independent from the control UI.
@@ -57,18 +61,17 @@ Version one is designed for a single private user who:
 
 Version one will not include:
 
-* Automatic coin discovery, ranking, recommendations, or backtesting.
-* Automatic trading of multiple coins simultaneously.
+* Automatic optimization, profitability guarantees, or unattended activation from research results. Opportunities and deterministic backtests are research evidence only; the user must explicitly review the current coin-setup revision, approve Paper/Testnet/Live, create a deployment snapshot, and start it.
+* Multiple simultaneous account positions. One reusable strategy may own many coin setups and deployments, but the account-level one-position and pending-entry rules still apply.
 * Exchanges other than Gate.io.
 * Hedge-mode trading.
-* Multiple simultaneous positions.
 * A public web dashboard or public API.
 * Mobile applications.
 * Profitability claims or strategy optimization recommendations.
 * Full Gate.io liquidation simulation in Paper Trading.
 * Automated backup scheduling.
 * Sentry or external telemetry.
-* DPAPI or Windows Credential Manager.
+* Cloud credential synchronization or browser-side secret storage.
 * A dedicated Windows service account.
 * Advanced NTFS permission architecture.
 * A separate localhost API token.
@@ -112,8 +115,13 @@ when every current real safety check passes.
 
 ### Core controls
 
-* Start and stop automatic trading.
-* Select the active automatic-trading contract.
+* Create, edit, version, archive, and safely delete reusable Strategy Templates.
+* Add multiple per-coin setups manually or by converting a reviewed Opportunity.
+* Run current-market scans and review, approve, reject, ignore, expire, or convert Opportunities.
+* Run a historical backtest for the exact current coin-setup revision.
+* Explicitly approve the current setup revision for Paper, Testnet, or Live.
+* Create an immutable Bot Deployment and start trading or monitoring from it.
+* Pause and stop deployed bots.
 * Open manual Long or Short entries.
 * Close the current position.
 * Cancel pending entry orders.
@@ -135,14 +143,18 @@ when every current real safety check passes.
 
 ### WF-002: Start automatic trading
 
-1. User selects Paper, Testnet, or Live mode.
-2. User reviews the active contract and configuration.
-3. Engine verifies account mode, Cross margin, leverage, market data, history, balance, reserves, risk limits, positions, and orders.
-4. User starts automatic trading.
-5. Engine evaluates the active contract on every fresh Last Price update.
-6. Engine submits an entry only when every required condition passes.
+1. User creates or opens a reusable Strategy Template.
+2. User adds a Gate.io USDT perpetual coin setup manually or converts a reviewed Opportunity.
+3. User reviews the current price and freshness, pinned template revision, inherited values, coin overrides, execution settings, DCA support, and risk defaults.
+4. User runs a historical backtest for the exact setup revision.
+5. User reviews the assessment, assumptions, costs, P&L, drawdown, and warnings.
+6. User explicitly approves that revision for Paper, Testnet, or Live.
+7. RangeBot creates an immutable Bot Deployment snapshot and a stopped runtime instance.
+8. User starts trading or monitoring from the Trading page.
+9. Before any actual order, the engine still verifies account mode, Cross margin, leverage, market data, balance, reserves, risk limits, positions, orders, reconciliation, ownership, and protection readiness.
+10. The engine evaluates the deployed coin on fresh market updates and submits an entry only when every strategy and safety condition passes.
 
-Changing the Active Auto-Trading Coin stops automatic trading and requires the user to explicitly restart it.
+Editing or rebasing the coin setup creates a new revision and invalidates the old backtest/approval for future deployments. It does not silently mutate an existing deployment.
 
 ### WF-003: Manual entry
 
@@ -153,22 +165,22 @@ Changing the Active Auto-Trading Coin stops automatic trading and requires the u
 5. Engine submits the selected Market or Limit entry.
 6. TP and enabled SL protection are placed after entry fills.
 
-### WF-004: Live activation
+### WF-004: Select Live mode
 
-1. User selects Live mode.
-2. Engine confirms no Paper or Testnet position or pending order exists.
-3. UI presents a clear risk warning.
-4. User types `LIVE`.
-5. User presses Enable Live Trading.
+1. Live is available immediately and is the default persisted environment.
+2. The interface shows a persistent, highly visible real-funds indicator.
+3. The engine validates credentials, connectivity, reconciliation, market freshness, account mode, balance, risk limits, existing position/order state, and protection readiness before every entry.
+4. Engine, Windows, service, frontend, or RDP restart does not create an artificial activation lock or change Live to Paper.
+5. Genuine safety failures block entries while reconciliation and existing-position protection continue.
 
-Live becomes Live Locked after:
+There is no typed phrase, arming screen, unlock state, or `Live Locked` state.
 
-* Engine restart.
-* VPS or Windows restart.
-* Intentional service stop.
-* Emergency Stop activation.
+* Engine restart preserves the selected environment.
+* VPS or Windows restart preserves the selected environment and restores persisted strategy state.
+* An intentional service stop does not alter the persisted environment.
+* Emergency Stop blocks entries persistently without changing the selected environment.
 
-Live Locked blocks new entries but does not stop reconciliation or protection of an existing Live position.
+When a genuine risk or operational block exists, new entries stop while reconciliation and existing-position protection continue.
 
 ### WF-005: Emergency Stop
 
@@ -182,7 +194,25 @@ Live Locked blocks new entries but does not stop reconciliation or protection of
 After resuming:
 
 * Paper and Testnet automatic trading remain disabled until explicitly restarted.
-* Live returns to Live Locked.
+* Live remains selected; only Emergency Stop and unresolved safety blocks prevent new entries.
+
+### WF-006: Discover, review, and backtest a coin opportunity
+
+1. User opens the Arabic RTL Opportunities page.
+2. User selects a registered strategy type, supported timeframe, validated scanner configuration, liquidity threshold, scan-universe size, and minimum score.
+3. The engine loads active Gate.io USDT perpetual contracts and completed market history through the public market-data interfaces.
+4. The registered scanner evaluates each usable contract and persists first-class Opportunities with exchange, market, current price, price timestamp, freshness, score, signal, qualifying factors, warnings, expiry, and source scan.
+5. Individual contract failures are reported without aborting the complete scan.
+6. The user reviews, approves, rejects, ignores, or leaves each Opportunity to expire.
+7. Converting an Opportunity creates one coin setup under a compatible reusable Strategy Template and preserves the conversion link.
+8. The user opens the separate Backtesting page and selects a saved coin setup.
+9. The engine runs the same registered deterministic evaluator against completed candles only. Signals enter no earlier than the next candle, and the simulation accounts for configured fees, adverse slippage, and available Gate.io historical funding rates.
+10. The UI displays the tested period, setup revision, assumptions, trades, equity points, net result, drawdown, profit factor, win rate, costs, evidence, and warnings.
+11. The engine labels the evidence as Promising, Mixed, Weak, or Insufficient Data without claiming future profitability.
+12. The stored result is linked to the immutable coin-setup revision and becomes historical-only after any setup edit.
+13. Scan, Opportunity, backtest, simulated trades, equity points, assessment, approval, and conversion history persist across frontend, engine, and Windows restarts.
+
+Opportunities and backtesting are research operations only. They cannot submit an order. Trading still requires explicit environment approval, deployment creation, and all runtime safety checks.
 
 ## 7. Functional Requirements
 
@@ -200,7 +230,22 @@ After resuming:
 * **FUNC-012:** Mode changes must be blocked while positions, pending entries, protective orders, Emergency Stop, reconciliation errors, or protection errors exist.
 * **FUNC-013:** Paper and Testnet mode selections persist across restarts.
 * **FUNC-014:** Paper and Testnet automatic trading resumes after an ordinary restart only if it was previously enabled and all reconciliation, market-data, history, protection, risk, and active-contract checks pass.
-* **FUNC-015:** Live always returns to Live Locked after an engine or VPS restart.
+* **FUNC-015:** Live remains available and selected across engine or VPS restart; genuine credentials, connection, reconciliation, risk, market-data, position/order, and protection checks still gate every entry.
+* **FUNC-016:** A reusable Strategy Template must be savable without selecting a coin or execution environment.
+* **FUNC-017:** Updating a Strategy Template must create an immutable revision; existing coin setups must remain pinned until explicitly rebased.
+* **FUNC-018:** One Strategy Template may own multiple Strategy Coin Setups, each with one exchange, market, symbol, quote currency, timeframe, direction, and override set.
+* **FUNC-019:** Saving or rebasing a coin setup must create an immutable setup revision and invalidate approval evidence from earlier revisions.
+* **FUNC-020:** The UI must show inherited values, coin-specific overrides, effective values, and reset-to-template behavior.
+* **FUNC-021:** Scanner candidates must persist as first-class Opportunities with price, timestamp, freshness, expiry, explanation, and review status.
+* **FUNC-022:** Opportunity conversion must create exactly one compatible coin setup and preserve the conversion link.
+* **FUNC-023:** Historical backtests must be linked to both setup ID and setup revision.
+* **FUNC-024:** Normal approval must require a Promising backtest for the current setup revision and selected Paper/Testnet/Live environment.
+* **FUNC-025:** Editing a setup must mark previous approvals stale and prevent them from authorizing a new deployment.
+* **FUNC-026:** A Bot Deployment must store an immutable snapshot of the approved setup revision and registered strategy implementation version.
+* **FUNC-027:** Workflow-backed start or monitoring must route through the deployment lifecycle and may not bypass the revision-bound approval gate.
+* **FUNC-028:** Used templates and setups must be archived rather than hard-deleted; hard deletion is limited to unused drafts.
+* **FUNC-029:** Entry, take-profit, stop-loss, strategy-exit, and manual-exit execution behavior must be explicit and validated. Unsafe Limit non-fill behavior must be visible.
+* **FUNC-030:** Account performance must include execution-account values only; backtest P&L must remain a separate research result.
 
 ## 8. Trading Strategy Requirements
 
@@ -298,14 +343,19 @@ Starting automatic trading while price is already inside a valid unused trigger 
 
 ## 9. Coin Scanner Requirements
 
-* **SCAN-001:** Version one must not automatically discover, rank, backtest, recommend, add, or enable contracts.
-* **SCAN-002:** It must fetch eligible Gate.io USDT perpetual contracts for a searchable selector.
-* **SCAN-003:** The user manually controls watchlist membership.
-* **SCAN-004:** Maximum watchlist size is 20.
-* **SCAN-005:** Exactly one watched contract may be the Active Auto-Trading Coin.
-* **SCAN-006:** All other contracts remain monitoring-only.
-* **SCAN-007:** Watchlist priority affects display order only.
-* **SCAN-008:** Future scanner functionality may evaluate proximity, liquidity, volume, volatility, and backtest metrics, but must require user approval before adding or enabling a contract.
+* **SCAN-001:** Version one includes a dedicated Discovery Lab that discovers and ranks eligible Gate.io USDT perpetual contracts for a selected registered strategy type.
+* **SCAN-002:** Gate.io public REST data is the research source of truth for contract eligibility, contract statistics, completed historical candles, and available historical funding rates.
+* **SCAN-003:** Every strategy that supports discovery must declare scanner metadata, required feeds, supported timeframes, minimum history, candidate metrics, and a strategy-owned scanner factory through the registry.
+* **SCAN-004:** Candidate scores must be deterministic and explainable. The UI must display the contributing strategy metrics, current eligibility, preferred direction, data-quality status, warnings, and skipped-contract diagnostics.
+* **SCAN-005:** A scan must be bounded by validated liquidity, universe-size, candidate-count, and timeframe controls. A failed or malformed contract must not abort the remaining scan.
+* **SCAN-006:** Backtests must reuse the registered deterministic strategy evaluator, use completed candles only, and execute a generated signal no earlier than the following candle.
+* **SCAN-007:** Backtest results must include the tested period, configuration version, assumptions, trade records, equity points, fees, slippage, available funding, net result, drawdown, profit factor, win rate, evidence, and warnings.
+* **SCAN-008:** If TP and SL are both touched within one candle and the exact intrabar order is unknown, the simulation must resolve the ambiguity conservatively in favor of the Stop Loss.
+* **SCAN-009:** The assessment must use evidence-based labels such as Promising, Mixed, Weak, or Insufficient Data and must not promise profitability or automatically optimize parameters.
+* **SCAN-010:** Scan and backtest records must persist in SQLite and remain reopenable after frontend, engine, or Windows restart.
+* **SCAN-011:** Applying a stored backtest may create one saved strategy instance only. It must use the tested symbol, timeframe, direction, and configuration, remain Stopped, and require a later deliberate user action to Monitor or trade.
+* **SCAN-012:** Discovery and backtesting modules must not call the Order Manager, exchange order submission, or browser-side Gate.io APIs.
+* **SCAN-013:** Watchlist membership remains user-controlled, its maximum remains 20, and watchlist display priority must not affect scanner ranking or trading decisions.
 
 ## 10. Risk-Management Requirements
 
@@ -555,7 +605,7 @@ Cooldown must not begin after a partial reduction.
 * **UI-002:** Modern, polished visual design suitable for daily use.
 * **UI-003:** Correct mixed-direction display for Arabic text, English symbols, prices, percentages, and contract names.
 * **UI-004:** Centralized font configuration supporting a bundled custom Arabic font later.
-* **UI-005:** Main dashboard must show engine status, connection, operating mode, Live Locked state, balance, active contract, position, cooldown, daily risk, protection state, and Emergency Stop.
+* **UI-005:** Main dashboard must show engine status, REST/public/private connection state, operating environment, balance, active strategy, position, orders, market-data freshness, daily risk, protection state, and Emergency Stop.
 * **UI-006:** Each watched contract must show opening price, Last Price, high, low, range, Long proximity, Short proximity, direction setting, auto status, freshness, and decision status.
 * **UI-007:** A details view must list every passed and failed entry condition.
 * **UI-008:** Manual Live confirmation must show contract, direction, mode, order type, price, allocated margin, leverage, notional value, rounded quantity, fees, estimated liquidation price, TP, SL, and remaining balance.
@@ -571,9 +621,9 @@ Cooldown must not begin after a partial reduction.
 ## 14. Technical Constraints
 
 * Python trading engine.
-* PySide6/Qt desktop UI.
+* React + TypeScript frontend built with Vite and served through localhost.
 * FastAPI bound to `127.0.0.1`.
-* PostgreSQL bound locally only.
+* SQLite stored only under the selected local RangeBot data root (default `%LOCALAPPDATA%\RangeBot\data`, with an absolute custom root such as `D:\RangeBot\data` allowed) and with no public database listener.
 * SQLAlchemy 2.x and Alembic.
 * Pydantic validation.
 * Asyncio runtime.
@@ -595,9 +645,9 @@ Cooldown must not begin after a partial reduction.
 * **SEC-005:** Gate.io keys must have withdrawals disabled.
 * **SEC-006:** Grant only required trading permissions.
 * **SEC-007:** Use VPS IP whitelisting where Gate.io supports it.
-* **SEC-008:** PostgreSQL and FastAPI must not be publicly exposed.
+* **SEC-008:** FastAPI must remain bound to localhost and the SQLite database must remain a local application-data file with no public listener.
 * **SEC-009:** The control UI must never submit Gate.io orders directly.
-* **SEC-010:** Live mode must require the confirmed typed activation procedure.
+* **SEC-010:** Live must be visibly identified as real-funds mode, while genuine credentials, reconciliation, market-data, risk, position/order, Emergency Stop, and protection checks gate every entry without a typed activation procedure.
 
 ## 16. Failure Handling and Recovery
 
@@ -662,7 +712,7 @@ The WinSW service must:
 
 Stopping the service must not automatically close an existing position.
 
-Before Live Trading, documentation must include and test a manual PostgreSQL backup and restore procedure using standard PostgreSQL tools.
+Documentation must cover the built-in SQLite backup, rotation, validation, restore, migration, reconciliation, and Emergency Stop workflow. The user must not need PostgreSQL tools or terminal commands.
 
 Restoration must be followed by:
 
@@ -678,7 +728,7 @@ Restoration must be followed by:
 
 * **TEST-001:** Engine continues running after UI closure and Remote Desktop disconnection.
 * **TEST-002:** Paper and Testnet reconcile and resume correctly after restart when previously enabled.
-* **TEST-003:** Live returns to Live Locked after restart.
+* **TEST-003:** Live remains selected after restart without any typed phrase, arming, unlock, or artificial restart lock.
 * **TEST-004:** No new entry occurs when a real position or pending entry exists.
 * **TEST-005:** Missing or non-contiguous candle history blocks entries.
 * **TEST-006:** Current Gate Candle calculations follow Gate interval boundaries.

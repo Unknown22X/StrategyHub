@@ -8,15 +8,16 @@ dependencies = [
     "fastapi>=0.115,<1",
     "httpx>=0.28,<1",
     "pydantic>=2.10,<3",
-    "PySide6-Essentials>=6.8,<7",
-    "psycopg[binary]>=3.2,<4",
     "SQLAlchemy>=2.0,<3",
+    "tzdata>=2024.1",
     "uvicorn>=0.32,<1",
+    "websockets>=16.1,<17",
 ]
 
 [dependency-groups]
 dev = [
     "hypothesis>=6.156.6",
+    "PySide6-Essentials>=6.8,<7",
     "pytest>=8.3,<9",
     "pyinstaller>=6.11,<7",
     "ruff>=0.8,<1",

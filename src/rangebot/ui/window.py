@@ -580,49 +580,27 @@ class RangeBotWindow(QWidget):
             self._last_paper_preview = None
             self._last_paper_preview_request = None
             symbol = self.contract_input.text().strip().upper()
-            account = self._request("get", "/v1/paper-account")
-            watchlist = self._request("get", "/v1/paper/watchlist")
-            contracts = self._request("get", f"/v1/paper/contracts?query={symbol}")
-            items = watchlist.get("items", []) if isinstance(watchlist, dict) else []
-            selected = next(
-                (item for item in items if item.get("symbol") == symbol), None
-            )
-            contract = (
-                contracts[0] if isinstance(contracts, list) and contracts else None
-            )
-            if (
-                not isinstance(account, dict)
-                or selected is None
-                or selected.get("last_price") is None
-                or contract is None
-            ):
-                self.warning_banner.setText(
-                    "حدّث حساب Paper وبيانات العقد قبل إنشاء المعاينة."
-                )
+            if not symbol:
+                self.warning_banner.setText("اختر عقداً قبل إنشاء المعاينة.")
                 return
             request = {
-                "available_futures_balance": account["available_futures_balance"],
-                "allocation_percentage": self.entry_allocation.currentText().rstrip(
-                    "%"
-                ),
-                "safety_reserve_percentage": "10",
-                "leverage": int(self.leverage.currentText()),
-                "expected_entry_price": selected["last_price"],
-                "quantity_step": contract["quantity_step"],
-                "minimum_quantity": contract["minimum_quantity"],
+                "environment": "paper",
+                "symbol": symbol,
                 "direction": self.entry_direction.currentData(),
-                "quote_revision": f"ui-{self.contract_input.text().strip().upper()}",
-                "take_profit_percentage": self.take_profit.text(),
-                "stop_loss_percentage": self.stop_loss.text(),
+                "order_type": "market",
+                "size_mode": "balance_percentage",
+                "balance_percentage": self.entry_allocation.currentText().rstrip("%"),
+                "leverage": int(self.leverage.currentText()),
+                "time_in_force": "ioc",
             }
-            result = self._request("post", "/v1/paper/entry-preview", request)
+            result = self._request("post", "/v1/manual-orders/preview", request)
             if isinstance(result, dict):
                 self._last_paper_preview_request = request
                 self._last_paper_preview = result
                 self.preview_summary.setText(
-                    f"الكمية المحسوبة: {self._ltr(str(result.get('quantity', '—')))} • "
-                    f"TP: {self._ltr(str(result.get('take_profit_price', '—')))} • "
-                    f"SL: {self._ltr(str(result.get('stop_loss_price', '—')))}"
+                    f"الكمية المحسوبة: {self._ltr(str(result.get('estimated_quantity', '—')))} • "
+                    f"TP: {self._ltr(str(result.get('estimated_take_profit_price', '—')))} • "
+                    f"SL: {self._ltr(str(result.get('estimated_stop_loss_price', '—')))}"
                 )
             return
         payload = {
@@ -653,16 +631,17 @@ class RangeBotWindow(QWidget):
             ):
                 return
             payload = {
-                "preview": self._last_paper_preview,
-                "current_request": self._last_paper_preview_request,
-                "confirmation": "CONFIRM PAPER MARKET ENTRY",
+                "request": self._last_paper_preview_request,
+                "preview_fingerprint": self._last_paper_preview.get(
+                    "safety_fingerprint", ""
+                ),
             }
             self._confirm(
                 "تأكيد صفقة Paper",
                 "سيتم فتح مركز محاكاة فقط وتطبيق TP وSL المعروضين.",
                 lambda: self._request(
                     "post",
-                    "/v1/paper/market-entry",
+                    "/v1/manual-orders",
                     payload,
                     "تم فتح مركز Paper المحاكى.",
                 ),

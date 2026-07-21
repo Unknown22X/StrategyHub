@@ -3,10 +3,17 @@
   <name>RangeBot Engine</name>
   <description>Local RangeBot engine; UI closure never stops this service.</description>
   <startmode>Automatic</startmode>
+  <autoRefresh>false</autoRefresh>
+  <serviceaccount>
+    <username>NT AUTHORITY\LocalService</username>
+    <password></password>
+    <allowservicelogon>true</allowservicelogon>
+  </serviceaccount>
   <executable>%BASE%\..\engine\bot-engine.exe</executable>
-  <arguments>--mode live --enable-read-only-exchange --database-url %RANGEBOT_DATABASE_URL% --host 127.0.0.1 --port 8765</arguments>
-  <env name="RANGEBOT_ENV_FILE" value="%BASE%\..\config\.env" />
-  <log mode="roll-by-size-time"><sizeThreshold>10485760</sizeThreshold><keepFiles>10</keepFiles></log>
+  <env name="RANGEBOT_HOME" value="__RANGEBOT_DATA_ROOT__" />
+  <arguments>--mode live --enable-read-only-exchange --enable-order-submission --enable-public-websocket --enable-private-websocket --host 127.0.0.1 --port 8765</arguments>
+  <logpath>__RANGEBOT_LOG_ROOT__</logpath>
+  <log mode="roll-by-size-time"><sizeThreshold>10485760</sizeThreshold><pattern>yyyyMMdd</pattern><keepFiles>10</keepFiles></log>
   <onfailure action="restart" delay="10 sec" />
   <stoptimeout>30 sec</stoptimeout>
 </service>

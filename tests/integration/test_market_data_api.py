@@ -1,0 +1,74 @@
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+
+from fastapi.testclient import TestClient
+
+from rangebot.domain.market_data import MarketPriceUpdate
+from rangebot.domain.strategy_runtime import NormalizedCandle
+from rangebot.engine.api import create_app
+from rangebot.engine.market_data_manager import MarketDataManager
+
+
+def test_market_data_api_exposes_real_source_freshness_and_missing_states(
+    tmp_path,
+) -> None:
+    now = datetime(2026, 4, 1, 12, 0, tzinfo=UTC)
+    manager = MarketDataManager(
+        clock=lambda: now,
+        freshness_threshold=timedelta(seconds=10),
+    )
+    manager.apply_rest_snapshot(
+        MarketPriceUpdate(
+            symbol="BTC_USDT",
+            last_price=Decimal("65000.25"),
+            mark_price=Decimal("64998.75"),
+            best_bid=Decimal("65000.00"),
+            best_ask=Decimal("65000.50"),
+            volume_24h=Decimal("123456789.12"),
+            funding_rate=Decimal("0.0001"),
+            observed_at=now,
+            source="gate_rest",
+            sequence=41,
+        )
+    )
+    candle = NormalizedCandle(
+        opened_at=now - timedelta(minutes=15),
+        closed_at=now,
+        open=Decimal("64900"),
+        high=Decimal("65100"),
+        low=Decimal("64850"),
+        close=Decimal("65000.25"),
+        volume=Decimal("1200"),
+        closed=True,
+    )
+    manager.replace_candles("BTC_USDT", 15, [candle], source="gate_rest")
+    database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
+
+    with TestClient(
+        create_app(database_url, market_data_manager=manager)
+    ) as client:
+        snapshot = client.get("/v1/market-data/BTC_USDT")
+        status = client.get("/v1/market-data/BTC_USDT/status")
+        candles = client.get("/v1/market-data/BTC_USDT/candles/15")
+        missing_snapshot = client.get("/v1/market-data/ETH_USDT")
+        missing_status = client.get("/v1/market-data/ETH_USDT/status")
+        missing_candles = client.get("/v1/market-data/ETH_USDT/candles/15")
+
+    assert snapshot.status_code == 200
+    assert snapshot.json()["last_price"] == "65000.25"
+    assert snapshot.json()["mark_price"] == "64998.75"
+    assert snapshot.json()["source"] == "gate_rest"
+    assert snapshot.json()["state"] == "fresh"
+    assert snapshot.json()["sequence"] == 41
+    assert snapshot.json()["last_update_age_seconds"] == "0"
+    assert status.status_code == 200
+    assert status.json()["state"] == "fresh"
+    assert status.json()["last_update_at"] is not None
+    assert candles.status_code == 200
+    assert candles.json()["source"] == "gate_rest"
+    assert candles.json()["candles"][0]["close"] == "65000.25"
+    assert missing_snapshot.status_code == 404
+    assert missing_status.status_code == 200
+    assert missing_status.json()["state"] == "unavailable"
+    assert missing_status.json()["state_reason"] == "symbol_not_tracked"
+    assert missing_candles.status_code == 404

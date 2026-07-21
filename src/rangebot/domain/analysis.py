@@ -194,16 +194,9 @@ def _select_candles(
         if len(ordered) != 1 or evaluated_at is None:
             return [], "history_gap"
         candle = ordered[0]
-        if candle.opened_at.second or candle.opened_at.microsecond:
+        if _interval_start(candle.opened_at, config.timeframe_minutes) != candle.opened_at:
             return [], "history_gap"
-        if candle.opened_at.minute % config.timeframe_minutes:
-            return [], "history_gap"
-        current_start = evaluated_at.replace(
-            minute=(evaluated_at.minute // config.timeframe_minutes)
-            * config.timeframe_minutes,
-            second=0,
-            microsecond=0,
-        )
+        current_start = _interval_start(evaluated_at, config.timeframe_minutes)
         if candle.opened_at != current_start:
             return [], "history_gap"
         return ordered, "ready"
@@ -222,6 +215,14 @@ def _select_candles(
     ):
         return [], "history_gap"
     return selected, "ready"
+
+
+def _interval_start(value: datetime, timeframe_minutes: int) -> datetime:
+    anchor = value.replace(year=1970, month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    elapsed_minutes = int((value - anchor).total_seconds() // 60)
+    return anchor + timedelta(
+        minutes=(elapsed_minutes // timeframe_minutes) * timeframe_minutes
+    )
 
 
 def _one_minute() -> timedelta:

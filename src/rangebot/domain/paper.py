@@ -22,6 +22,10 @@ class PaperAccountSnapshot(BaseModel):
     mode: str = PAPER_MODE
     starting_balance: Decimal
     available_futures_balance: Decimal
+    realized_pnl_total: Decimal = Decimal("0")
+    fees_total: Decimal = Decimal("0")
+    funding_total: Decimal = Decimal("0")
+    net_pnl_total: Decimal = Decimal("0")
     position_quantity: Decimal
     pending_entry: bool
     protection_state: str
@@ -85,6 +89,20 @@ class PaperPosition(BaseModel):
     taker_fee_rate: Decimal
     maker_fee_rate: Decimal
     opened_at: datetime
+    symbol: str | None = None
+    managed_by_rangebot: bool = False
+    origin: Literal[
+        "manual", "automatic_strategy", "monitoring_conversion", "legacy_automatic"
+    ] | None = None
+    instance_id: str | None = None
+    run_id: str | None = None
+    strategy_name: str | None = None
+    ownership_created_at: datetime | None = None
+    trailing_stop_price: Decimal | None = None
+    trailing_stop_distance: Decimal | None = None
+    trailing_state: Literal["desired", "active", "error"] | None = None
+    trailing_order_id: str | None = None
+    trailing_last_error: str | None = None
 
 
 class PaperProtection(BaseModel):
@@ -94,6 +112,9 @@ class PaperProtection(BaseModel):
 
     take_profit_price: Decimal | None
     stop_loss_price: Decimal | None
+    trailing_stop_price: Decimal | None = None
+    trailing_distance: Decimal | None = None
+    trailing_extremum_price: Decimal | None = None
     quantity: Decimal
     state: str
     warning: str | None = None
@@ -107,6 +128,11 @@ class PaperMarketEntryResult(BaseModel):
     position: PaperPosition
     account: PaperAccountSnapshot
     activity: str
+    order_id: str | None = None
+    trade_id: str | None = None
+    origin: Literal[
+        "manual", "automatic_strategy", "monitoring_conversion", "legacy_automatic"
+    ] | None = None
 
 
 class PaperProtectionCheck(BaseModel):
@@ -120,6 +146,7 @@ class PaperProtectionTriggerResult(BaseModel):
     exit_fee_rate: Decimal | None = None
     exit_fee: Decimal | None = None
     activity: str | None = None
+    trade_id: str | None = None
 
 
 class PaperCloseRequest(BaseModel):
@@ -134,16 +161,24 @@ class PaperCloseResult(BaseModel):
     exit_fee: Decimal
     realized_pnl: Decimal
     activity: str
+    trade_id: str | None = None
 
 
 class PaperPendingEntry(BaseModel):
     id: int
+    order_id: str | None = None
     kind: Literal["limit"]
     direction: Literal["long", "short"]
     quantity: Decimal
+    allocated_margin: Decimal
     limit_price: Decimal
+    leverage: int
+    entry_fee_rate: Decimal
+    safety_reserve: Decimal
     expires_at: datetime
+    symbol: str | None = None
     signal_zone: str | None = None
+    created_at: datetime
     state: Literal["pending"] = "pending"
 
 
@@ -182,6 +217,11 @@ class PaperLimitCheckResult(BaseModel):
     pending_entry: PaperPendingEntry | None = None
     position: PaperPosition | None = None
     activity: str | None = None
+    order_id: str | None = None
+    trade_id: str | None = None
+    origin: Literal[
+        "manual", "automatic_strategy", "monitoring_conversion", "legacy_automatic"
+    ] | None = None
 
 
 class PaperRiskSettings(BaseModel):

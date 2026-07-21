@@ -5,15 +5,17 @@ import json
 import re
 from threading import RLock
 from datetime import UTC, datetime, timedelta, timezone
+from uuid import uuid4
 
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, Integer, Numeric, String, Text, func, select
+from sqlalchemy import Boolean, DateTime, Integer, Numeric, String, Text, delete, func, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 from rangebot.domain.runtime import RuntimeState
 from rangebot.domain.exchange import (
+    ExchangeEntryRequest,
     ExchangeRequestAudit,
     ExchangeSnapshot,
     TradingMode,
@@ -54,6 +56,8 @@ from rangebot.domain.paper import (
 )
 from rangebot.domain.entry_preview import create_entry_preview, preview_is_current
 from rangebot.domain.market import PaperWatchlist, WatchlistItem
+from rangebot.engine.performance import AccountEquityPointRecord
+from rangebot.engine.trade_history import TradeFillRecord
 
 
 RIYADH = timezone(timedelta(hours=3), "Asia/Riyadh")
@@ -89,12 +93,11 @@ class RuntimeStateRecord(Base):
 
 
 class ExchangeModeStateRecord(Base):
-    """Restart-critical state for Testnet/Live safety gates, never credentials."""
+    """Restart-critical Testnet/Live state, never credentials."""
 
     __tablename__ = "exchange_mode_state"
 
     mode: Mapped[str] = mapped_column(String(16), primary_key=True)
-    live_locked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     emergency_stop: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     snapshot_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     adapter_state_json: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -111,6 +114,8 @@ class ExchangeRequestRecord(Base):
     kind: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class RuntimeStateRepository:
@@ -187,6 +192,15 @@ class PaperAccountRecord(Base):
     available_futures_balance: Mapped[Decimal] = mapped_column(
         Numeric(24, 8), nullable=False
     )
+    realized_pnl_total: Mapped[Decimal] = mapped_column(
+        Numeric(30, 12), nullable=False, default=Decimal("0")
+    )
+    fees_total: Mapped[Decimal] = mapped_column(
+        Numeric(30, 12), nullable=False, default=Decimal("0")
+    )
+    funding_total: Mapped[Decimal] = mapped_column(
+        Numeric(30, 12), nullable=False, default=Decimal("0")
+    )
     position_quantity: Mapped[Decimal] = mapped_column(Numeric(24, 8), nullable=False)
     pending_entry: Mapped[bool] = mapped_column(Boolean, nullable=False)
     protection_state: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -211,6 +225,7 @@ class PaperPositionRecord(Base):
     __tablename__ = "paper_position"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str | None] = mapped_column(String(64))
     direction: Mapped[str] = mapped_column(String(8), nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(24, 8), nullable=False)
     entry_price: Mapped[Decimal] = mapped_column(Numeric(24, 8), nullable=False)
@@ -232,6 +247,9 @@ class PaperProtectionRecord(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     take_profit_price: Mapped[Decimal | None] = mapped_column(Numeric(24, 8))
     stop_loss_price: Mapped[Decimal | None] = mapped_column(Numeric(24, 8))
+    trailing_stop_price: Mapped[Decimal | None] = mapped_column(Numeric(24, 8))
+    trailing_distance: Mapped[Decimal | None] = mapped_column(Numeric(24, 8))
+    trailing_extremum_price: Mapped[Decimal | None] = mapped_column(Numeric(24, 8))
     quantity: Mapped[Decimal] = mapped_column(Numeric(24, 8), nullable=False)
     state: Mapped[str] = mapped_column(String(32), nullable=False)
     warning: Mapped[str | None] = mapped_column(String(500))
@@ -249,6 +267,7 @@ class PaperPendingEntryRecord(Base):
     __tablename__ = "paper_pending_entry"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    order_id: Mapped[str | None] = mapped_column(String(200))
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
     direction: Mapped[str] = mapped_column(String(8), nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(24, 8), nullable=False)
@@ -373,6 +392,7 @@ class PaperAccountRepository:
                 )
             )
             self._audit(session, "initialized", change.reason)
+            self._record_performance_point(session, record)
             session.commit()
             return self._to_snapshot(record)
 
@@ -398,6 +418,12 @@ class PaperAccountRepository:
             risk.losing_trades = 0
             risk.automatic_fills = 0
             self._audit(session, "reset", change.reason)
+            session.execute(
+                delete(AccountEquityPointRecord).where(
+                    AccountEquityPointRecord.mode == "paper"
+                )
+            )
+            self._record_performance_point(session, replacement)
             session.commit()
             return self._to_snapshot(replacement)
 
@@ -460,6 +486,12 @@ class PaperAccountRepository:
                     self._start_cooldown(session, account)
                 elif protection is not None:
                     protection.quantity = position.quantity
+                session.flush()
+                self._record_performance_point(
+                    session,
+                    account,
+                    mark_price=request.market_price,
+                )
                 session.commit()
                 return result
 
@@ -569,6 +601,7 @@ class PaperAccountRepository:
                 raise LookupError("Paper Account has no pending entry.")
             observed_at = RuntimeStateRepository._with_utc(check.observed_at)
             expires_at = RuntimeStateRepository._with_utc(pending.expires_at)
+            order_id = pending.order_id
             if observed_at >= expires_at:
                 signal_zone = pending.signal_zone
                 direction = pending.direction
@@ -594,6 +627,7 @@ class PaperAccountRepository:
                     expired=True,
                     account=self._to_snapshot(account),
                     activity="انتهت صلاحية أمر Paper Limit.",
+                    order_id=order_id,
                 )
             should_fill = (
                 check.market_price <= pending.limit_price
@@ -616,6 +650,7 @@ class PaperAccountRepository:
                 raise ValueError("Paper Limit fill exceeds available balance.")
             position = PaperPositionRecord(
                 id=1,
+                symbol=pending.signal_symbol,
                 direction=pending.direction,
                 quantity=pending.quantity,
                 entry_price=pending.limit_price,
@@ -650,6 +685,7 @@ class PaperAccountRepository:
             account.position_quantity = position.quantity
             account.protection_state = "protected"
             account.available_futures_balance -= total_debit
+            account.fees_total += entry_fee
             account.last_change_reason = "Paper Limit entry filled"
             account.revision += 1
             self._record_risk_result(session, account, Decimal("0"), entry_fee, True)
@@ -658,7 +694,38 @@ class PaperAccountRepository:
                 if pending.entry_fee_rate == pending.taker_fee_rate
                 else "تم تنفيذ أمر Paper Limit بالكامل برسوم Maker."
             )
+            trade_id = (
+                f"{order_id}:fill"
+                if order_id is not None and pending.signal_symbol is not None
+                else None
+            )
             self._audit(session, "limit_entry_filled", activity)
+            if trade_id is not None and pending.signal_symbol is not None:
+                self._record_trade_fill(
+                    session,
+                    trade_id=trade_id,
+                    order_id=order_id,
+                    contract=pending.signal_symbol,
+                    side="buy" if pending.direction == "long" else "sell",
+                    position_effect="open",
+                    quantity=pending.quantity,
+                    price=pending.limit_price,
+                    fee=entry_fee,
+                    role=(
+                        "taker"
+                        if pending.entry_fee_rate == pending.taker_fee_rate
+                        else "maker"
+                    ),
+                    close_quantity=Decimal("0"),
+                    realized_pnl=None,
+                    occurred_at=observed_at,
+                )
+            self._record_performance_point(
+                session,
+                account,
+                occurred_at=observed_at,
+                mark_price=pending.limit_price,
+            )
             session.commit()
             return PaperLimitCheckResult(
                 filled=True,
@@ -666,6 +733,8 @@ class PaperAccountRepository:
                 account=self._to_snapshot(account),
                 position=self._to_position(position),
                 activity=activity,
+                order_id=order_id,
+                trade_id=trade_id,
             )
 
     def risk_snapshot(self) -> PaperRiskSnapshot:
@@ -706,6 +775,57 @@ class PaperAccountRepository:
             risk = self._risk_state(session, account)
             session.commit()
             return self._to_risk_snapshot(risk, account)
+
+    def ensure_automatic_signal_available(
+        self,
+        symbol: str,
+        direction: str,
+        trigger_zone: str,
+    ) -> None:
+        """Validate an automatic signal without consuming it before a Limit fill."""
+        with Session(self._database_engine) as session:
+            account = session.get(PaperAccountRecord, 1)
+            if account is None:
+                raise LookupError("Paper Account has not been initialized.")
+            self._assert_entry_allowed(session, account, automatic=True)
+            if self._used_signal_exists(session, symbol, direction, trigger_zone):
+                raise RuntimeError("Paper automatic signal is already used.")
+
+    def reserve_automatic_signal(
+        self,
+        symbol: str,
+        direction: str,
+        trigger_zone: str,
+    ) -> None:
+        """Reserve one automatic signal before central order validation/execution."""
+        with Session(self._database_engine) as session:
+            account = session.get(PaperAccountRecord, 1)
+            if account is None:
+                raise LookupError("Paper Account has not been initialized.")
+            self._assert_entry_allowed(session, account, automatic=True)
+            if self._used_signal_exists(session, symbol, direction, trigger_zone):
+                raise RuntimeError("Paper automatic signal is already used.")
+            self._record_used_signal(session, symbol, direction, trigger_zone)
+            session.commit()
+
+    def release_automatic_signal(
+        self,
+        symbol: str,
+        direction: str,
+        trigger_zone: str,
+    ) -> None:
+        """Release a signal reservation when central submission fails."""
+        with Session(self._database_engine) as session:
+            record = session.scalar(
+                select(PaperUsedSignalRecord).where(
+                    PaperUsedSignalRecord.symbol == symbol,
+                    PaperUsedSignalRecord.direction == direction,
+                    PaperUsedSignalRecord.trigger_zone == trigger_zone,
+                )
+            )
+            if record is not None:
+                session.delete(record)
+            session.commit()
 
     def automatic_market_entry(
         self, request: PaperAutomaticSignalRequest
@@ -1105,6 +1225,183 @@ class PaperAccountRepository:
                 )
             return self._to_verification(record, ENGINE_BUILD_ID, safety_fingerprint)
 
+    def enter_central_limit(
+        self,
+        request: ExchangeEntryRequest,
+        *,
+        placement_price: Decimal,
+        contract_multiplier: Decimal,
+    ) -> PaperLimitCheckResult:
+        """Persist one pending limit after central Order Manager validation."""
+        if request.order_type != "limit" or request.limit_price is None:
+            raise ValueError("Central Paper Limit execution requires a limit price.")
+        if request.expires_at is None:
+            raise ValueError("Central Paper Limit execution requires an expiration.")
+        expires_at = RuntimeStateRepository._with_utc(request.expires_at)
+        if expires_at <= datetime.now(UTC):
+            raise ValueError("Central Paper Limit expiration must be in the future.")
+        if placement_price <= 0 or contract_multiplier <= 0:
+            raise ValueError("Central Paper Limit metadata is invalid.")
+
+        with Session(self._database_engine) as session:
+            account = session.get(PaperAccountRecord, 1)
+            if account is None:
+                raise LookupError("Paper Account has not been initialized.")
+            automatic = request.origin != "manual"
+            self._assert_entry_allowed(session, account, automatic=automatic)
+            fee_schedule = self._fee_schedule(session)
+            marketable = (
+                request.limit_price >= placement_price
+                if request.direction == "long"
+                else request.limit_price <= placement_price
+            )
+            entry_fee_rate = (
+                fee_schedule.taker_fee_rate
+                if marketable
+                else fee_schedule.maker_fee_rate
+            )
+            base_quantity = request.quantity * contract_multiplier
+            allocated_margin = (
+                base_quantity * request.limit_price / Decimal(request.leverage)
+            )
+            pending = PaperPendingEntryRecord(
+                id=1,
+                order_id=f"paper-{request.client_request_id}",
+                kind="limit",
+                direction=request.direction,
+                quantity=base_quantity,
+                allocated_margin=allocated_margin,
+                limit_price=request.limit_price,
+                leverage=request.leverage,
+                taker_fee_rate=fee_schedule.taker_fee_rate,
+                maker_fee_rate=fee_schedule.maker_fee_rate,
+                entry_fee_rate=entry_fee_rate,
+                safety_reserve=Decimal("0"),
+                expires_at=expires_at,
+                signal_zone=request.signal_zone,
+                signal_symbol=request.signal_symbol or request.symbol,
+                created_at=datetime.now(UTC),
+            )
+            session.add(pending)
+            account.pending_entry = True
+            account.last_change_reason = f"Central {request.origin} Paper Limit pending"
+            account.revision += 1
+            activity = "تم إنشاء أمر Paper Limit محلي بعد التحقق المركزي."
+            self._audit(session, f"central_{request.origin}_limit_pending", activity)
+            session.commit()
+            return PaperLimitCheckResult(
+                filled=False,
+                expired=False,
+                account=self._to_snapshot(account),
+                pending_entry=self._to_pending_entry(pending),
+                activity=activity,
+                order_id=pending.order_id,
+                origin=request.origin,
+            )
+
+    def enter_central_market(
+        self,
+        request: ExchangeEntryRequest,
+        *,
+        fill_price: Decimal,
+        contract_multiplier: Decimal,
+    ) -> PaperMarketEntryResult:
+        """Persist a market fill after the central Order Manager validated it."""
+        if request.order_type != "market":
+            raise ValueError("Central Paper execution currently supports Market only.")
+        if fill_price <= 0 or contract_multiplier <= 0:
+            raise ValueError("Central Paper fill metadata is invalid.")
+
+        with Session(self._database_engine) as session:
+            account = session.get(PaperAccountRecord, 1)
+            if account is None:
+                raise LookupError("Paper Account has not been initialized.")
+            automatic = request.origin != "manual"
+            self._assert_entry_allowed(session, account, automatic=automatic)
+            fee_schedule = self._fee_schedule(session)
+            base_quantity = request.quantity * contract_multiplier
+            notional = base_quantity * fill_price
+            entry_fee = notional * fee_schedule.taker_fee_rate
+            allocated_margin = notional / Decimal(request.leverage)
+            total_debit = allocated_margin + entry_fee
+            if total_debit > account.available_futures_balance:
+                raise ValueError("Central Paper Market entry exceeds available balance.")
+
+            position = PaperPositionRecord(
+                id=1,
+                symbol=request.symbol,
+                direction=request.direction,
+                quantity=base_quantity,
+                entry_price=fill_price,
+                entry_fee=entry_fee,
+                allocated_margin=allocated_margin,
+                leverage=request.leverage,
+                taker_fee_rate=fee_schedule.taker_fee_rate,
+                maker_fee_rate=fee_schedule.maker_fee_rate,
+                opened_at=datetime.now(UTC),
+            )
+            session.add(position)
+            take_profit, stop_loss = (
+                (request.take_profit_price, request.stop_loss_price)
+                if request.take_profit_price is not None
+                and request.stop_loss_price is not None
+                else self._protection_prices(position)
+            )
+            session.add(
+                PaperProtectionRecord(
+                    id=1,
+                    take_profit_price=take_profit,
+                    stop_loss_price=stop_loss,
+                    trailing_stop_price=request.trailing_stop_price,
+                    trailing_distance=request.trailing_stop_distance,
+                    trailing_extremum_price=(
+                        fill_price if request.trailing_stop_price is not None else None
+                    ),
+                    quantity=base_quantity,
+                    state="protected",
+                    warning=None,
+                )
+            )
+            account.position_quantity = base_quantity
+            account.protection_state = "protected"
+            account.available_futures_balance -= total_debit
+            account.fees_total += entry_fee
+            account.last_change_reason = f"Central {request.origin} Paper Market entry"
+            account.revision += 1
+            if automatic:
+                risk = self._risk_state(session, account)
+                risk.automatic_fills += 1
+                self._sync_risk_state(account, risk)
+            activity = "تم فتح مركز Paper بعد التحقق المركزي من الأمر."
+            order_id = f"paper-{request.client_request_id}"
+            trade_id = f"{order_id}:fill"
+            self._audit(session, f"central_{request.origin}_market_entry", activity)
+            self._record_trade_fill(
+                session,
+                trade_id=trade_id,
+                order_id=order_id,
+                contract=request.symbol,
+                side="buy" if request.direction == "long" else "sell",
+                position_effect="open",
+                quantity=base_quantity,
+                price=fill_price,
+                fee=entry_fee,
+                role="taker",
+                close_quantity=Decimal("0"),
+                realized_pnl=None,
+                occurred_at=position.opened_at,
+            )
+            self._record_performance_point(session, account, mark_price=fill_price)
+            session.commit()
+            return PaperMarketEntryResult(
+                position=self._to_position(position),
+                account=self._to_snapshot(account),
+                activity=activity,
+                order_id=order_id,
+                trade_id=trade_id,
+                origin=request.origin,
+            )
+
     def enter_market(self, request: PaperMarketEntryRequest) -> PaperMarketEntryResult:
         """Create one isolated Paper position after every manual-entry safeguard."""
         if request.confirmation != "CONFIRM PAPER MARKET ENTRY":
@@ -1182,10 +1479,12 @@ class PaperAccountRepository:
             account.position_quantity = quantity
             account.protection_state = "protected"
             account.available_futures_balance -= total_debit
+            account.fees_total += entry_fee
             account.last_change_reason = "Paper manual Market entry"
             account.revision += 1
             activity = "تم فتح مركز ورقي يدوي بسعر السوق بعد تأكيد المستخدم."
             self._audit(session, "manual_market_entry", activity)
+            self._record_performance_point(session, account, mark_price=fill_price)
             session.commit()
             snapshot = self._to_snapshot(account)
             return PaperMarketEntryResult(
@@ -1240,23 +1539,66 @@ class PaperAccountRepository:
                 raise LookupError("Paper position has no active protection.")
             reason: str | None = None
             exit_price: Decimal | None = None
+            if (
+                protection.trailing_stop_price is not None
+                and protection.trailing_distance is not None
+            ):
+                if protection.trailing_extremum_price is None:
+                    protection.trailing_extremum_price = position.entry_price
+                if position.direction == "long":
+                    protection.trailing_extremum_price = max(
+                        protection.trailing_extremum_price,
+                        check.market_price,
+                    )
+                    protection.trailing_stop_price = max(
+                        protection.trailing_stop_price,
+                        protection.trailing_extremum_price
+                        - protection.trailing_distance,
+                    )
+                else:
+                    protection.trailing_extremum_price = min(
+                        protection.trailing_extremum_price,
+                        check.market_price,
+                    )
+                    protection.trailing_stop_price = min(
+                        protection.trailing_stop_price,
+                        protection.trailing_extremum_price
+                        + protection.trailing_distance,
+                    )
             if position.direction == "long":
                 if check.market_price >= protection.take_profit_price:
                     reason, exit_price = "take_profit", protection.take_profit_price
+                elif (
+                    protection.trailing_stop_price is not None
+                    and check.market_price <= protection.trailing_stop_price
+                ):
+                    reason, exit_price = "trailing_stop", protection.trailing_stop_price
                 elif check.market_price <= protection.stop_loss_price:
                     reason, exit_price = "stop_loss", protection.stop_loss_price
             else:
                 if check.market_price <= protection.take_profit_price:
                     reason, exit_price = "take_profit", protection.take_profit_price
+                elif (
+                    protection.trailing_stop_price is not None
+                    and check.market_price >= protection.trailing_stop_price
+                ):
+                    reason, exit_price = "trailing_stop", protection.trailing_stop_price
                 elif check.market_price >= protection.stop_loss_price:
                     reason, exit_price = "stop_loss", protection.stop_loss_price
             if reason is None or exit_price is None:
+                self._record_performance_point(
+                    session,
+                    account,
+                    mark_price=check.market_price,
+                    coalesce_within_second=True,
+                )
+                session.commit()
                 return PaperProtectionTriggerResult(
                     triggered=False, account=self._to_snapshot(account)
                 )
             exit_fee_rate = (
                 position.taker_fee_rate
-                if reason == "stop_loss"
+                if reason in {"stop_loss", "trailing_stop"}
                 else position.maker_fee_rate
             )
             exit_fee = position.quantity * exit_price * exit_fee_rate
@@ -1266,6 +1608,8 @@ class PaperAccountRepository:
             account.available_futures_balance += (
                 position.allocated_margin + price_pnl - exit_fee
             )
+            account.realized_pnl_total += price_pnl
+            account.fees_total += exit_fee
             account.position_quantity = Decimal("0")
             account.protection_state = "none"
             account.last_change_reason = f"Paper {reason} triggered"
@@ -1277,12 +1621,37 @@ class PaperAccountRepository:
             activity = (
                 "تم تنفيذ حماية جني الربح برسوم Maker."
                 if reason == "take_profit"
+                else "تم تنفيذ وقف التتبع برسوم Taker."
+                if reason == "trailing_stop"
                 else "تم تنفيذ حماية وقف الخسارة برسوم Taker."
             )
             self._audit(session, reason, activity)
+            trade_id = str(uuid4()) if position.symbol is not None else None
+            if trade_id is not None and position.symbol is not None:
+                self._record_trade_fill(
+                    session,
+                    trade_id=trade_id,
+                    order_id=None,
+                    contract=position.symbol,
+                    side="sell" if position.direction == "long" else "buy",
+                    position_effect="close",
+                    quantity=position.quantity,
+                    price=exit_price,
+                    fee=exit_fee,
+                    role="maker" if reason == "take_profit" else "taker",
+                    close_quantity=position.quantity,
+                    realized_pnl=price_pnl - position.entry_fee - exit_fee,
+                    occurred_at=datetime.now(UTC),
+                )
             session.delete(protection)
             session.delete(position)
             self._start_cooldown(session, account)
+            session.flush()
+            self._record_performance_point(
+                session,
+                account,
+                mark_price=exit_price,
+            )
             session.commit()
             return PaperProtectionTriggerResult(
                 triggered=True,
@@ -1291,6 +1660,7 @@ class PaperAccountRepository:
                 exit_fee_rate=exit_fee_rate,
                 exit_fee=exit_fee,
                 activity=activity,
+                trade_id=trade_id,
             )
 
     @staticmethod
@@ -1318,6 +1688,134 @@ class PaperAccountRepository:
         return tp, sl
 
     @staticmethod
+    def _record_trade_fill(
+        session: Session,
+        *,
+        trade_id: str,
+        order_id: str | None,
+        contract: str,
+        side: str,
+        position_effect: str,
+        quantity: Decimal,
+        price: Decimal,
+        fee: Decimal,
+        role: str,
+        close_quantity: Decimal,
+        realized_pnl: Decimal | None,
+        occurred_at: datetime,
+        origin: str | None = None,
+    ) -> None:
+        session.add(
+            TradeFillRecord(
+                environment="paper",
+                external_trade_id=trade_id,
+                order_id=order_id,
+                contract=contract,
+                side=side,
+                position_effect=position_effect,
+                quantity=quantity,
+                price=price,
+                fee=fee,
+                role=role,
+                close_quantity=close_quantity,
+                trade_value=quantity * price,
+                realized_pnl=realized_pnl,
+                occurred_at=RuntimeStateRepository._with_utc(occurred_at),
+                source="paper_engine",
+                origin=origin,
+                instance_id=None,
+                run_id=None,
+                strategy_name_snapshot=None,
+                ingested_at=datetime.now(UTC),
+            )
+        )
+
+    @staticmethod
+    def _record_performance_point(
+        session: Session,
+        account: PaperAccountRecord,
+        *,
+        occurred_at: datetime | None = None,
+        mark_price: Decimal | None = None,
+        coalesce_within_second: bool = False,
+    ) -> None:
+        timestamp = (occurred_at or datetime.now(UTC)).astimezone(UTC)
+        position = session.get(PaperPositionRecord, 1)
+        used_margin = position.allocated_margin if position is not None else Decimal("0")
+        reference_price = (
+            mark_price
+            if mark_price is not None
+            else position.entry_price
+            if position is not None
+            else Decimal("0")
+        )
+        open_exposure = (
+            position.quantity * reference_price if position is not None else Decimal("0")
+        )
+        unrealized_pnl = Decimal("0")
+        if position is not None:
+            unrealized_pnl = position.quantity * (reference_price - position.entry_price)
+            if position.direction == "short":
+                unrealized_pnl = -unrealized_pnl
+        total_equity = account.available_futures_balance + used_margin + unrealized_pnl
+        margin_usage_percentage = (
+            (used_margin / total_equity) * Decimal("100")
+            if total_equity > 0
+            else Decimal("0")
+        )
+        values = {
+            "total_equity": total_equity,
+            "available_balance": account.available_futures_balance,
+            "used_margin": used_margin,
+            "margin_usage_percentage": margin_usage_percentage,
+            "realized_pnl_total": account.realized_pnl_total,
+            "unrealized_pnl": unrealized_pnl,
+            "fees_total": account.fees_total,
+            "funding_total": account.funding_total,
+            "net_pnl_total": (
+                account.realized_pnl_total
+                + unrealized_pnl
+                - account.fees_total
+                - account.funding_total
+            ),
+            "open_exposure": open_exposure,
+        }
+        existing: AccountEquityPointRecord | None = None
+        if coalesce_within_second:
+            latest = session.scalar(
+                select(AccountEquityPointRecord)
+                .where(AccountEquityPointRecord.mode == "paper")
+                .order_by(
+                    AccountEquityPointRecord.occurred_at.desc(),
+                    AccountEquityPointRecord.point_id.desc(),
+                )
+                .limit(1)
+            )
+            if latest is not None:
+                latest_at = RuntimeStateRepository._with_utc(latest.occurred_at)
+                age = timestamp - latest_at
+                if timedelta(0) <= age < timedelta(seconds=1):
+                    existing = latest
+        else:
+            existing = session.scalar(
+                select(AccountEquityPointRecord).where(
+                    AccountEquityPointRecord.mode == "paper",
+                    AccountEquityPointRecord.occurred_at == timestamp,
+                )
+            )
+        if existing is None:
+            session.add(
+                AccountEquityPointRecord(
+                    mode="paper",
+                    occurred_at=timestamp,
+                    **values,
+                )
+            )
+            return
+        for field_name, value in values.items():
+            setattr(existing, field_name, value)
+
+    @staticmethod
     def _new_record(
         change: PaperAccountChange, revision: int = 1
     ) -> PaperAccountRecord:
@@ -1325,6 +1823,9 @@ class PaperAccountRepository:
             id=1,
             starting_balance=change.starting_balance,
             available_futures_balance=change.starting_balance,
+            realized_pnl_total=Decimal("0"),
+            fees_total=Decimal("0"),
+            funding_total=Decimal("0"),
             position_quantity=Decimal("0"),
             pending_entry=False,
             protection_state="none",
@@ -1349,6 +1850,12 @@ class PaperAccountRepository:
         return PaperAccountSnapshot(
             starting_balance=record.starting_balance,
             available_futures_balance=record.available_futures_balance,
+            realized_pnl_total=record.realized_pnl_total,
+            fees_total=record.fees_total,
+            funding_total=record.funding_total,
+            net_pnl_total=(
+                record.realized_pnl_total - record.fees_total - record.funding_total
+            ),
             position_quantity=record.position_quantity,
             pending_entry=record.pending_entry,
             protection_state=record.protection_state,
@@ -1365,6 +1872,7 @@ class PaperAccountRepository:
     @staticmethod
     def _to_position(record: PaperPositionRecord) -> PaperPosition:
         return PaperPosition(
+            symbol=record.symbol,
             direction=record.direction,
             quantity=record.quantity,
             entry_price=record.entry_price,
@@ -1381,6 +1889,9 @@ class PaperAccountRepository:
         return PaperProtection(
             take_profit_price=record.take_profit_price,
             stop_loss_price=record.stop_loss_price,
+            trailing_stop_price=record.trailing_stop_price,
+            trailing_distance=record.trailing_distance,
+            trailing_extremum_price=record.trailing_extremum_price,
             quantity=record.quantity,
             state=record.state,
             warning=record.warning,
@@ -1486,12 +1997,19 @@ class PaperAccountRepository:
     def _to_pending_entry(record: PaperPendingEntryRecord) -> PaperPendingEntry:
         return PaperPendingEntry(
             id=record.id,
+            order_id=record.order_id,
             kind="limit",
             direction=record.direction,
             quantity=record.quantity,
+            allocated_margin=record.allocated_margin,
             limit_price=record.limit_price,
+            leverage=record.leverage,
+            entry_fee_rate=record.entry_fee_rate,
+            safety_reserve=record.safety_reserve,
             expires_at=RuntimeStateRepository._with_utc(record.expires_at),
+            symbol=record.signal_symbol,
             signal_zone=record.signal_zone,
+            created_at=RuntimeStateRepository._with_utc(record.created_at),
         )
 
     def _close_position_record(
@@ -1514,6 +2032,8 @@ class PaperAccountRepository:
             price_pnl = -price_pnl
         realized_pnl = price_pnl - entry_fee - exit_fee
         account.available_futures_balance += allocated_margin + price_pnl - exit_fee
+        account.realized_pnl_total += price_pnl
+        account.fees_total += exit_fee
         position.quantity -= close_quantity
         position.allocated_margin -= allocated_margin
         position.entry_fee -= entry_fee
@@ -1525,6 +2045,25 @@ class PaperAccountRepository:
             session, account, price_pnl - entry_fee, exit_fee, False
         )
         self._audit(session, action, activity)
+        trade_id = str(uuid4()) if position.symbol is not None else None
+        if trade_id is not None and position.symbol is not None:
+            self._record_trade_fill(
+                session,
+                trade_id=trade_id,
+                order_id=None,
+                contract=position.symbol,
+                side="sell" if position.direction == "long" else "buy",
+                position_effect="close",
+                quantity=close_quantity,
+                price=exit_price,
+                fee=exit_fee,
+                role=(
+                    "maker" if fee_rate == position.maker_fee_rate else "taker"
+                ),
+                close_quantity=close_quantity,
+                realized_pnl=realized_pnl,
+                occurred_at=datetime.now(UTC),
+            )
         if position.quantity == 0:
             session.delete(position)
         return PaperCloseResult(
@@ -1533,6 +2072,7 @@ class PaperAccountRepository:
             exit_fee=exit_fee,
             realized_pnl=realized_pnl,
             activity=activity,
+            trade_id=trade_id,
         )
 
     def _record_risk_result(
@@ -1924,6 +2464,7 @@ class ExchangeModeRepository:
         with Session(self._database_engine) as session:
             existing = session.get(ExchangeRequestRecord, client_request_id)
             if existing is None:
+                now = datetime.now(UTC)
                 session.add(
                     ExchangeRequestRecord(
                         client_request_id=client_request_id,
@@ -1931,6 +2472,8 @@ class ExchangeModeRepository:
                         kind=kind,
                         status="pending",
                         payload_json=payload_json,
+                        created_at=now,
+                        updated_at=now,
                     )
                 )
                 session.commit()
@@ -1941,6 +2484,7 @@ class ExchangeModeRepository:
             if record is None:
                 raise LookupError("Exchange request identity is missing.")
             record.status = status
+            record.updated_at = datetime.now(UTC)
             session.commit()
 
     def intent_status(self, client_request_id: str) -> str | None:
@@ -1951,7 +2495,9 @@ class ExchangeModeRepository:
     def request_audit(self, mode: TradingMode) -> list[ExchangeRequestAudit]:
         with Session(self._database_engine) as session:
             records = session.scalars(
-                select(ExchangeRequestRecord).where(ExchangeRequestRecord.mode == mode)
+                select(ExchangeRequestRecord)
+                .where(ExchangeRequestRecord.mode == mode)
+                .order_by(ExchangeRequestRecord.updated_at.desc())
             )
             return [
                 ExchangeRequestAudit(
@@ -1960,18 +2506,11 @@ class ExchangeModeRepository:
                     kind=record.kind,
                     status=record.status,
                     message_ar=f"عملية {record.kind}: {record.status}",
+                    created_at=RuntimeStateRepository._with_utc(record.created_at),
+                    updated_at=RuntimeStateRepository._with_utc(record.updated_at),
                 )
                 for record in records
             ]
-
-    def live_locked(self) -> bool:
-        with Session(self._database_engine) as session:
-            return self._state(session, "live").live_locked
-
-    def set_live_locked(self, locked: bool) -> None:
-        with Session(self._database_engine) as session:
-            self._state(session, "live").live_locked = locked
-            session.commit()
 
     def emergency_stop(self, mode: TradingMode) -> bool:
         with Session(self._database_engine) as session:
@@ -1981,8 +2520,6 @@ class ExchangeModeRepository:
         with Session(self._database_engine) as session:
             record = self._state(session, mode)
             record.emergency_stop = active
-            if mode == "live" and active:
-                record.live_locked = True
             session.commit()
 
     @staticmethod
@@ -1991,7 +2528,6 @@ class ExchangeModeRepository:
         if record is None:
             record = ExchangeModeStateRecord(
                 mode=mode,
-                live_locked=mode == "live",
                 emergency_stop=False,
             )
             session.add(record)

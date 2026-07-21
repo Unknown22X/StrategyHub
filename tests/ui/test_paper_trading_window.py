@@ -284,9 +284,10 @@ def test_dashboard_has_obvious_first_action_and_separate_manual_sides() -> None:
     assert len(client.calls) == calls_before_monitoring
 
     window.create_preview()
-    assert client.calls[-1][1] == "/v1/paper/entry-preview"
+    assert client.calls[-1][1] == "/v1/manual-orders/preview"
+    assert client.calls[-1][2]["environment"] == "paper"
+    assert client.calls[-1][2]["size_mode"] == "balance_percentage"
     assert client.calls[-1][2]["leverage"] == 5
-    assert client.calls[-1][2]["take_profit_percentage"] == "10"
 
     window.close()
     application.quit()

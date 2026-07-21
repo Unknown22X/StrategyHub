@@ -14,8 +14,11 @@ import httpx
 
 from rangebot.domain.exchange import (
     ExchangeEntryRequest,
+    ExchangeOpenOrderSnapshot,
     ExchangeOperationResult,
+    ExchangePositionSnapshot,
     ExchangeSnapshot,
+    ExchangeTrailingStopRequest,
     MarketEntryGuardRequest,
     MarketEntryGuardResult,
     MarketGuardQuoteRequest,
@@ -23,7 +26,130 @@ from rangebot.domain.exchange import (
     OrderBookLevel,
     TradingMode,
 )
+from rangebot.domain.trades import TradeFillCreate
 from rangebot.engine.credentials import load_gate_credentials
+
+
+def _decimal_value(value: object, default: str = "0") -> Decimal:
+    try:
+        return Decimal(str(value if value not in (None, "") else default))
+    except Exception:
+        return Decimal(default)
+
+
+def _optional_decimal(value: object) -> Decimal | None:
+    if value in (None, ""):
+        return None
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return None
+
+
+def _utc_timestamp(value: object) -> datetime | None:
+    if value in (None, "", 0, "0"):
+        return None
+    try:
+        timestamp = float(str(value))
+    except (TypeError, ValueError):
+        return None
+    if timestamp > 10_000_000_000:
+        timestamp /= 1000
+    try:
+        return datetime.fromtimestamp(timestamp, UTC)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _gate_trade_fill(mode: TradingMode, item: dict[str, object]) -> TradeFillCreate | None:
+    trade_id = item.get("id", item.get("trade_id"))
+    contract = str(item.get("contract", "")).strip()
+    price = _decimal_value(item.get("price"))
+    signed_size = _decimal_value(item.get("size"))
+    occurred_at = _utc_timestamp(item.get("create_time", item.get("create_time_ms")))
+    if trade_id in (None, "") or not contract or price <= 0 or signed_size == 0 or occurred_at is None:
+        return None
+    quantity = abs(signed_size)
+    close_quantity = min(abs(_decimal_value(item.get("close_size"))), quantity)
+    effect = (
+        "open"
+        if close_quantity == 0
+        else "close"
+        if close_quantity >= quantity
+        else "mixed"
+    )
+    role_value = str(item.get("role", "unknown")).lower()
+    role = role_value if role_value in {"maker", "taker"} else "unknown"
+    return TradeFillCreate(
+        environment=mode,
+        external_trade_id=str(trade_id),
+        order_id=(str(item["order_id"]) if item.get("order_id") not in (None, "") else None),
+        contract=contract,
+        side="buy" if signed_size > 0 else "sell",
+        position_effect=effect,
+        quantity=quantity,
+        price=price,
+        fee=-_decimal_value(item.get("fee")),
+        role=role,
+        close_quantity=close_quantity,
+        trade_value=abs(_decimal_value(item.get("trade_value"), str(quantity * price))),
+        occurred_at=occurred_at,
+        source="gate_rest",
+    )
+
+
+def _position_snapshot(item: dict[str, object]) -> ExchangePositionSnapshot | None:
+    signed_size = _decimal_value(item.get("size"))
+    if signed_size == 0:
+        return None
+    leverage = _optional_decimal(item.get("lever"))
+    if leverage in (None, Decimal("0")):
+        leverage = _optional_decimal(item.get("leverage"))
+    if leverage in (None, Decimal("0")):
+        leverage = _optional_decimal(item.get("cross_leverage_limit"))
+    return ExchangePositionSnapshot(
+        contract=str(item.get("contract", "")),
+        side="long" if signed_size > 0 else "short",
+        quantity=abs(signed_size),
+        entry_price=_optional_decimal(item.get("entry_price")),
+        mark_price=_optional_decimal(item.get("mark_price")),
+        value=abs(_decimal_value(item.get("value"))),
+        margin=abs(
+            _decimal_value(
+                item.get("initial_margin", item.get("margin", "0"))
+            )
+        ),
+        unrealized_pnl=_decimal_value(item.get("unrealised_pnl")),
+        realized_pnl=_decimal_value(item.get("realised_pnl")),
+        liquidation_price=_optional_decimal(item.get("liq_price")),
+        leverage=leverage,
+        pending_orders=int(item.get("pending_orders") or 0),
+        opened_at=_utc_timestamp(item.get("open_time")),
+        updated_at=_utc_timestamp(item.get("update_time")),
+    )
+
+
+def _order_snapshot(item: dict[str, object]) -> ExchangeOpenOrderSnapshot:
+    signed_size = _decimal_value(item.get("size"))
+    quantity = abs(signed_size)
+    left = abs(_decimal_value(item.get("left"), str(quantity)))
+    price = _optional_decimal(item.get("price"))
+    text = str(item.get("text", ""))
+    return ExchangeOpenOrderSnapshot(
+        order_id=str(item.get("id", "")),
+        contract=str(item.get("contract", "")),
+        side="long" if signed_size >= 0 else "short",
+        order_type="market" if price in (None, Decimal("0")) else "limit",
+        price=None if price == 0 else price,
+        quantity=quantity,
+        filled_quantity=max(Decimal("0"), quantity - left),
+        status=str(item.get("status", "open")),
+        reduce_only=bool(item.get("is_reduce_only", item.get("reduce_only", False))),
+        created_at=_utc_timestamp(
+            item.get("create_time_ms", item.get("create_time"))
+        ),
+        managed_by_rangebot=text.startswith("t-rangebot-"),
+    )
 
 
 def guard_market_entry(request: MarketEntryGuardRequest) -> MarketEntryGuardResult:
@@ -81,6 +207,14 @@ class GateIoAdapter(Protocol):
 
     def ensure_protection(self, mode: TradingMode) -> ExchangeOperationResult: ...
 
+    def ensure_trailing_protection(
+        self, mode: TradingMode, request: ExchangeTrailingStopRequest
+    ) -> ExchangeOperationResult: ...
+
+    def cancel_trailing_protection(
+        self, mode: TradingMode, order_id: str
+    ) -> ExchangeOperationResult: ...
+
     def market_guard_quote(
         self, mode: TradingMode, request: MarketGuardQuoteRequest
     ) -> MarketEntryGuardRequest: ...
@@ -119,6 +253,18 @@ class UnavailableGateIoAdapter:
     def ensure_protection(self, mode: TradingMode) -> ExchangeOperationResult:
         return self._unavailable("ensure-protection")
 
+    def ensure_trailing_protection(
+        self, mode: TradingMode, request: ExchangeTrailingStopRequest
+    ) -> ExchangeOperationResult:
+        del mode
+        return self._unavailable(request.client_request_id)
+
+    def cancel_trailing_protection(
+        self, mode: TradingMode, order_id: str
+    ) -> ExchangeOperationResult:
+        del mode
+        return self._unavailable(f"cancel-trail-{order_id}")
+
     def market_guard_quote(
         self, mode: TradingMode, request: MarketGuardQuoteRequest
     ) -> MarketEntryGuardRequest:
@@ -155,6 +301,8 @@ class MockGateIoAdapter:
         self.stop_loss_quantity = Decimal("0")
         self.take_profit_price: Decimal | None = None
         self.stop_loss_price: Decimal | None = None
+        self.trailing_stop_distance: Decimal | None = None
+        self.trailing_order_id: str | None = None
         self.subscription_confirmed = True
         self.rest_snapshot_confirmed = True
         self.websocket_price_updates = 2
@@ -194,6 +342,12 @@ class MockGateIoAdapter:
             active_contract_ready=self.active_contract is not None,
             daily_baseline_ready=self.daily_baseline_ready,
             protection_ready=self.protection_confirmed,
+            trailing_protection_ready=(
+                self.trailing_order_id is not None
+                if self.trailing_stop_distance is not None
+                else None
+            ),
+            trailing_order_ids=(self.trailing_order_id,) if self.trailing_order_id else (),
             tp_enabled=self.tp_enabled,
             sl_enabled=self.sl_enabled,
             subscription_confirmed=self.subscription_confirmed,
@@ -257,6 +411,12 @@ class MockGateIoAdapter:
             "stop_loss_price": (
                 str(self.stop_loss_price) if self.stop_loss_price else None
             ),
+            "trailing_stop_distance": (
+                str(self.trailing_stop_distance)
+                if self.trailing_stop_distance is not None
+                else None
+            ),
+            "trailing_order_id": self.trailing_order_id,
             "automatic_intent": self.automatic_intent,
             "active_contract": self.active_contract,
             "risk_ready": self.risk_ready,
@@ -297,6 +457,12 @@ class MockGateIoAdapter:
             if state.get("stop_loss_price")
             else None
         )
+        adapter.trailing_stop_distance = (
+            Decimal(str(state["trailing_stop_distance"]))
+            if state.get("trailing_stop_distance") is not None
+            else None
+        )
+        adapter.trailing_order_id = state.get("trailing_order_id")
         adapter.automatic_intent = bool(state["automatic_intent"])
         adapter.active_contract = state["active_contract"]
         adapter.risk_ready = bool(state.get("risk_ready", True))
@@ -355,14 +521,24 @@ class MockGateIoAdapter:
             else Decimal("0")
         )
         entry_price = Decimal("100")
-        tp_delta = request.take_profit_percentage / Decimal("100")
-        sl_delta = request.stop_loss_percentage / Decimal("100")
-        if request.direction == "long":
-            self.take_profit_price = entry_price * (Decimal("1") + tp_delta)
-            self.stop_loss_price = entry_price * (Decimal("1") - sl_delta)
+        if request.take_profit_price is not None and request.stop_loss_price is not None:
+            self.take_profit_price = request.take_profit_price
+            self.stop_loss_price = request.stop_loss_price
         else:
-            self.take_profit_price = entry_price * (Decimal("1") - tp_delta)
-            self.stop_loss_price = entry_price * (Decimal("1") + sl_delta)
+            tp_delta = request.take_profit_percentage / Decimal("100")
+            sl_delta = request.stop_loss_percentage / Decimal("100")
+            if request.direction == "long":
+                self.take_profit_price = entry_price * (Decimal("1") + tp_delta)
+                self.stop_loss_price = entry_price * (Decimal("1") - sl_delta)
+            else:
+                self.take_profit_price = entry_price * (Decimal("1") - tp_delta)
+                self.stop_loss_price = entry_price * (Decimal("1") + sl_delta)
+        self.trailing_stop_distance = request.trailing_stop_distance
+        self.trailing_order_id = (
+            f"mock-trail-{request.client_request_id}"
+            if request.trailing_stop_distance is not None
+            else None
+        )
         result = ExchangeOperationResult(
             accepted=True,
             client_request_id=request.client_request_id,
@@ -485,7 +661,7 @@ class MockGateIoAdapter:
 
     def start_automatic(self, active_contract: str = "BTC_USDT") -> None:
         snapshot = self.reconcile("testnet")
-        if entry_blocks(snapshot, "testnet", False, False) or not self.risk_ready:
+        if entry_blocks(snapshot, False) or not self.risk_ready:
             raise RuntimeError(
                 "Automatic trading cannot start until readiness is complete."
             )
@@ -499,7 +675,7 @@ class MockGateIoAdapter:
             and self.active_contract is not None
             and self.risk_ready
             and self.protection_confirmed
-            and not entry_blocks(snapshot, "testnet", False, False)
+            and not entry_blocks(snapshot, False)
         )
 
     def consume_automatic_signal(self, symbol: str, direction: str) -> None:
@@ -559,6 +735,8 @@ class MockGateIoAdapter:
         self.protection_confirmed = True
         self.take_profit_quantity = Decimal("0")
         self.stop_loss_quantity = Decimal("0")
+        self.trailing_stop_distance = None
+        self.trailing_order_id = None
         self.cooldown_complete = False
         self.closure_reason = "Manual Close Position"
         return ExchangeOperationResult(
@@ -582,6 +760,43 @@ class MockGateIoAdapter:
             accepted=self.protection_confirmed,
             client_request_id="protection",
             message_ar="تم التحقق من حماية المركز المُدار.",
+        )
+
+    def ensure_trailing_protection(
+        self, mode: TradingMode, request: ExchangeTrailingStopRequest
+    ) -> ExchangeOperationResult:
+        del mode
+        if self.position_quantity == 0:
+            return ExchangeOperationResult(
+                accepted=False,
+                client_request_id=request.client_request_id,
+                message_ar="لا يوجد مركز محاكاة يحتاج وقف تتبع.",
+            )
+        self.trailing_stop_distance = request.trailing_stop_distance
+        self.trailing_order_id = f"mock-trail-{request.client_request_id}"
+        return ExchangeOperationResult(
+            accepted=True,
+            client_request_id=request.client_request_id,
+            order_id=self.trailing_order_id,
+            message_ar="تم إنشاء أو استعادة وقف التتبع المحاكى.",
+        )
+
+    def cancel_trailing_protection(
+        self, mode: TradingMode, order_id: str
+    ) -> ExchangeOperationResult:
+        del mode
+        if self.trailing_order_id not in {None, order_id}:
+            return ExchangeOperationResult(
+                accepted=False,
+                client_request_id=f"cancel-trail-{order_id}",
+                message_ar="معرّف وقف التتبع المحاكى لا يطابق الحماية المُدارة.",
+            )
+        self.trailing_stop_distance = None
+        self.trailing_order_id = None
+        return ExchangeOperationResult(
+            accepted=True,
+            client_request_id=f"cancel-trail-{order_id}",
+            message_ar="تم إلغاء وقف التتبع المحاكى.",
         )
 
     def market_guard_quote(
@@ -625,7 +840,7 @@ class MockGateIoAdapter:
 
 @dataclass(frozen=True)
 class GateIoV4Endpoints:
-    """Deliberately explicit endpoints; Testnet/Live credentials stay in `.env`."""
+    """Explicit Gate.io endpoints; credentials come from protected runtime storage."""
 
     testnet_base_url: str = "https://fx-api-testnet.gateio.ws/api/v4"
     live_base_url: str = "https://api.gateio.ws/api/v4"
@@ -728,6 +943,7 @@ class GateIoV4Adapter:
         self._allow_network = allow_network
         self._allow_order_submission = allow_order_submission
         self._managed_order_ids: tuple[str, ...] = ()
+        self._managed_trailing_order_ids: tuple[str, ...] = ()
         self._managed_contract: str | None = None
         self._managed_position_size = Decimal("0")
 
@@ -756,17 +972,64 @@ class GateIoV4Adapter:
         account = self._request("GET", "/futures/usdt/accounts", "", "")
         positions = self._request("GET", "/futures/usdt/positions", "", "")
         orders = self._request("GET", "/futures/usdt/orders", "status=open", "")
+        price_orders = self._request(
+            "GET", "/futures/usdt/price_orders", "status=open&limit=100", ""
+        )
+        trailing_reconciliation_ready = True
+        try:
+            trail_payload = self._request(
+                "GET",
+                "/futures/usdt/autoorder/v1/trail/list",
+                "is_finished=false&page_num=1&page_size=100",
+                "",
+            )
+            trail_orders = _gate_trail_order_rows(trail_payload)
+        except Exception:
+            trail_orders = []
+            trailing_reconciliation_ready = False
+        position_snapshots = tuple(
+            snapshot
+            for item in positions
+            if (snapshot := _position_snapshot(item)) is not None
+        )
+        order_snapshots = tuple(_order_snapshot(item) for item in orders)
         position_quantity = sum(
-            (abs(Decimal(str(item.get("size", "0")))) for item in positions),
-            Decimal("0"),
+            (item.quantity for item in position_snapshots), Decimal("0")
         )
         liquidation_price = next(
             (
-                Decimal(str(item["liq_price"]))
-                for item in positions
-                if item.get("liq_price") not in (None, "")
+                item.liquidation_price
+                for item in position_snapshots
+                if item.liquidation_price is not None
             ),
             None,
+        )
+        total_balance = _decimal_value(account.get("total"))
+        unrealized_pnl = _decimal_value(
+            account.get("cross_unrealised_pnl", account.get("unrealised_pnl", "0"))
+        )
+        margin_balance = _optional_decimal(account.get("cross_margin_balance"))
+        total_equity = margin_balance or total_balance + unrealized_pnl
+        history = account.get("history")
+        account_history = history if isinstance(history, dict) else {}
+        realized_pnl_total = _decimal_value(account_history.get("pnl"))
+        fees_total = _decimal_value(account_history.get("fee"))
+        funding_total = _decimal_value(account_history.get("fund"))
+        net_pnl_total = realized_pnl_total + fees_total + funding_total
+        open_exposure = sum(
+            (item.value for item in position_snapshots), Decimal("0")
+        )
+        position_margin = sum(
+            (item.margin for item in position_snapshots), Decimal("0")
+        ) or _decimal_value(account.get("position_margin"))
+        order_margin = _decimal_value(
+            account.get("cross_order_margin", account.get("order_margin", "0"))
+        )
+        used_margin = position_margin + order_margin
+        margin_usage_percentage = (
+            used_margin / total_equity * Decimal("100")
+            if total_equity > 0
+            else Decimal("0")
         )
         leverage_value = account.get("leverage")
         leverage = (
@@ -779,14 +1042,40 @@ class GateIoV4Adapter:
             for item in orders
             if str(item.get("text", "")).startswith("t-rangebot-")
         )
+        managed_trailing_orders = tuple(
+            item
+            for item in trail_orders
+            if str(item.get("text", "")).startswith("t-rbtrail-")
+            and str(item.get("status", "open")) == "open"
+        )
+        managed_trailing_order_ids = tuple(
+            str(item["id"])
+            for item in managed_trailing_orders
+            if item.get("id") is not None
+        )
         managed_contracts = {
             str(item.get("contract"))
             for item in orders
             if str(item.get("text", "")).startswith("t-rangebot-")
         }
+        managed_contracts.update(
+            str(item.get("contract"))
+            for item in managed_trailing_orders
+            if item.get("contract")
+        )
+        protection_contracts = {
+            str(initial.get("contract"))
+            for item in price_orders
+            if isinstance(item, dict)
+            and item.get("status") in {"open", "inactive"}
+            and isinstance((initial := item.get("initial")), dict)
+            and initial.get("contract")
+        }
+        managed_contracts.update(protection_contracts)
         if managed_contracts:
             self._managed_contract = next(iter(managed_contracts))
         self._managed_order_ids = managed_orders
+        self._managed_trailing_order_ids = managed_trailing_order_ids
         matching_positions = [
             item
             for item in positions
@@ -798,12 +1087,51 @@ class GateIoV4Adapter:
             Decimal("0"),
         )
         unmanaged_positions = bool(positions) and not matching_positions
+        protection_ready = all(
+            _gate_position_has_tp_sl(item, price_orders)
+            for item in matching_positions
+            if Decimal(str(item.get("size", "0"))) != 0
+        )
+        if not matching_positions:
+            protection_ready = not positions
+        trailing_protection_ready: bool | None = None
+        active_matching_positions = [
+            position
+            for position in matching_positions
+            if Decimal(str(position.get("size", "0"))) != 0
+        ]
+        if managed_trailing_order_ids:
+            trailing_protection_ready = bool(active_matching_positions) and all(
+                any(
+                    str(order.get("contract", "")) == str(position.get("contract", ""))
+                    and bool(order.get("reduce_only", False))
+                    and bool(order.get("position_related", False))
+                    for order in managed_trailing_orders
+                )
+                for position in active_matching_positions
+            )
         return ExchangeSnapshot(
             mode=mode,
             reconciled_at=datetime.now(UTC),
-            available_futures_balance=str(account.get("available", "0")),
-            position_quantity=str(position_quantity),
+            available_futures_balance=_decimal_value(
+                account.get("cross_available", account.get("available", "0"))
+            ),
+            total_futures_balance=total_balance,
+            total_futures_equity=total_equity,
+            unrealized_pnl=unrealized_pnl,
+            position_margin=position_margin,
+            order_margin=order_margin,
+            used_margin=used_margin,
+            margin_usage_percentage=margin_usage_percentage,
+            realized_pnl_total=realized_pnl_total,
+            fees_total=fees_total,
+            funding_total=funding_total,
+            net_pnl_total=net_pnl_total,
+            open_exposure=open_exposure,
+            position_quantity=position_quantity,
             liquidation_price=liquidation_price,
+            positions=position_snapshots,
+            open_orders=order_snapshots,
             managed_order_ids=managed_orders,
             unmanaged_state=unmanaged_positions
             or any(
@@ -815,8 +1143,31 @@ class GateIoV4Adapter:
             leverage_confirmed=leverage,
             market_ready=False,
             history_ready=False,
-            protection_ready=True,
+            protection_ready=protection_ready,
+            trailing_protection_ready=trailing_protection_ready,
+            trailing_reconciliation_ready=trailing_reconciliation_ready,
+            trailing_order_ids=managed_trailing_order_ids,
         )
+
+    def recent_trade_fills(self, mode: TradingMode) -> tuple[TradeFillCreate, ...]:
+        """Return a bounded, sanitized Gate trade page for idempotent local ingestion."""
+        self._require_mode(mode)
+        rows = self._request(
+            "GET",
+            "/futures/usdt/my_trades",
+            "limit=1000",
+            "",
+        )
+        if not isinstance(rows, list):
+            raise RuntimeError("Gate.io returned an invalid trade-history response.")
+        fills: list[TradeFillCreate] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            fill = _gate_trade_fill(mode, row)
+            if fill is not None:
+                fills.append(fill)
+        return tuple(fills)
 
     def submit_entry(
         self, mode: TradingMode, request: ExchangeEntryRequest
@@ -834,19 +1185,44 @@ class GateIoV4Adapter:
                 client_request_id=request.client_request_id,
                 message_ar="سعر Limit مطلوب ولا يمكن تغييره ضمنياً.",
             )
+        if request.trailing_stop_price is not None and (
+            request.order_type != "market" or request.trailing_stop_distance is None
+        ):
+            return ExchangeOperationResult(
+                accepted=False,
+                client_request_id=request.client_request_id,
+                message_ar="وقف التتبع يتطلب أمر Market ومسافة تتبع صريحة.",
+            )
         signed_quantity = (
             request.quantity if request.direction == "long" else -request.quantity
         )
+        if request.protections_enabled and (
+            request.take_profit_price is None or request.stop_loss_price is None
+        ):
+            return ExchangeOperationResult(
+                accepted=False,
+                client_request_id=request.client_request_id,
+                message_ar="لا يمكن فتح مركز Gate.io من دون سعري TP وSL صريحين.",
+            )
         payload = {
             "contract": request.symbol,
             "size": str(signed_quantity),
             "price": (
                 "0" if request.order_type == "market" else str(request.limit_price)
             ),
-            "tif": "ioc" if request.order_type == "market" else "gtc",
+            "tif": (
+                request.time_in_force
+                if request.order_type == "limit"
+                else request.time_in_force
+                if request.time_in_force in {"ioc", "fok"}
+                else "ioc"
+            ),
             "text": f"t-rangebot-{request.client_request_id}",
             "reduce_only": False,
         }
+        if request.protections_enabled:
+            payload["tpsl_tp_trigger_price"] = str(request.take_profit_price)
+            payload["tpsl_sl_trigger_price"] = str(request.stop_loss_price)
         result = self._request(
             "POST",
             "/futures/usdt/orders",
@@ -856,18 +1232,159 @@ class GateIoV4Adapter:
         self._managed_contract = request.symbol
         if result.get("id") is not None:
             self._managed_order_ids = (str(result["id"]),)
+        trailing_warning = False
+        if request.trailing_stop_price is not None and request.trailing_stop_distance is not None:
+            try:
+                trail_id = self._submit_trailing_order(
+                    symbol=request.symbol,
+                    direction=request.direction,
+                    quantity=request.quantity,
+                    trailing_stop_distance=request.trailing_stop_distance,
+                    client_request_id=request.client_request_id,
+                )
+                if trail_id is not None:
+                    self._managed_trailing_order_ids = (trail_id,)
+            except Exception:
+                trailing_warning = True
         return ExchangeOperationResult(
             accepted=True,
             client_request_id=request.client_request_id,
             order_id=str(result.get("id")),
-            message_ar="تم قبول أمر مُدار.",
+            pending_unknown=trailing_warning,
+            message_ar=(
+                "تم قبول أمر الدخول وتأكيد TP/SL، لكن وقف التتبع يحتاج مصالحة."
+                if trailing_warning
+                else "تم قبول الأمر المُدار مع حماية TP/SL ووقف التتبع."
+                if request.trailing_stop_price is not None
+                else "تم قبول أمر مُدار."
+            ),
+        )
+
+    def _submit_trailing_order(
+        self,
+        *,
+        symbol: str,
+        direction: str,
+        quantity: Decimal,
+        trailing_stop_distance: Decimal,
+        client_request_id: str,
+    ) -> str | None:
+        close_amount = -quantity if direction == "long" else quantity
+        trail_text = f"t-rbtrail-{client_request_id.replace('-', '')[:16]}"
+        payload = {
+            "contract": symbol,
+            "amount": str(close_amount),
+            "activation_price": "0",
+            "is_gte": direction == "long",
+            "price_type": 3,
+            "price_offset": str(trailing_stop_distance),
+            "reduce_only": True,
+            "position_related": True,
+            "text": trail_text,
+            "pos_margin_mode": "cross",
+            "position_mode": "single",
+        }
+        response = self._request(
+            "POST",
+            "/futures/usdt/autoorder/v1/trail/create",
+            "",
+            json.dumps(payload, separators=(",", ":")),
+        )
+        if isinstance(response, dict):
+            if response.get("id") is not None:
+                return str(response["id"])
+            data = response.get("data")
+            if isinstance(data, dict):
+                order = data.get("order")
+                if isinstance(order, dict) and order.get("id") is not None:
+                    return str(order["id"])
+        return None
+
+    def ensure_trailing_protection(
+        self, mode: TradingMode, request: ExchangeTrailingStopRequest
+    ) -> ExchangeOperationResult:
+        self._require_mode(mode)
+        if not self._allow_order_submission:
+            return self._orders_disabled(request.client_request_id)
+        try:
+            trail_id = self._submit_trailing_order(
+                symbol=request.symbol,
+                direction=request.direction,
+                quantity=request.quantity,
+                trailing_stop_distance=request.trailing_stop_distance,
+                client_request_id=request.client_request_id,
+            )
+        except Exception as error:
+            return ExchangeOperationResult(
+                accepted=False,
+                client_request_id=request.client_request_id,
+                message_ar=f"تعذر استعادة وقف التتبع: {type(error).__name__}.",
+            )
+        if trail_id is None:
+            return ExchangeOperationResult(
+                accepted=False,
+                client_request_id=request.client_request_id,
+                message_ar="لم تُرجع Gate.io معرّفاً لوقف التتبع.",
+            )
+        self._managed_trailing_order_ids = (trail_id,)
+        return ExchangeOperationResult(
+            accepted=True,
+            client_request_id=request.client_request_id,
+            order_id=trail_id,
+            message_ar="تم إنشاء أو استعادة وقف التتبع في Gate.io.",
+        )
+
+    def cancel_trailing_protection(
+        self, mode: TradingMode, order_id: str
+    ) -> ExchangeOperationResult:
+        self._require_mode(mode)
+        request_id = f"cancel-trail-{order_id}"
+        if not self._allow_order_submission:
+            return self._orders_disabled(request_id)
+        payload_id: int | str = int(order_id) if order_id.isdigit() else order_id
+        try:
+            self._request(
+                "POST",
+                "/futures/usdt/autoorder/v1/trail/stop",
+                "",
+                json.dumps({"id": payload_id}, separators=(",", ":")),
+            )
+        except Exception as error:
+            return ExchangeOperationResult(
+                accepted=False,
+                client_request_id=request_id,
+                message_ar=f"تعذر إلغاء وقف التتبع: {type(error).__name__}.",
+            )
+        self._managed_trailing_order_ids = tuple(
+            managed_id
+            for managed_id in self._managed_trailing_order_ids
+            if managed_id != order_id
+        )
+        return ExchangeOperationResult(
+            accepted=True,
+            client_request_id=request_id,
+            message_ar="تم إلغاء وقف التتبع المُدار في Gate.io.",
         )
 
     def cancel_managed_entry(self, mode: TradingMode) -> ExchangeOperationResult:
         self._require_mode(mode)
         if not self._allow_order_submission:
             return self._orders_disabled("cancel")
-        for order_id in self._managed_order_ids:
+        open_orders = self._request(
+            "GET", "/futures/usdt/orders", "status=open", ""
+        )
+        if not isinstance(open_orders, list):
+            raise RuntimeError("Gate.io returned an invalid open-order response.")
+        discovered_ids = {
+            str(item["id"])
+            for item in open_orders
+            if isinstance(item, dict)
+            and item.get("id") is not None
+            and str(item.get("text", "")).startswith("t-rangebot-")
+            and not bool(item.get("reduce_only", False))
+        }
+        managed_ids = tuple(sorted(set(self._managed_order_ids) | discovered_ids))
+        for order_id in managed_ids:
             self._request("DELETE", f"/futures/usdt/orders/{order_id}", "", "")
         self._managed_order_ids = ()
         return ExchangeOperationResult(
@@ -912,16 +1429,21 @@ class GateIoV4Adapter:
         self._require_mode(mode)
         if not self._allow_order_submission:
             return self._orders_disabled("protection")
-        if self._managed_position_size == 0:
+        snapshot = self.reconcile(mode)
+        if snapshot.position_quantity == 0:
             return ExchangeOperationResult(
                 accepted=True,
                 client_request_id="protection",
                 message_ar="لا يوجد مركز يحتاج حماية.",
             )
         return ExchangeOperationResult(
-            accepted=True,
+            accepted=snapshot.protection_ready,
             client_request_id="protection",
-            message_ar="حالة الحماية المُدارة مؤكدة بالمصالحة.",
+            message_ar=(
+                "حالة TP وSL مؤكدة من أوامر Gate.io المحفزة."
+                if snapshot.protection_ready
+                else "حماية TP أو SL غير مكتملة في Gate.io."
+            ),
         )
 
     def market_guard_quote(
@@ -994,16 +1516,65 @@ class GateIoV4Adapter:
             raise ValueError("Gate.io adapter mode mismatch.")
 
 
+def _gate_trail_order_rows(payload: object) -> list[dict[str, Any]]:
+    """Normalize Gate trail-list envelopes without exposing raw payloads."""
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if not isinstance(payload, dict):
+        return []
+    orders = payload.get("orders")
+    if isinstance(orders, list):
+        return [item for item in orders if isinstance(item, dict)]
+    data = payload.get("data")
+    if isinstance(data, dict) and isinstance(data.get("orders"), list):
+        return [item for item in data["orders"] if isinstance(item, dict)]
+    return []
+
+
+def _gate_position_has_tp_sl(
+    position: dict[str, Any], price_orders: object
+) -> bool:
+    if not isinstance(price_orders, list):
+        return False
+    contract = str(position.get("contract", ""))
+    size = Decimal(str(position.get("size", "0")))
+    if not contract or size == 0:
+        return True
+    required_rules = {1, 2}
+    observed_rules: set[int] = set()
+    expected_types = (
+        {"close-long-order", "close-long-position", "plan-close-long-position"}
+        if size > 0
+        else {"close-short-order", "close-short-position", "plan-close-short-position"}
+    )
+    for item in price_orders:
+        if not isinstance(item, dict) or item.get("status") not in {"open", "inactive"}:
+            continue
+        initial = item.get("initial")
+        trigger = item.get("trigger")
+        if not isinstance(initial, dict) or not isinstance(trigger, dict):
+            continue
+        if str(initial.get("contract", "")) != contract:
+            continue
+        if item.get("order_type") not in expected_types:
+            continue
+        try:
+            observed_rules.add(int(trigger.get("rule")))
+        except (TypeError, ValueError):
+            continue
+    return required_rules.issubset(observed_rules)
+
+
 def entry_blocks(
     snapshot: ExchangeSnapshot | None,
-    mode: TradingMode,
-    live_locked: bool,
-    emergency_stop: bool,
+    emergency_stop_or_mode: bool | TradingMode,
+    *legacy_flags: bool,
 ) -> tuple[str, ...]:
-    """Return Arabic, operator-facing reasons without exposing exchange payloads."""
+    """Return Arabic operator reasons; accept the pre-refactor internal call shape."""
+    emergency_stop = (
+        legacy_flags[-1] if legacy_flags else bool(emergency_stop_or_mode)
+    )
     reasons: list[str] = []
-    if mode == "live" and live_locked:
-        reasons.append("وضع Live مقفل؛ يلزم تأكيد LIVE بعد اكتمال فحوصات الأمان.")
     if emergency_stop:
         reasons.append("الإيقاف الطارئ نشط ويمنع أي دخول جديد.")
     if snapshot is None:
@@ -1045,13 +1616,11 @@ def entry_blocks(
 def mode_state(
     mode: TradingMode,
     snapshot: ExchangeSnapshot | None,
-    live_locked: bool,
     emergency_stop: bool,
 ) -> ModeState:
-    reasons = entry_blocks(snapshot, mode, live_locked, emergency_stop)
+    reasons = entry_blocks(snapshot, emergency_stop)
     return ModeState(
         mode=mode,
-        live_locked=live_locked,
         emergency_stop=emergency_stop,
         can_enter=not reasons,
         blocked_reasons_ar=reasons,

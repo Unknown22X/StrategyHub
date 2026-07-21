@@ -1,16 +1,11 @@
-# PyInstaller onedir definition; the UI remains separate from the engine build.
+# PyInstaller onedir definition for the localhost web-control launcher.
 from pathlib import Path
 
 project_root = Path(SPECPATH).parent
+icon_path = project_root / "deploy" / "RangeBot.ico"
 a = Analysis(
     [str(project_root / "src" / "rangebot" / "ui" / "main.py")],
     pathex=[str(project_root / "src")],
-    datas=[
-        (
-            str(project_root / "src" / "rangebot" / "assets" / "fonts"),
-            "rangebot/assets/fonts",
-        )
-    ],
 )
 pyz = PYZ(a.pure)
 exe = EXE(
@@ -18,7 +13,8 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="rangebot-control",
+    name="RangeBot",
     console=False,
+    icon=str(icon_path) if icon_path.is_file() else None,
 )
-coll = COLLECT(exe, a.binaries, a.datas, name="rangebot-control")
+coll = COLLECT(exe, a.binaries, a.datas, name="RangeBot")

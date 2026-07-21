@@ -1,4 +1,4 @@
-"""Start the bundled localhost engine when the desktop package is used alone."""
+"""Start or recover the installed localhost engine without owning its lifetime."""
 
 from __future__ import annotations
 
@@ -10,6 +10,18 @@ import sys
 
 
 LOCAL_ENGINE_PORT = 8765
+_ENGINE_ARGUMENTS = (
+    "--mode",
+    "live",
+    "--enable-read-only-exchange",
+    "--enable-order-submission",
+    "--enable-public-websocket",
+    "--enable-private-websocket",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    str(LOCAL_ENGINE_PORT),
+)
 
 
 def _localhost_engine_is_listening() -> bool:
@@ -21,44 +33,92 @@ def _localhost_engine_is_listening() -> bool:
 
 
 def bundled_engine() -> tuple[Path, Path] | None:
-    """Return the bundled engine executable and its RangeBot root, if present."""
+    """Return the bundled engine executable and RangeBot installation root."""
     configured = os.environ.get("RANGEBOT_ENGINE_PATH")
     if configured:
-        executable = Path(configured)
+        executable = Path(configured).expanduser().resolve()
         return (executable, executable.parent.parent) if executable.is_file() else None
     if not getattr(sys, "frozen", False):
         return None
 
-    ui_directory = Path(sys.executable).resolve().parent
+    launcher_directory = Path(sys.executable).resolve().parent
     candidates = (
-        (ui_directory.parent / "bot-engine" / "bot-engine.exe", ui_directory.parent.parent),
-        (ui_directory.parent / "engine" / "bot-engine.exe", ui_directory.parent),
+        (launcher_directory.parent / "engine" / "bot-engine.exe", launcher_directory.parent),
+        (
+            launcher_directory.parent / "bot-engine" / "bot-engine.exe",
+            launcher_directory.parent.parent,
+        ),
     )
     return next(((path, root) for path, root in candidates if path.is_file()), None)
 
 
+def bundled_service_wrapper() -> Path | None:
+    """Return the installed WinSW wrapper when available."""
+    configured = os.environ.get("RANGEBOT_SERVICE_PATH")
+    if configured:
+        wrapper = Path(configured).expanduser().resolve()
+        return wrapper if wrapper.is_file() else None
+    if not getattr(sys, "frozen", False):
+        return None
+    launcher_directory = Path(sys.executable).resolve().parent
+    wrapper = launcher_directory.parent / "service" / "RangeBot.Engine.exe"
+    return wrapper if wrapper.is_file() else None
+
+
+def _run_service_command(wrapper: Path, action: str) -> subprocess.CompletedProcess[str] | None:
+    try:
+        return subprocess.run(
+            [str(wrapper), action],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=20,
+            check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def _recover_windows_service(wrapper: Path) -> bool:
+    """Start the service, or restart it when WinSW reports it is already running."""
+    started = _run_service_command(wrapper, "start")
+    if started is not None and started.returncode == 0:
+        return True
+    restarted = _run_service_command(wrapper, "restart")
+    return restarted is not None and restarted.returncode == 0
+
+
+def _start_detached_fallback(executable: Path, root: Path) -> bool:
+    environment = os.environ.copy()
+    environment.pop("RANGEBOT_ENV_FILE", None)
+    try:
+        subprocess.Popen(
+            [str(executable), *_ENGINE_ARGUMENTS],
+            cwd=root,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except OSError:
+        return False
+    return True
+
+
 def start_bundled_engine_if_needed() -> bool:
-    """Start a local Paper-safe engine only when no localhost engine is available."""
+    """Recover the service first, then use a detached Live-configured fallback."""
     if _localhost_engine_is_listening():
         return False
+
+    wrapper = bundled_service_wrapper()
+    if wrapper is not None and _recover_windows_service(wrapper):
+        return True
+
     bundle = bundled_engine()
     if bundle is None:
         return False
-
     executable, root = bundle
-    environment = os.environ.copy()
-    config_file = root / "config" / ".env"
-    environment.setdefault(
-        "RANGEBOT_ENV_FILE",
-        str(config_file if config_file.parent.exists() else root / "runtime" / ".env"),
-    )
-    subprocess.Popen(
-        [str(executable), "--mode", "paper"],
-        cwd=root,
-        env=environment,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
-    return True
+    return _start_detached_fallback(executable, root)

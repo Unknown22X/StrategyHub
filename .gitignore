@@ -18,10 +18,26 @@ __pycache__/
 
 # Test and tooling caches
 .pytest_cache/
+.pytest-all-a/
+.pytest-all-b/
+.pytest-temp-backtest/
+.test-tmp/
+.venv-backtest/
+.venv-release/
+.release-tmp/
 .hypothesis/
 .mypy_cache/
 .ruff_cache/
 .cache/
+.playwright-mcp/
+.playwright-cli/
+
+# Local editor/source backup files
+*.before-*
+*.bak
+*.backup
+*.swp
+*~
 
 # Local logs
 logs/
@@ -31,16 +47,28 @@ logs/
 runtime/
 data/runtime/
 
+# Local output and agent state
+output/
+.ai-bridge/
+
+# Node and frontend tooling
+node_modules/
+frontend/node_modules/
+
 # PostgreSQL data
 postgres-data/
 postgresql-data/
 pgdata/
 
-# PyInstaller output
+# PyInstaller and generated release output
 build/
 dist/
 build-*/
 dist-*/
+release/*.exe
+
+# Local agent diagnostics
+.ai-bridge/codexpro-self-test.md
 
 # IDE and editor files
 .idea/
@@ -50,6 +78,8 @@ dist-*/
 *.user
 *.userossc
 *.rsuser
+.DS_Store
+Thumbs.db
 
 # Keep repository planning and documentation artifacts trackable
 !.scratch/

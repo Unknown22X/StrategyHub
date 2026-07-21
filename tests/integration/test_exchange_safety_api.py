@@ -479,6 +479,9 @@ def test_configured_adapter_without_credentials_is_safe_and_offline(
     monkeypatch.delenv("GATE_TESTNET_KEY", raising=False)
     monkeypatch.delenv("GATE_TESTNET_SECRET", raising=False)
     monkeypatch.setenv("RANGEBOT_ENV_FILE", str(tmp_path / "missing.env"))
+    monkeypatch.setenv(
+        "RANGEBOT_CREDENTIAL_DIRECTORY", str(tmp_path / "credentials")
+    )
 
     adapter = configured_gate_adapter("testnet", enable_network=False)
 
