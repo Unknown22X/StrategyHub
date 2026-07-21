@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  archiveStrategy,
   cancelPaperPendingEntry,
   createBackup,
   createStrategy,
@@ -15,6 +16,7 @@ import {
   listDiscoveryScans,
   loadAccountPerformance,
   loadAccountRiskPolicy,
+  loadArchivedStrategies,
   loadBuiltInStrategyTemplates,
   loadBacktestEquity,
   loadBacktestTrades,
@@ -23,6 +25,7 @@ import {
   loadMarketCandles,
   loadMarketSnapshot,
   loadReconciliationReadiness,
+  loadStrategyDeletionReadiness,
   loadStrategyStartReadiness,
   loadTradeHistory,
   loadTradeHistorySummary,
@@ -30,11 +33,13 @@ import {
   removeCredentials,
   requestReconciliation,
   restoreBackup,
+  restoreStrategy,
   runBacktest,
   runDiscoveryScan,
   saveAccountRiskPolicy,
   saveApplicationSettings,
   saveCredentials,
+  setStrategyPinned,
   submitManualOrder,
   switchRuntimeEnvironment,
   testCredentials,
@@ -511,6 +516,53 @@ describe("dashboard API boundary", () => {
         method: "POST",
         body: JSON.stringify({ confirmation: "START LIVE STRATEGY" }),
       }),
+    );
+  });
+
+  it("routes Pin, Archive, Restore, archived listing, and safe deletion readiness", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse({ instance_id: "strategy-1", is_pinned: true }))
+      .mockResolvedValueOnce(jsonResponse({ instance_id: "strategy-1", archived_at: "2026-07-21T15:00:00Z" }))
+      .mockResolvedValueOnce(jsonResponse({
+        instance_id: "strategy-1",
+        can_delete: false,
+        must_archive: true,
+        reason_codes: ["run_history_present"],
+        messages: { run_history_present: "Strategy Run history must be preserved." },
+      }))
+      .mockResolvedValueOnce(jsonResponse({ instance_id: "strategy-1", archived_at: null }));
+
+    await loadArchivedStrategies();
+    await setStrategyPinned("strategy-1", true);
+    await archiveStrategy("strategy-1", "Finished experiment");
+    const readiness = await loadStrategyDeletionReadiness("strategy-1");
+    await restoreStrategy("strategy-1");
+
+    expect(readiness.must_archive).toBe(true);
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/v1/strategies/archived", expect.any(Object));
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/v1/strategies/strategy-1/pin",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/v1/strategies/strategy-1/archive",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ reason: "Finished experiment" }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
+      "/v1/strategies/strategy-1/deletion-readiness",
+      expect.any(Object),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      5,
+      "/v1/strategies/strategy-1/restore",
+      expect.objectContaining({ method: "POST" }),
     );
   });
 

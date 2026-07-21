@@ -34,6 +34,7 @@ import type {
   RuntimeState,
   StrategyConfigurationVersion,
   StrategyDecision,
+  StrategyDeletionReadiness,
   StrategyInstance,
   StrategyInstanceCreate,
   StrategyInstanceFromTemplateCreate,
@@ -414,6 +415,52 @@ export function createStrategy(
     method: "POST",
     body: JSON.stringify(strategy),
   });
+}
+
+export function loadArchivedStrategies(
+  signal?: AbortSignal,
+): Promise<StrategyInstance[]> {
+  return request<StrategyInstance[]>("/v1/strategies/archived", { signal });
+}
+
+export function setStrategyPinned(
+  instanceId: string,
+  pinned: boolean,
+): Promise<StrategyInstance> {
+  return request<StrategyInstance>(
+    `/v1/strategies/${encodeURIComponent(instanceId)}/${pinned ? "pin" : "unpin"}`,
+    { method: "POST" },
+  );
+}
+
+export function archiveStrategy(
+  instanceId: string,
+  reason = "",
+): Promise<StrategyInstance> {
+  return request<StrategyInstance>(
+    `/v1/strategies/${encodeURIComponent(instanceId)}/archive`,
+    {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    },
+  );
+}
+
+export function restoreStrategy(instanceId: string): Promise<StrategyInstance> {
+  return request<StrategyInstance>(
+    `/v1/strategies/${encodeURIComponent(instanceId)}/restore`,
+    { method: "POST" },
+  );
+}
+
+export function loadStrategyDeletionReadiness(
+  instanceId: string,
+  signal?: AbortSignal,
+): Promise<StrategyDeletionReadiness> {
+  return request<StrategyDeletionReadiness>(
+    `/v1/strategies/${encodeURIComponent(instanceId)}/deletion-readiness`,
+    { signal },
+  );
 }
 
 export function updateStrategy(

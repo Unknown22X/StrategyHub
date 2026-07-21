@@ -66,13 +66,16 @@ def test_strategy_instances_persist_and_enforce_lifecycle_conflicts(tmp_path) ->
         )
         stopped_second = client.post(f"/v1/strategies/{second['instance_id']}/stop")
         deleted_second = client.delete(f"/v1/strategies/{second['instance_id']}")
+        archived_second = client.post(f"/v1/strategies/{second['instance_id']}/archive")
 
         assert paused.json()["status"] == "paused"
         assert updated.status_code == 200
         assert updated.json()["name"] == "BTC Range Updated"
         assert updated.json()["timeframe_minutes"] == 60
         assert stopped_second.json()["status"] == "stopped"
-        assert deleted_second.status_code == 204
+        assert deleted_second.status_code == 409
+        assert archived_second.status_code == 200
+        assert archived_second.json()["archived_at"] is not None
 
     with TestClient(create_app(database_url)) as restarted_client:
         restored = restarted_client.get("/v1/strategies")

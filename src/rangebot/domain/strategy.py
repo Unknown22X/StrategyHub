@@ -143,6 +143,12 @@ class StrategyInstanceDuplicate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
 
 
+class StrategyArchiveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(default="", max_length=500)
+
+
 class StrategyInstance(StrategyInstanceCreate):
     """Committed saved strategy instance returned by the engine."""
 
@@ -154,9 +160,24 @@ class StrategyInstance(StrategyInstanceCreate):
     preset_id: str | None = Field(default=None, max_length=64)
     preset_revision: int | None = Field(default=None, ge=1)
     status: StrategyLifecycle
+    is_pinned: bool = False
+    archived_at: datetime | None = None
+    archive_reason: str | None = None
     created_at: datetime
     updated_at: datetime
     revision: int = Field(ge=1)
+
+
+class StrategyDeletionReadiness(BaseModel):
+    """Explain whether permanent deletion is safe or archival is required."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    instance_id: str
+    can_delete: bool
+    must_archive: bool
+    reason_codes: tuple[str, ...] = ()
+    messages: dict[str, str] = Field(default_factory=dict)
 
 
 class StrategyOverviewItem(StrategyInstance):

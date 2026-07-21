@@ -8,7 +8,7 @@ import json
 from threading import RLock
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, Integer, Numeric, String, Text, select
+from sqlalchemy import Boolean, DateTime, Integer, Numeric, String, Text, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
@@ -18,6 +18,7 @@ from rangebot.domain.strategy import (
     StrategyConfigurationVersion,
     StrategyDecision,
     StrategyDecisionCreate,
+    StrategyDeletionReadiness,
     StrategyInstance,
     StrategyInstanceCreate,
     StrategyInstanceDuplicate,
@@ -51,6 +52,9 @@ class StrategyInstanceRecord(StrategyInstanceBase):
     requested_leverage: Mapped[int] = mapped_column(Integer, nullable=False)
     configuration_json: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
+    is_pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    archive_reason: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
@@ -153,12 +157,27 @@ class StrategyInstanceRepository:
         self._database_engine = database_engine
         self._lock = RLock()
 
-    def list(self) -> list[StrategyInstance]:
+    def list(self, *, include_archived: bool = False) -> list[StrategyInstance]:
+        with Session(self._database_engine) as session:
+            statement = select(StrategyInstanceRecord)
+            if not include_archived:
+                statement = statement.where(
+                    StrategyInstanceRecord.archived_at.is_(None)
+                )
+            records = session.scalars(
+                statement.order_by(
+                    StrategyInstanceRecord.is_pinned.desc(),
+                    StrategyInstanceRecord.created_at,
+                )
+            )
+            return [self._to_domain(record) for record in records]
+
+    def archived(self) -> list[StrategyInstance]:
         with Session(self._database_engine) as session:
             records = session.scalars(
-                select(StrategyInstanceRecord).order_by(
-                    StrategyInstanceRecord.created_at
-                )
+                select(StrategyInstanceRecord)
+                .where(StrategyInstanceRecord.archived_at.is_not(None))
+                .order_by(StrategyInstanceRecord.archived_at.desc())
             )
             return [self._to_domain(record) for record in records]
 
@@ -192,6 +211,9 @@ class StrategyInstanceRepository:
             requested_leverage=change.requested_leverage,
             configuration_json=configuration_json,
             status="stopped",
+            is_pinned=False,
+            archived_at=None,
+            archive_reason=None,
             created_at=now,
             updated_at=now,
             revision=1,
@@ -241,6 +263,8 @@ class StrategyInstanceRepository:
     ) -> StrategyInstance:
         with self._lock, Session(self._database_engine) as session:
             record = self._instance(session, instance_id)
+            if record.archived_at is not None:
+                raise RuntimeError("Restore an archived Strategy before editing it.")
             if record.status not in {"stopped", "paused"}:
                 raise RuntimeError("Running or monitoring strategies cannot be edited.")
             values = change.model_dump(exclude_none=True)
@@ -268,19 +292,82 @@ class StrategyInstanceRepository:
     def delete(self, instance_id: str) -> None:
         with self._lock, Session(self._database_engine) as session:
             record = self._instance(session, instance_id)
-            if record.status != "stopped":
-                raise RuntimeError("Only a stopped strategy can be deleted.")
-            owned_trade = session.scalar(
-                select(TradeOwnershipRecord).where(
-                    TradeOwnershipRecord.instance_id == instance_id
-                )
-            )
-            if owned_trade is not None:
+            reasons = self._deletion_reason_codes(session, record)
+            if reasons:
                 raise RuntimeError(
-                    "A strategy with recorded order or position ownership cannot be deleted."
+                    "This Strategy contains runtime, trading, Backtest, deployment, or audit history. Archive it instead."
                 )
+            for version in session.scalars(
+                select(StrategyConfigurationVersionRecord).where(
+                    StrategyConfigurationVersionRecord.instance_id == instance_id
+                )
+            ):
+                session.delete(version)
             session.delete(record)
             session.commit()
+
+    def deletion_readiness(self, instance_id: str) -> StrategyDeletionReadiness:
+        with Session(self._database_engine) as session:
+            record = self._instance(session, instance_id)
+            reasons = self._deletion_reason_codes(session, record)
+        messages = {
+            "strategy_not_stopped": "Stop the Strategy before deleting or archiving it.",
+            "run_history_present": "Strategy Run history must be preserved.",
+            "decision_history_present": "Signal decision history must be preserved.",
+            "ownership_history_present": "Order or Position ownership history must be preserved.",
+            "trade_history_present": "Trade history must be preserved.",
+            "deployment_history_present": "Bot Deployment history must be preserved.",
+            "setup_history_present": "Coin Setup history references this Strategy.",
+            "backtest_history_present": "A Backtest created this Strategy.",
+        }
+        return StrategyDeletionReadiness(
+            instance_id=instance_id,
+            can_delete=not reasons,
+            must_archive=bool(reasons),
+            reason_codes=tuple(reasons),
+            messages={code: messages[code] for code in reasons},
+        )
+
+    def set_pinned(self, instance_id: str, pinned: bool) -> StrategyInstance:
+        with self._lock, Session(self._database_engine) as session:
+            record = self._instance(session, instance_id)
+            if record.archived_at is not None:
+                raise RuntimeError("Archived Strategies cannot be pinned.")
+            record.is_pinned = pinned
+            record.updated_at = datetime.now(UTC)
+            record.revision += 1
+            session.commit()
+            session.refresh(record)
+            return self._to_domain(record)
+
+    def archive(self, instance_id: str, reason: str = "") -> StrategyInstance:
+        with self._lock, Session(self._database_engine) as session:
+            record = self._instance(session, instance_id)
+            if record.status != "stopped":
+                raise RuntimeError("Stop the Strategy before archiving it.")
+            if record.archived_at is None:
+                now = datetime.now(UTC)
+                record.archived_at = now
+                record.archive_reason = reason.strip()[:500] or None
+                record.is_pinned = False
+                record.updated_at = now
+                record.revision += 1
+                session.commit()
+                session.refresh(record)
+            return self._to_domain(record)
+
+    def restore(self, instance_id: str) -> StrategyInstance:
+        with self._lock, Session(self._database_engine) as session:
+            record = self._instance(session, instance_id)
+            if record.archived_at is not None:
+                record.archived_at = None
+                record.archive_reason = None
+                record.status = "stopped"
+                record.updated_at = datetime.now(UTC)
+                record.revision += 1
+                session.commit()
+                session.refresh(record)
+            return self._to_domain(record)
 
     def transition(
         self,
@@ -291,6 +378,8 @@ class StrategyInstanceRepository:
     ) -> StrategyInstance:
         with self._lock, Session(self._database_engine) as session:
             record = self._instance(session, instance_id)
+            if record.archived_at is not None and target != "stopped":
+                raise RuntimeError("Restore an archived Strategy before starting it.")
             if target == record.status:
                 return self._to_domain(record)
             if target not in _ALLOWED_TRANSITIONS.get(record.status, set()):
@@ -632,6 +721,68 @@ class StrategyInstanceRepository:
             "configuration_revision": configuration_revision,
         }
 
+    @staticmethod
+    def _deletion_reason_codes(
+        session: Session,
+        record: StrategyInstanceRecord,
+    ) -> list[str]:
+        reasons: list[str] = []
+        instance_id = record.instance_id
+        if record.status != "stopped":
+            reasons.append("strategy_not_stopped")
+        if (
+            session.scalar(
+                select(StrategyRunRecord.run_id)
+                .where(StrategyRunRecord.instance_id == instance_id)
+                .limit(1)
+            )
+            is not None
+        ):
+            reasons.append("run_history_present")
+        if (
+            session.scalar(
+                select(StrategyDecisionRecord.decision_id)
+                .where(StrategyDecisionRecord.instance_id == instance_id)
+                .limit(1)
+            )
+            is not None
+        ):
+            reasons.append("decision_history_present")
+        if (
+            session.scalar(
+                select(TradeOwnershipRecord.ownership_id)
+                .where(TradeOwnershipRecord.instance_id == instance_id)
+                .limit(1)
+            )
+            is not None
+        ):
+            reasons.append("ownership_history_present")
+        raw_checks = (
+            (
+                "trade_history_present",
+                "SELECT 1 FROM trade_fill WHERE instance_id = :id LIMIT 1",
+            ),
+            (
+                "deployment_history_present",
+                "SELECT 1 FROM bot_deployment WHERE runtime_instance_id = :id LIMIT 1",
+            ),
+            (
+                "setup_history_present",
+                "SELECT 1 FROM strategy_coin_setup WHERE runtime_instance_id = :id LIMIT 1",
+            ),
+            (
+                "backtest_history_present",
+                "SELECT 1 FROM backtest_strategy_application WHERE instance_id = :id LIMIT 1",
+            ),
+        )
+        for code, statement in raw_checks:
+            if (
+                session.execute(text(statement), {"id": instance_id}).first()
+                is not None
+            ):
+                reasons.append(code)
+        return reasons
+
     def _finish_active_run(
         self,
         session: Session,
@@ -679,6 +830,11 @@ class StrategyInstanceRepository:
             requested_leverage=record.requested_leverage,
             configuration=json.loads(record.configuration_json),
             status=record.status,
+            is_pinned=record.is_pinned,
+            archived_at=(
+                cls._with_utc(record.archived_at) if record.archived_at else None
+            ),
+            archive_reason=record.archive_reason,
             created_at=cls._with_utc(record.created_at),
             updated_at=cls._with_utc(record.updated_at),
             revision=record.revision,

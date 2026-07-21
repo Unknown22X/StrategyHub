@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 
 import {
+  archiveStrategy,
   deleteStrategy,
   duplicateStrategy,
   loadStrategyConfigurationVersions,
   loadStrategyDecisions,
+  loadStrategyDeletionReadiness,
   loadStrategyRuns,
   loadStrategyStartReadiness,
   loadTradeHistory,
   loadTradeHistorySummary,
+  setStrategyPinned,
   transitionStrategy,
   updateStrategy,
 } from "../api";
@@ -26,6 +29,7 @@ import type {
   RemoteData,
   StrategyConfigurationVersion,
   StrategyDecision,
+  StrategyDeletionReadiness,
   StrategyInstance,
   StrategyRun,
   StrategyStartReadiness,
@@ -70,6 +74,7 @@ export function StrategyDetailPage({
   const [decisions, setDecisions] = useState<RemoteData<StrategyDecision[]>>({ status: "loading" });
   const [runs, setRuns] = useState<RemoteData<StrategyRun[]>>({ status: "loading" });
   const [startReadiness, setStartReadiness] = useState<RemoteData<StrategyStartReadiness>>({ status: "loading" });
+  const [deletionReadiness, setDeletionReadiness] = useState<RemoteData<StrategyDeletionReadiness>>({ status: "loading" });
   const [versions, setVersions] = useState<RemoteData<StrategyConfigurationVersion[]>>({ status: "loading" });
   const [tradeSummary, setTradeSummary] = useState<RemoteData<TradeHistorySummary>>({ status: "loading" });
   const [tradeFills, setTradeFills] = useState<RemoteData<TradeFill[]>>({ status: "loading" });
@@ -83,6 +88,7 @@ export function StrategyDetailPage({
   const [configuration, setConfiguration] = useState<Record<string, JsonValue>>(strategy.configuration);
 
   const canEdit = strategy.status === "stopped" || strategy.status === "paused";
+  const deletionState = deletionReadiness.status === "ready" ? deletionReadiness.data : null;
   const latestDecision = decisions.status === "ready" ? decisions.data[0] ?? null : null;
   const activeRun = runs.status === "ready" ? runs.data.find((run) => run.status === "active") ?? null : null;
   const runDuration = activeRun
@@ -121,6 +127,7 @@ export function StrategyDetailPage({
     setDecisions({ status: "loading" });
     setRuns({ status: "loading" });
     setStartReadiness({ status: "loading" });
+    setDeletionReadiness({ status: "loading" });
     setVersions({ status: "loading" });
     setTradeSummary({ status: "loading" });
     setTradeFills({ status: "loading" });
@@ -128,14 +135,16 @@ export function StrategyDetailPage({
       loadStrategyDecisions(strategy.instance_id, controller.signal),
       loadStrategyRuns(strategy.instance_id, controller.signal),
       loadStrategyStartReadiness(strategy.instance_id, controller.signal),
+      loadStrategyDeletionReadiness(strategy.instance_id, controller.signal),
       loadStrategyConfigurationVersions(strategy.instance_id, controller.signal),
       loadTradeHistorySummary({ instanceId: strategy.instance_id }, controller.signal),
       loadTradeHistory({ instanceId: strategy.instance_id, limit: 20 }, controller.signal),
     ])
-      .then(([decisionData, runData, readinessData, versionData, summaryData, fillData]) => {
+      .then(([decisionData, runData, readinessData, deletionData, versionData, summaryData, fillData]) => {
         setDecisions({ status: "ready", data: decisionData });
         setRuns({ status: "ready", data: runData });
         setStartReadiness({ status: "ready", data: readinessData });
+        setDeletionReadiness({ status: "ready", data: deletionData });
         setVersions({ status: "ready", data: versionData });
         setTradeSummary({ status: "ready", data: summaryData });
         setTradeFills({ status: "ready", data: fillData });
@@ -148,6 +157,7 @@ export function StrategyDetailPage({
         setDecisions({ status: "error", message });
         setRuns({ status: "error", message });
         setStartReadiness({ status: "error", message });
+        setDeletionReadiness({ status: "error", message });
         setVersions({ status: "error", message });
         setTradeSummary({ status: "error", message });
         setTradeFills({ status: "error", message });
@@ -246,13 +256,60 @@ export function StrategyDetailPage({
     }
   }
 
-  async function handleDelete() {
-    const confirmed = window.confirm(
-      `حذف «${strategy.name}»؟ يرفض المحرك الحذف إذا كانت الاستراتيجية نشطة أو تملك أمراً أو مركزاً مسجلاً.`,
-    );
-    if (!confirmed) {
+  async function handlePin() {
+    setBusy("pin");
+    setFeedback(null);
+    try {
+      const updated = await setStrategyPinned(strategy.instance_id, !strategy.is_pinned);
+      onChanged(updated);
+      setFeedback({
+        tone: "success",
+        message: updated.is_pinned ? "أضيفت Strategy إلى الاختصارات." : "أزيلت Strategy من الاختصارات.",
+      });
+    } catch (error) {
+      setFeedback({
+        tone: "error",
+        message: error instanceof Error ? error.message : "تعذر تغيير Pin state.",
+      });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleArchive() {
+    if (strategy.status !== "stopped") {
+      setFeedback({ tone: "warning", message: "أوقف Strategy قبل Archive." });
       return;
     }
+    const reason = window.prompt("سبب Archive (اختياري)", "") ?? null;
+    if (reason === null) return;
+    if (!window.confirm(`Archive «${strategy.name}»؟ ستبقى history وTrades محفوظة ويمكن Restore لاحقاً.`)) return;
+    setBusy("archive");
+    setFeedback(null);
+    try {
+      await archiveStrategy(strategy.instance_id, reason);
+      onDeleted(strategy.instance_id);
+    } catch (error) {
+      setFeedback({
+        tone: "error",
+        message: error instanceof Error ? error.message : "تعذر Archive Strategy.",
+      });
+      setBusy(null);
+    }
+  }
+
+  async function handleDelete() {
+    if (!deletionState?.can_delete) {
+      setFeedback({
+        tone: "warning",
+        message: "الحذف النهائي غير متاح لأن هذه Strategy تحتوي على history. استخدم Archive بدلاً منه.",
+      });
+      return;
+    }
+    const confirmed = window.confirm(
+      `حذف «${strategy.name}» نهائياً؟ هذه Strategy غير مستخدمة، ولا يمكن التراجع عن الحذف.`,
+    );
+    if (!confirmed) return;
     setBusy("delete");
     setFeedback(null);
     try {
@@ -261,7 +318,7 @@ export function StrategyDetailPage({
     } catch (error) {
       setFeedback({
         tone: "error",
-        message: error instanceof Error ? error.message : "تعذر حذف الاستراتيجية.",
+        message: error instanceof Error ? error.message : "تعذر حذف Strategy.",
       });
       setBusy(null);
     }
@@ -292,6 +349,28 @@ export function StrategyDetailPage({
             <button className="secondary-button" type="button" disabled={busy !== null} onClick={onOpenDiscovery}>
               <Icon name="activity" />
               فحص السوق واختبار العملات
+            </button>
+          )}
+          <button className="secondary-button" type="button" disabled={busy !== null} onClick={() => void handlePin()}>
+            <Icon name="strategy" />
+            {strategy.is_pinned ? "Unpin" : "Pin"}
+          </button>
+          {strategy.status === "stopped" && (
+            <button className="secondary-button" type="button" disabled={busy !== null} onClick={() => void handleArchive()}>
+              <Icon name="archive" />
+              Archive
+            </button>
+          )}
+          {strategy.status === "stopped" && (
+            <button
+              className="danger-button"
+              type="button"
+              disabled={busy !== null || !deletionState?.can_delete}
+              title={!deletionState?.can_delete ? "تحتوي Strategy على history؛ استخدم Archive." : undefined}
+              onClick={() => void handleDelete()}
+            >
+              <Icon name="x" />
+              Delete
             </button>
           )}
           {(strategy.status === "stopped" || strategy.status === "paused") && (
@@ -494,9 +573,15 @@ export function StrategyDetailPage({
               <Icon name="plus" />
               {busy === "duplicate" ? "جارٍ النسخ…" : "نسخ الاستراتيجية"}
             </button>
-            <button className="danger-button" type="button" disabled={busy !== null || strategy.status !== "stopped"} onClick={() => void handleDelete()}>
+            <button
+              className="danger-button"
+              type="button"
+              disabled={busy !== null || strategy.status !== "stopped" || !deletionState?.can_delete}
+              title={!deletionState?.can_delete ? "الحذف النهائي غير متاح بسبب history؛ استخدم Archive." : undefined}
+              onClick={() => void handleDelete()}
+            >
               <Icon name="x" />
-              {busy === "delete" ? "جارٍ الحذف…" : "حذف الاستراتيجية"}
+              {busy === "delete" ? "جارٍ الحذف…" : "Delete permanently"}
             </button>
           </div>
         </section>

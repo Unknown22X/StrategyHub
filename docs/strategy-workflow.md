@@ -48,6 +48,20 @@ optionally, one Preset revision. The Instance stores `template_id`,
 configuration. Existing Instance IDs, runs, decisions, Trades, ownership, and
 deployments remain unchanged by migration `0033_strategy_template_preset_lineage`.
 
+Instances have an explicit user lifecycle:
+
+- Pin adds a fast sidebar shortcut without starting the Strategy. A pinned stopped
+  Instance is neutral/gray, Running is green, Monitoring/Paused is amber, and Error
+  is red; each state also includes a text label.
+- Archive requires a stopped Instance, clears Pin, preserves every Run, decision,
+  Order/Position ownership record, Trade, Backtest, deployment, and audit reference,
+  and moves the Instance to the dedicated Archived Strategies page.
+- Restore returns an archived Instance as stopped.
+- Permanent delete is available only when the Instance has never created runtime,
+  trading, Backtest, deployment, or ownership history. Used Instances must remain
+  archived. Migration `0035_strategy_instance_lifecycle` adds these fields without
+  changing existing IDs or revisions.
+
 ### Strategy Coin Setup
 
 A configured use of one user Preset revision, backed by its compatible immutable

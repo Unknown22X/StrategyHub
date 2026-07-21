@@ -143,8 +143,10 @@ from rangebot.domain.runtime import RuntimeState
 from rangebot.domain.trades import TradeFill, TradeFillCreate, TradeHistorySummary
 from rangebot.domain.strategy import (
     BuiltInStrategyTemplate,
+    StrategyArchiveRequest,
     StrategyConfigurationVersion,
     StrategyDecision,
+    StrategyDeletionReadiness,
     StrategyInstance,
     StrategyInstanceCreate,
     StrategyInstanceDuplicate,
@@ -3224,8 +3226,12 @@ def create_app(
             raise _workflow_http_exception(error) from error
 
     @app.get("/v1/strategies", response_model=list[StrategyInstance])
-    def strategy_instances() -> list[StrategyInstance]:
-        return strategy_instance_repository.list()
+    def strategy_instances(include_archived: bool = False) -> list[StrategyInstance]:
+        return strategy_instance_repository.list(include_archived=include_archived)
+
+    @app.get("/v1/strategies/archived", response_model=list[StrategyInstance])
+    def archived_strategy_instances() -> list[StrategyInstance]:
+        return strategy_instance_repository.archived()
 
     @app.get("/v1/strategies/overview", response_model=list[StrategyOverviewItem])
     def strategy_overview() -> list[StrategyOverviewItem]:
@@ -3285,6 +3291,62 @@ def create_app(
             duplicated = strategy_instance_repository.duplicate(instance_id, change)
             _sync_market_subscriptions()
             return duplicated
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.post("/v1/strategies/{instance_id}/pin", response_model=StrategyInstance)
+    def pin_strategy_instance(instance_id: str) -> StrategyInstance:
+        try:
+            return strategy_instance_repository.set_pinned(instance_id, True)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except RuntimeError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.post("/v1/strategies/{instance_id}/unpin", response_model=StrategyInstance)
+    def unpin_strategy_instance(instance_id: str) -> StrategyInstance:
+        try:
+            return strategy_instance_repository.set_pinned(instance_id, False)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except RuntimeError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.post("/v1/strategies/{instance_id}/archive", response_model=StrategyInstance)
+    def archive_strategy_instance(
+        instance_id: str,
+        request: StrategyArchiveRequest | None = None,
+    ) -> StrategyInstance:
+        try:
+            archived = strategy_instance_repository.archive(
+                instance_id,
+                request.reason if request is not None else "",
+            )
+            _sync_market_subscriptions()
+            return archived
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except RuntimeError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.post("/v1/strategies/{instance_id}/restore", response_model=StrategyInstance)
+    def restore_strategy_instance(instance_id: str) -> StrategyInstance:
+        try:
+            restored = strategy_instance_repository.restore(instance_id)
+            _sync_market_subscriptions()
+            return restored
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.get(
+        "/v1/strategies/{instance_id}/deletion-readiness",
+        response_model=StrategyDeletionReadiness,
+    )
+    def strategy_deletion_readiness(
+        instance_id: str,
+    ) -> StrategyDeletionReadiness:
+        try:
+            return strategy_instance_repository.deletion_readiness(instance_id)
         except LookupError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 

@@ -9,6 +9,7 @@ import {
   switchRuntimeEnvironment,
   transitionStrategy,
 } from "./api";
+import { ArchivedStrategiesPage } from "./components/ArchivedStrategiesPage";
 import { DashboardCustomizeDrawer } from "./components/DashboardCustomizeDrawer";
 import { DashboardFilterBar } from "./components/DashboardFilterBar";
 import { DiscoveryLabPage } from "./components/DiscoveryLabPage";
@@ -83,6 +84,7 @@ const initialDecisions: RemoteData<StrategyDecision[]> = { status: "loading" };
 type AppView =
   | "dashboard"
   | "strategies"
+  | "archived-strategies"
   | "setup"
   | "opportunities"
   | "backtesting"
@@ -455,9 +457,16 @@ export default function App() {
       <Sidebar
         collapsed={sidebarCollapsed}
         currentView={currentView}
+        strategies={strategies}
+        selectedStrategyId={selectedStrategyId}
         onOpenConnection={() => setConnectionOpen(true)}
         onOpenDashboard={() => setCurrentView("dashboard")}
         onOpenStrategies={() => setCurrentView("strategies")}
+        onOpenArchivedStrategies={() => setCurrentView("archived-strategies")}
+        onOpenStrategy={(instanceId) => {
+          setSelectedStrategyId(instanceId);
+          setCurrentView("strategy");
+        }}
         onOpenOpportunities={() => setCurrentView("opportunities")}
         onOpenBacktesting={() => setCurrentView("backtesting")}
         onOpenTrading={() => setCurrentView("trading")}
@@ -496,7 +505,16 @@ export default function App() {
           </div>
         )}
 
-        {currentView === "strategies" ? (
+        {currentView === "archived-strategies" ? (
+          <ArchivedStrategiesPage
+            onRestored={(strategy) => {
+              setSelectedStrategyId(strategy.instance_id);
+              setCurrentView("strategy");
+              void refresh();
+            }}
+            onDeleted={(instanceId) => void handleStrategyDeleted(instanceId)}
+          />
+        ) : currentView === "strategies" ? (
           <StrategiesPage
             strategyTypes={strategyTypes}
             onOpenSetup={(setupId) => {
@@ -672,9 +690,13 @@ export default function App() {
 interface SidebarProps {
   collapsed: boolean;
   currentView: AppView;
+  strategies: StrategyInstance[];
+  selectedStrategyId: string | null;
   onOpenConnection: () => void;
   onOpenDashboard: () => void;
   onOpenStrategies: () => void;
+  onOpenArchivedStrategies: () => void;
+  onOpenStrategy: (instanceId: string) => void;
   onOpenOpportunities: () => void;
   onOpenBacktesting: () => void;
   onOpenTrading: () => void;
@@ -688,9 +710,13 @@ interface SidebarProps {
 function Sidebar({
   collapsed,
   currentView,
+  strategies,
+  selectedStrategyId,
   onOpenConnection,
   onOpenDashboard,
   onOpenStrategies,
+  onOpenArchivedStrategies,
+  onOpenStrategy,
   onOpenOpportunities,
   onOpenBacktesting,
   onOpenTrading,
@@ -700,6 +726,10 @@ function Sidebar({
   onOpenTrades,
   onToggle,
 }: SidebarProps) {
+  const shortcutStrategies = strategies.filter(
+    (strategy) => strategy.is_pinned || ["running", "monitoring", "paused", "error"].includes(strategy.status),
+  );
+
   return (
     <aside className="sidebar" aria-label="التنقل الرئيسي">
       <div className="brand-row">
@@ -718,11 +748,29 @@ function Sidebar({
       <nav className="sidebar-nav">
         <SidebarLink icon="grid" label="الرئيسية" active={currentView === "dashboard"} collapsed={collapsed} onClick={onOpenDashboard} />
         <SidebarLink icon="strategy" label="الاستراتيجيات" active={["strategies", "setup"].includes(currentView)} collapsed={collapsed} onClick={onOpenStrategies} />
+        <SidebarLink icon="archive" label="Archived Strategies" active={currentView === "archived-strategies"} collapsed={collapsed} onClick={onOpenArchivedStrategies} />
         <SidebarLink icon="activity" label="الفرص" active={currentView === "opportunities"} collapsed={collapsed} onClick={onOpenOpportunities} />
         <SidebarLink icon="chart" label="الاختبار التاريخي" active={currentView === "backtesting"} collapsed={collapsed} onClick={onOpenBacktesting} />
         <SidebarLink icon="trade" label="التداول" active={currentView === "trading"} collapsed={collapsed} onClick={onOpenTrading} />
         <SidebarLink icon="chart" label="الأداء" active={currentView === "performance"} collapsed={collapsed} onClick={onOpenPerformance} />
       </nav>
+
+      {shortcutStrategies.length > 0 && (
+        <div className="sidebar-section sidebar-strategy-section">
+          {!collapsed && <span className="sidebar-section-title">Strategy shortcuts</span>}
+          <div className="sidebar-strategy-list">
+            {shortcutStrategies.map((strategy) => (
+              <SidebarStrategyLink
+                key={strategy.instance_id}
+                strategy={strategy}
+                active={currentView === "strategy" && selectedStrategyId === strategy.instance_id}
+                collapsed={collapsed}
+                onClick={() => onOpenStrategy(strategy.instance_id)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="sidebar-section">
         {!collapsed && <span className="sidebar-section-title">أدوات التشغيل</span>}
@@ -752,6 +800,49 @@ function Sidebar({
       </div>
     </aside>
   );
+}
+
+function SidebarStrategyLink({
+  strategy,
+  active,
+  collapsed,
+  onClick,
+}: {
+  strategy: StrategyInstance;
+  active: boolean;
+  collapsed: boolean;
+  onClick: () => void;
+}) {
+  const state = sidebarStrategyState(strategy);
+  const label = `${strategy.name} — ${state.label}`;
+  return (
+    <button
+      className={active ? "sidebar-strategy-link active" : "sidebar-strategy-link"}
+      type="button"
+      title={label}
+      onClick={onClick}
+    >
+      <span className={`strategy-state-dot state-${state.kind}`} aria-hidden="true" />
+      {!collapsed && (
+        <span className="sidebar-strategy-copy">
+          <strong>{strategy.name}</strong>
+          <small>{state.label}</small>
+        </span>
+      )}
+      <span className="visually-hidden">{state.label}</span>
+    </button>
+  );
+}
+
+function sidebarStrategyState(strategy: StrategyInstance): {
+  kind: "running" | "pinned" | "paused" | "error";
+  label: string;
+} {
+  if (strategy.status === "running") return { kind: "running", label: "Running" };
+  if (strategy.status === "error") return { kind: "error", label: "Error" };
+  if (strategy.status === "monitoring") return { kind: "paused", label: "Monitoring" };
+  if (strategy.status === "paused") return { kind: "paused", label: "Paused" };
+  return { kind: "pinned", label: "Pinned · Stopped" };
 }
 
 function SidebarLink({

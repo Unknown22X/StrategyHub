@@ -750,6 +750,14 @@ export interface StrategyStartReadiness {
   messages_ar: Record<string, string>;
 }
 
+export interface StrategyDeletionReadiness {
+  instance_id: string;
+  can_delete: boolean;
+  must_archive: boolean;
+  reason_codes: string[];
+  messages: Record<string, string>;
+}
+
 export interface StrategyInstance {
   type_id: string;
   template_id: string;
@@ -766,6 +774,9 @@ export interface StrategyInstance {
   configuration: Record<string, JsonValue>;
   instance_id: string;
   status: StrategyStatus;
+  is_pinned: boolean;
+  archived_at: string | null;
+  archive_reason: string | null;
   created_at: string;
   updated_at: string;
   revision: number;
