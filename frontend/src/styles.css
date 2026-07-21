@@ -3728,6 +3728,39 @@ tbody tr:hover {
   gap: 16px;
 }
 
+.opportunity-toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.opportunity-review-panel {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.opportunity-instance-builder {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+}
+
+.opportunity-instance-builder > small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+}
+
+.opportunity-factor-list {
+  color: var(--text);
+}
+
 .workflow-template-card,
 .opportunity-card,
 .deployment-card {

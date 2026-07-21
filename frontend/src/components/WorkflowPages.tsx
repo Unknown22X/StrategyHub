@@ -1,7 +1,13 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
-import { listBacktests, listStrategyTypes, loadAccountPerformance, runDiscoveryScan } from "../api";
+import {
+  createStrategyFromTemplate,
+  listBacktests,
+  listStrategyTypes,
+  loadAccountPerformance,
+  runDiscoveryScan,
+} from "../api";
 import {
   approveStrategySetup,
   archiveStrategySetup,
@@ -719,9 +725,11 @@ function GateRow({ done, label }: { done: boolean; label: string }) { return <di
 export function OpportunitiesPage({
   strategyTypes,
   onOpenSetup,
+  onOpenStrategy,
 }: {
   strategyTypes: StrategyTypeMetadata[];
   onOpenSetup: (setupId: string) => void;
+  onOpenStrategy: (instanceId: string) => void;
 }) {
   const { state, refresh } = useWorkflowData();
   const scannable = strategyTypes.filter((item) => item.supports_scanning);
@@ -735,6 +743,9 @@ export function OpportunitiesPage({
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [templateSelection, setTemplateSelection] = useState<Record<string, string>>({});
+  const [instanceTemplateSelection, setInstanceTemplateSelection] = useState<Record<string, string>>({});
+  const [reviewedId, setReviewedId] = useState<string | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
 
   function selectType(nextId: string) {
     const next = scannable.find((item) => item.type_id === nextId);
@@ -764,40 +775,147 @@ export function OpportunitiesPage({
   async function mutate(id: string, task: () => Promise<unknown>, success: string) {
     setBusy(id); setError(null);
     try { await task(); setFeedback(success); await refresh(); }
-    catch (caught) { setError(caught instanceof Error ? caught.message : "تعذر تحديث الفرصة."); }
+    catch (caught) { setError(caught instanceof Error ? caught.message : "تعذر تحديث Opportunity."); }
     finally { setBusy(null); }
+  }
+
+  async function reviewOpportunity(opportunity: StrategyOpportunity) {
+    setReviewedId(opportunity.opportunity_id);
+    if (opportunity.status === "new") {
+      await mutate(
+        opportunity.opportunity_id,
+        () => updateOpportunityStatus(opportunity.opportunity_id, "reviewed"),
+        "Opportunity Review opened and its reviewed state was saved.",
+      );
+    }
+  }
+
+  async function createInstance(opportunity: StrategyOpportunity, selectedTypeId: string) {
+    const selected = strategyTypes.find((item) => item.type_id === selectedTypeId);
+    if (!selected) return;
+    const compatibleTimeframe = selected.supported_timeframes.includes(opportunity.timeframe_minutes)
+      ? opportunity.timeframe_minutes
+      : selected.supported_timeframes[0];
+    const suggestedName = `${selected.display_name_en} · ${opportunity.symbol}`;
+    const name = window.prompt("Strategy Instance name", suggestedName)?.trim();
+    if (!name || !compatibleTimeframe) return;
+    await mutate(
+      opportunity.opportunity_id,
+      async () => {
+        const instance = await createStrategyFromTemplate({
+          template_id: `builtin:${selected.type_id}`,
+          name,
+          environment: "paper",
+          symbol: opportunity.symbol,
+          timeframe_minutes: compatibleTimeframe,
+          direction: opportunity.signal === "long" ? "long" : opportunity.signal === "short" ? "short" : "both",
+          requested_margin: "20",
+          requested_leverage: 1,
+          configuration_overrides: {},
+        });
+        onOpenStrategy(instance.instance_id);
+      },
+      "Paper Strategy Instance created. Trading did not start automatically.",
+    );
   }
 
   return (
     <div className="dashboard-content workflow-page">
-      <PageHeader eyebrow="السوق الحالي فقط" title="الفرص" description="يفحص المحرك عقود Gate.io الحالية ويشرح سبب التأهل. الاختبار التاريخي له صفحة مستقلة." action={<button className="primary-button" type="button" disabled={busy !== null || !metadata} onClick={() => void scan()}><Icon name="activity" />{busy === "scan" ? "جارٍ الفحص…" : "فحص السوق الآن"}</button>} />
+      <PageHeader
+        eyebrow="Current market only"
+        title="Opportunities"
+        description="Scanner results are research leads. Review, shortlist, or ignore them; none of these actions starts trading."
+        action={(
+          <button className="primary-button" type="button" disabled={busy !== null || !metadata} onClick={() => void scan()}>
+            <Icon name="activity" />{busy === "scan" ? "Scanning…" : "Scan market now"}
+          </button>
+        )}
+      />
       <Feedback message={error ?? feedback} error={Boolean(error)} />
       <section className="panel opportunity-scanner-panel">
-        <div className="field-group three-columns"><label className="field"><span>الاستراتيجية</span><select value={typeId} onChange={(event) => selectType(event.target.value)}>{scannable.map((item) => <option key={item.type_id} value={item.type_id}>{item.display_name_ar}</option>)}</select></label><label className="field"><span>الإطار</span><select value={timeframe} onChange={(event) => setTimeframe(Number(event.target.value))}>{metadata?.supported_timeframes.map((value) => <option key={value} value={value}>{timeframeText(value)}</option>)}</select></label><label className="field"><span>أدنى درجة</span><input type="number" min={0} max={100} value={minimumScore} onChange={(event) => setMinimumScore(Number(event.target.value))} /></label></div>
-        <label className="field"><span>أدنى حجم تداول 24 ساعة بالـ USDT</span><input inputMode="decimal" value={minimumVolume} onChange={(event) => setMinimumVolume(event.target.value)} /></label>
+        <div className="field-group three-columns">
+          <label className="field">
+            <span>Scanner Strategy</span>
+            <select value={typeId} onChange={(event) => selectType(event.target.value)}>
+              {strategyTypes.map((item) => (
+                <option key={item.type_id} value={item.type_id} disabled={!item.supports_scanning}>
+                  {item.display_name_en}{item.supports_scanning ? "" : " — scanner unavailable"}
+                </option>
+              ))}
+            </select>
+            <small>Disabled Strategies can still be used after a coin is discovered.</small>
+          </label>
+          <label className="field"><span>Timeframe</span><select value={timeframe} onChange={(event) => setTimeframe(Number(event.target.value))}>{metadata?.supported_timeframes.map((value) => <option key={value} value={value}>{timeframeText(value)}</option>)}</select></label>
+          <label className="field"><span>Minimum score</span><input type="number" min={0} max={100} value={minimumScore} onChange={(event) => setMinimumScore(Number(event.target.value))} /></label>
+        </div>
+        <label className="field"><span>Minimum 24h volume in USDT</span><input inputMode="decimal" value={minimumVolume} onChange={(event) => setMinimumVolume(event.target.value)} /></label>
         {metadata && <StrategyConfigurationFields metadata={metadata} configuration={configuration} onChange={(key, value) => setConfiguration((current) => ({ ...current, [key]: value }))} />}
       </section>
-      <StateView value={state} unavailableLabel="تعذر تحميل الفرص">
-        {(data) => data.opportunities.length === 0 ? <EmptyState title="لا توجد فرص محفوظة" description="شغّل فحص السوق. لا تعرض الصفحة بيانات تجريبية أو أسعاراً مفترضة." /> : (
+      <div className="opportunity-toolbar">
+        <button className="secondary-button" type="button" onClick={() => setShowHistory((value) => !value)}>
+          <Icon name="archive" />{showHistory ? "Hide ignored/history" : "Show ignored/history"}
+        </button>
+      </div>
+      <StateView value={state} unavailableLabel="تعذر تحميل Opportunities">
+        {(data) => data.opportunities.length === 0 ? <EmptyState title="No saved Opportunities" description="Run a market scan. RangeBot does not fabricate candidates or prices." /> : (
           <div className="opportunity-grid">
-            {data.opportunities.map((opportunity) => {
+            {data.opportunities.filter((item) => showHistory || !["ignored", "rejected", "expired"].includes(item.status)).map((opportunity) => {
               const compatible = data.templates.filter((template) => template.type_id === opportunity.strategy_type_id && template.status !== "archived");
               const selectedTemplate = templateSelection[opportunity.opportunity_id] ?? compatible[0]?.template_id ?? "";
+              const selectedInstanceType = instanceTemplateSelection[opportunity.opportunity_id] ?? opportunity.strategy_type_id;
+              const reviewOpen = reviewedId === opportunity.opportunity_id;
               return (
                 <article className="panel opportunity-card" key={opportunity.opportunity_id}>
-                  <header><div><span className="eyebrow">{opportunity.exchange} · {opportunity.market_type}</span><h2 dir="ltr">{opportunity.symbol}</h2><p>{opportunity.explanation_ar}</p></div><div className="opportunity-score"><strong>{opportunity.scanner_score}</strong><span>من 100</span></div></header>
-                  <div className="opportunity-price"><span>السعر عند الفحص</span><strong dir="ltr">{formatDecimal(opportunity.current_price)} {opportunity.quote_currency}</strong><small>{opportunity.price_observed_at ? formatDateTime(opportunity.price_observed_at) : "غير متاح"}</small><StatusPill label={opportunity.price_state === "fresh" ? "حديث" : opportunity.price_state === "delayed" ? "متأخر" : "غير متاح"} tone={opportunity.price_state === "fresh" ? "positive" : "warning"} /></div>
+                  <header><div><span className="eyebrow">{opportunity.exchange} · {opportunity.market_type}</span><h2 dir="ltr">{opportunity.symbol}</h2><p>{opportunity.explanation_ar}</p></div><div className="opportunity-score"><strong>{opportunity.scanner_score}</strong><span>of 100</span></div></header>
+                  <div className="opportunity-price"><span>Observed price</span><strong dir="ltr">{formatDecimal(opportunity.current_price)} {opportunity.quote_currency}</strong><small>{opportunity.price_observed_at ? formatDateTime(opportunity.price_observed_at) : "Unavailable"}</small><StatusPill label={opportunity.price_state} tone={opportunity.price_state === "fresh" ? "positive" : "warning"} /></div>
                   <div className="reason-chips">{opportunity.qualifying_factors.map((factor) => <span key={factor}>{factor}</span>)}</div>
                   {opportunity.warnings.map((warning) => <small className="warning-text" key={warning}>{warning}</small>)}
-                  <div className="workflow-fact-row"><span>{timeframeText(opportunity.timeframe_minutes)}</span><span>{opportunity.signal === "long" ? "شراء" : opportunity.signal === "short" ? "بيع" : "محايد"}</span><span>{opportunityStatusLabel(opportunity.status)}</span><span>تنتهي {formatDateTime(opportunity.expires_at)}</span></div>
+                  <div className="workflow-fact-row"><span>{timeframeText(opportunity.timeframe_minutes)}</span><span>{opportunity.signal}</span><span>{opportunityStatusLabel(opportunity.status)}</span><span>Expires {formatDateTime(opportunity.expires_at)}</span></div>
                   <div className="opportunity-actions">
-                    <button className="secondary-button" type="button" disabled={busy !== null || ["converted", "expired", "rejected"].includes(opportunity.status)} onClick={() => void mutate(opportunity.opportunity_id, () => updateOpportunityStatus(opportunity.opportunity_id, "reviewed"), "تم تعليم الفرصة كمراجعة.")}>مراجعة</button>
-                    <button className="secondary-button" type="button" disabled={busy !== null || ["converted", "expired", "rejected", "ignored"].includes(opportunity.status)} onClick={() => void mutate(opportunity.opportunity_id, () => updateOpportunityStatus(opportunity.opportunity_id, "approved"), "تم قبول الفرصة للمتابعة.")}>قبول</button>
-                    <button className="secondary-button" type="button" disabled={busy !== null || ["converted", "expired"].includes(opportunity.status)} onClick={() => void mutate(opportunity.opportunity_id, () => updateOpportunityStatus(opportunity.opportunity_id, "rejected"), "تم رفض الفرصة مع الاحتفاظ بسجلها.")}>رفض</button>
-                    <button className="secondary-button" type="button" disabled={busy !== null || ["converted", "expired"].includes(opportunity.status)} onClick={() => void mutate(opportunity.opportunity_id, () => updateOpportunityStatus(opportunity.opportunity_id, "ignored"), "تم تجاهل الفرصة مع الاحتفاظ بسجلها.")}>تجاهل</button>
-                    <select value={selectedTemplate} onChange={(event) => setTemplateSelection((current) => ({ ...current, [opportunity.opportunity_id]: event.target.value }))}><option value="">اختر استراتيجية متوافقة</option>{compatible.map((template) => <option key={template.template_id} value={template.template_id}>{template.name}</option>)}</select>
-                    <button className="primary-button" type="button" disabled={busy !== null || !selectedTemplate || ["converted", "expired", "rejected", "ignored"].includes(opportunity.status)} onClick={() => void mutate(opportunity.opportunity_id, async () => { const setup = await convertOpportunity(opportunity.opportunity_id, selectedTemplate); onOpenSetup(setup.setup_id); }, "تم تحويل الفرصة إلى إعداد عملة ينتظر الاختبار.")}><Icon name="plus" /> إضافة للعملة</button>
+                    <button className="secondary-button" type="button" disabled={busy !== null || ["converted", "expired", "rejected"].includes(opportunity.status)} onClick={() => void reviewOpportunity(opportunity)}>Review details</button>
+                    <button className="secondary-button" type="button" disabled={busy !== null || ["converted", "expired", "rejected", "ignored"].includes(opportunity.status)} onClick={() => void mutate(opportunity.opportunity_id, () => updateOpportunityStatus(opportunity.opportunity_id, "approved"), "Opportunity shortlisted only. No Strategy was started.")}>Shortlist</button>
+                    <button className="secondary-button" type="button" disabled={busy !== null || ["converted", "expired"].includes(opportunity.status)} onClick={() => void mutate(opportunity.opportunity_id, () => updateOpportunityStatus(opportunity.opportunity_id, "rejected"), "Opportunity rejected; its audit history remains available.")}>Reject</button>
+                    {opportunity.status === "ignored" ? (
+                      <button className="secondary-button" type="button" disabled={busy !== null} onClick={() => void mutate(opportunity.opportunity_id, () => updateOpportunityStatus(opportunity.opportunity_id, "reviewed"), "Undo complete; Opportunity returned to the active review queue.")}>Undo Ignore</button>
+                    ) : (
+                      <button className="secondary-button" type="button" disabled={busy !== null || ["converted", "expired"].includes(opportunity.status)} onClick={() => void mutate(opportunity.opportunity_id, () => updateOpportunityStatus(opportunity.opportunity_id, "ignored"), "Opportunity hidden from the active queue. Use Show ignored/history to undo.")}>Ignore</button>
+                    )}
+                    <select value={selectedTemplate} onChange={(event) => setTemplateSelection((current) => ({ ...current, [opportunity.opportunity_id]: event.target.value }))}><option value="">Create matching Coin Setup</option>{compatible.map((template) => <option key={template.template_id} value={template.template_id}>{template.name}</option>)}</select>
+                    <button className="primary-button" type="button" disabled={busy !== null || !selectedTemplate || ["converted", "expired", "rejected", "ignored"].includes(opportunity.status)} onClick={() => void mutate(opportunity.opportunity_id, async () => { const setup = await convertOpportunity(opportunity.opportunity_id, selectedTemplate); onOpenSetup(setup.setup_id); }, "Opportunity converted to a Coin Setup. Trading did not start.")}><Icon name="plus" /> Create Coin Setup</button>
                   </div>
+                  {reviewOpen && (
+                    <section className="opportunity-review-panel" aria-label="Opportunity Review">
+                      <div className="panel-header">
+                        <div><h3>Opportunity Review</h3><p>Source scanner: {strategyTypes.find((item) => item.type_id === opportunity.strategy_type_id)?.display_name_en ?? opportunity.strategy_type_id}. Choosing another Strategy below does not change the discovery source.</p></div>
+                        <button className="icon-button" type="button" onClick={() => setReviewedId(null)} aria-label="Close review"><Icon name="x" /></button>
+                      </div>
+                      <div className="detail-facts-grid">
+                        <ReviewFact label="Symbol" value={opportunity.symbol} />
+                        <ReviewFact label="Observed price" value={`${formatDecimal(opportunity.current_price)} ${opportunity.quote_currency}`} />
+                        <ReviewFact label="Price state" value={opportunity.price_state} />
+                        <ReviewFact label="Discovered" value={formatDateTime(opportunity.discovered_at)} />
+                        <ReviewFact label="Expires" value={formatDateTime(opportunity.expires_at)} />
+                        <ReviewFact label="Signal" value={opportunity.signal} />
+                      </div>
+                      <div><strong>Why it qualified</strong><ul className="warning-list opportunity-factor-list">{opportunity.qualifying_factors.map((factor) => <li key={factor}>{factor}</li>)}</ul></div>
+                      {opportunity.warnings.length > 0 && <div className="inline-alert warning-alert"><Icon name="alert" /><span>{opportunity.warnings.join(" · ")}</span></div>}
+                      <div className="opportunity-instance-builder">
+                        <label className="field">
+                          <span>Create Strategy Instance for this coin</span>
+                          <select value={selectedInstanceType} onChange={(event) => setInstanceTemplateSelection((current) => ({ ...current, [opportunity.opportunity_id]: event.target.value }))}>
+                            {strategyTypes.map((item) => {
+                              const timeframeCompatible = item.supported_timeframes.length > 0;
+                              const directionCompatible = opportunity.signal === "none" || item.supported_directions.includes(opportunity.signal) || item.supported_directions.includes("both");
+                              const compatibleInstance = timeframeCompatible && directionCompatible && (item.supports_automatic_trading || item.supports_monitoring);
+                              return <option key={item.type_id} value={item.type_id} disabled={!compatibleInstance}>{item.display_name_en}{compatibleInstance ? "" : " — incompatible"}</option>;
+                            })}
+                          </select>
+                        </label>
+                        <button className="primary-button" type="button" disabled={busy !== null || !selectedInstanceType} onClick={() => void createInstance(opportunity, selectedInstanceType)}><Icon name="plus" /> Create Paper Strategy Instance</button>
+                        <small>This creates a stopped Paper Instance. It does not start trading and does not claim the chosen Strategy discovered the coin.</small>
+                      </div>
+                    </section>
+                  )}
                 </article>
               );
             })}

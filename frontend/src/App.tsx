@@ -538,6 +538,11 @@ export default function App() {
               setSelectedSetupId(setupId);
               setCurrentView("setup");
             }}
+            onOpenStrategy={(instanceId) => {
+              setSelectedStrategyId(instanceId);
+              setCurrentView("strategy");
+              void refresh();
+            }}
           />
         ) : currentView === "backtesting" ? (
           <BacktestingPage
