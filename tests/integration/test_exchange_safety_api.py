@@ -468,7 +468,7 @@ def test_gate_configuration_stays_engine_private_and_redacts_values(
 
     configuration = GateIoConfiguration.from_environment("testnet")
 
-    assert configuration.base_url.startswith("https://fx-api-testnet")
+    assert configuration.base_url == "https://api-testnet.gateapi.io/api/v4"
     assert "do-not-show" not in configuration.redacted_description()
     assert "abc-secret-key" not in configuration.redacted_description()
 
@@ -530,7 +530,7 @@ def test_gate_v4_adapter_signs_mocked_requests_and_refuses_orders_by_default(
     )
 
     assert snapshot.available_futures_balance == 1000
-    assert calls[0][1].startswith("https://fx-api-testnet")
+    assert calls[0][1] == "https://api-testnet.gateapi.io/api/v4/futures/usdt/accounts"
     assert calls[0][3]["KEY"] == "test-key"
     assert len(calls[0][3]["SIGN"]) == 128
     assert blocked.accepted is False

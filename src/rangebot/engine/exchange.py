@@ -842,7 +842,7 @@ class MockGateIoAdapter:
 class GateIoV4Endpoints:
     """Explicit Gate.io endpoints; credentials come from protected runtime storage."""
 
-    testnet_base_url: str = "https://fx-api-testnet.gateio.ws/api/v4"
+    testnet_base_url: str = "https://api-testnet.gateapi.io/api/v4"
     live_base_url: str = "https://api.gateio.ws/api/v4"
 
 
@@ -914,7 +914,7 @@ def configured_gate_adapter(
             key=stored.api_key,
             secret=stored.api_secret,
             base_url=(
-                "https://fx-api-testnet.gateio.ws/api/v4"
+                "https://api-testnet.gateapi.io/api/v4"
                 if mode == "testnet"
                 else "https://api.gateio.ws/api/v4"
             ),
