@@ -1,6 +1,8 @@
-# Building RangeBot for Windows
+# Building StrategyHub for Windows
 
 ## Output
+
+StrategyHub is the public project name. Stable Windows and internal identifiers remain RangeBot during submission finalization.
 
 A successful release build creates:
 
@@ -15,7 +17,7 @@ The installer contains the React dashboard, Python engine, `RangeBot.exe` launch
 Use 64-bit Windows 10/11 or Windows Server with:
 
 - `uv` on `PATH`
-- Node.js `20.19+`, `22.12+`, or `24+`, with `npm` on `PATH`
+- Node.js `20.19+`, `22.12+`, or `24+`, with `npm` on `PATH`; the Build Week release is verified with Node `v22.22.0`
 - Inno Setup 6, including `ISCC.exe`
 - Internet access for Python/npm dependencies and the pinned WinSW binary
 

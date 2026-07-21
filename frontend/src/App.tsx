@@ -588,7 +588,7 @@ export default function App() {
             <header className="page-heading">
               <div>
                 <span className="eyebrow">مركز العمليات واتخاذ القرار</span>
-                <h1>لوحة RangeBot</h1>
+                <h1>StrategyHub</h1>
                 <p>حالة المحرك والحساب والاستراتيجيات والمخاطر من مصادرها الحقيقية.</p>
               </div>
               <div className="heading-actions">
@@ -738,11 +738,11 @@ function Sidebar({
   return (
     <aside className="sidebar" aria-label="التنقل الرئيسي">
       <div className="brand-row">
-        <div className="brand-mark">R</div>
+        <div className="brand-mark">S</div>
         {!collapsed && (
           <div className="brand-copy">
-            <strong>RangeBot</strong>
-            <span>Trading Operations</span>
+            <strong>StrategyHub</strong>
+            <span>Powered by RangeBot</span>
           </div>
         )}
         <button className="icon-button sidebar-toggle" type="button" onClick={onToggle} aria-label="طي القائمة">

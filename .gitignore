@@ -46,6 +46,24 @@ logs/
 # Runtime data
 runtime/
 data/runtime/
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+credentials/
+data/credentials/
+
+# Private key and certificate material
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Coverage output
+.coverage
+.coverage.*
+coverage/
+htmlcov/
 
 # Local output and agent state
 output/
