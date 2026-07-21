@@ -64,6 +64,8 @@ def test_frontend_operations_use_backend_endpoints_and_no_live_lock_contract() -
     assert "exchange_adapter_environment" in types + manual_trade
     assert "LIVE — REAL FUNDS" in environment_selector + manual_trade
     assert "environmentReady" in manual_trade
+    assert "Minimum Quantity" in manual_trade
+    assert "Approx. Minimum Margin" in manual_trade
     assert "/duplicate" in api
     assert "StrategyConfigurationFields" in detail
     assert "loadStrategyRuns" in detail

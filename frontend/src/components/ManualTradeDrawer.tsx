@@ -411,7 +411,9 @@ export function ManualTradeDrawer({
 
             <div className="preview-metrics">
               <Metric label="الكمية المقدرة" value={formatDecimal(preview.estimated_quantity)} />
+              <Metric label="Minimum Quantity" value={formatDecimal(preview.minimum_quantity)} />
               <Metric label="القيمة الاسمية" value={formatMoney(preview.estimated_notional)} />
+              <Metric label="Approx. Minimum Margin" value={formatMoney(preview.approximate_minimum_margin)} />
               <Metric label="الهامش المقدر" value={formatMoney(preview.estimated_margin)} />
               <Metric label="رسوم الفتح" value={formatMoney(preview.estimated_opening_fee)} />
               <Metric label="Take Profit" value={formatDecimal(preview.estimated_take_profit_price)} />

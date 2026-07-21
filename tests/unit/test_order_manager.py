@@ -90,8 +90,10 @@ class Harness:
             contract_rules=lambda symbol, environment: self.rules,
             account_context=self._account_context,
             executor=self._execute,
-            record_ownership=lambda order_id, request_id, environment, request, context: self.ownership.append(
-                (order_id, request_id, environment, request, context)
+            record_ownership=lambda order_id, request_id, environment, request, context: (
+                self.ownership.append(
+                    (order_id, request_id, environment, request, context)
+                )
             ),
         )
 
@@ -140,6 +142,42 @@ def test_market_margin_preview_calculates_authoritative_live_values() -> None:
     assert preview.mark_price == Decimal("64990")
     assert preview.best_bid == Decimal("64999.5")
     assert preview.best_ask == Decimal("65000.5")
+
+
+def test_zero_quantity_preview_is_structured_and_never_reaches_executor() -> None:
+    harness = Harness()
+    request = ManualOrderPreviewRequest(
+        environment="live",
+        symbol="BTC_USDT",
+        direction="long",
+        order_type="market",
+        size_mode="margin",
+        margin_amount=Decimal("0.01"),
+        leverage=1,
+        time_in_force="ioc",
+    )
+
+    preview = harness.manager.preview(request)
+    codes = {issue.code for issue in preview.validation_issues}
+
+    assert preview.can_submit is False
+    assert preview.estimated_quantity == Decimal("0")
+    assert preview.estimated_take_profit_price is None
+    assert preview.estimated_stop_loss_price is None
+    assert preview.minimum_quantity == Decimal("1")
+    assert preview.minimum_notional == Decimal("65.0005")
+    assert preview.approximate_minimum_margin == Decimal("65.0005")
+    assert {"quantity_zero", "minimum_quantity", "notional_zero"} <= codes
+
+    with pytest.raises(OrderValidationError):
+        harness.manager.submit(
+            ManualOrderSubmissionRequest(
+                request=request,
+                preview_fingerprint=preview.safety_fingerprint,
+            )
+        )
+    assert harness.executed == []
+    assert harness.ownership == []
 
 
 def test_limit_preview_estimates_maker_and_rejects_crossing_post_only() -> None:
@@ -263,7 +301,9 @@ def test_preview_reports_all_account_contract_and_precision_blockers() -> None:
     }.issubset(codes)
 
 
-def test_balance_percentage_preview_and_submission_revalidate_before_execution() -> None:
+def test_balance_percentage_preview_and_submission_revalidate_before_execution() -> (
+    None
+):
     harness = Harness()
     request = ManualOrderPreviewRequest(
         environment="live",
@@ -296,7 +336,13 @@ def test_balance_percentage_preview_and_submission_revalidate_before_execution()
     assert exchange_request.take_profit_price == preview.estimated_take_profit_price
     assert exchange_request.stop_loss_price == preview.estimated_stop_loss_price
     assert len(harness.ownership) == 1
-    order_id, request_id, ownership_environment, ownership_request, ownership_context = harness.ownership[0]
+    (
+        order_id,
+        request_id,
+        ownership_environment,
+        ownership_request,
+        ownership_context,
+    ) = harness.ownership[0]
     assert order_id == "gate-order-1"
     assert request_id == exchange_request.client_request_id
     assert ownership_environment == "live"

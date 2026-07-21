@@ -172,14 +172,16 @@ class ManualOrderPreview(BaseModel):
     contract_multiplier: Decimal
     quantity_step: Decimal
     minimum_quantity: Decimal
+    minimum_notional: Decimal
+    approximate_minimum_margin: Decimal
     maximum_leverage: int
     estimated_quantity: Decimal
     estimated_notional: Decimal
     estimated_margin: Decimal
     estimated_opening_fee: Decimal
     estimated_fee_rate: Decimal
-    estimated_take_profit_price: Decimal
-    estimated_stop_loss_price: Decimal
+    estimated_take_profit_price: Decimal | None
+    estimated_stop_loss_price: Decimal | None
     estimated_liquidation_price: Decimal | None
     reference_price: Decimal
     limit_distance_percentage: Decimal | None

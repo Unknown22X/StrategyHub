@@ -111,6 +111,11 @@ class OrderManager:
         estimated_quantity = self._round_down(raw_quantity, rules.quantity_step)
         notional = estimated_quantity * rules.contract_multiplier * reference_price
         estimated_margin = notional / Decimal(request.leverage)
+        minimum_notional = max(
+            rules.minimum_notional,
+            rules.minimum_quantity * rules.contract_multiplier * reference_price,
+        )
+        approximate_minimum_margin = minimum_notional / Decimal(request.leverage)
         behavior = self._liquidity_behavior(
             request,
             best_bid=market.best_bid,
@@ -125,16 +130,19 @@ class OrderManager:
             if request.limit_price is not None
             else None
         )
-        take_profit, stop_loss = self._protection_prices(
-            direction=request.direction,
-            entry_price=reference_price,
-            base_quantity=estimated_quantity * rules.contract_multiplier,
-            allocated_margin=estimated_margin,
-            entry_fee=opening_fee,
-            exit_fee_rate=rules.taker_fee_rate,
-            explicit_take_profit=submission_context.take_profit_price,
-            explicit_stop_loss=submission_context.stop_loss_price,
-        )
+        take_profit: Decimal | None = None
+        stop_loss: Decimal | None = None
+        if estimated_quantity > 0:
+            take_profit, stop_loss = self._protection_prices(
+                direction=request.direction,
+                entry_price=reference_price,
+                base_quantity=estimated_quantity * rules.contract_multiplier,
+                allocated_margin=estimated_margin,
+                entry_fee=opening_fee,
+                exit_fee_rate=rules.taker_fee_rate,
+                explicit_take_profit=submission_context.take_profit_price,
+                explicit_stop_loss=submission_context.stop_loss_price,
+            )
         if submission_context.trailing_stop_price is not None:
             if request.order_type != "market":
                 issues.append(
@@ -210,6 +218,8 @@ class OrderManager:
             contract_multiplier=rules.contract_multiplier,
             quantity_step=rules.quantity_step,
             minimum_quantity=rules.minimum_quantity,
+            minimum_notional=minimum_notional,
+            approximate_minimum_margin=approximate_minimum_margin,
             maximum_leverage=rules.maximum_leverage,
             estimated_quantity=estimated_quantity,
             estimated_notional=notional,

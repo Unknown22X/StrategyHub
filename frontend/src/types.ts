@@ -1173,14 +1173,16 @@ export interface ManualOrderPreview {
   contract_multiplier: string;
   quantity_step: string;
   minimum_quantity: string;
+  minimum_notional: string;
+  approximate_minimum_margin: string;
   maximum_leverage: number;
   estimated_quantity: string;
   estimated_notional: string;
   estimated_margin: string;
   estimated_opening_fee: string;
   estimated_fee_rate: string;
-  estimated_take_profit_price: string;
-  estimated_stop_loss_price: string;
+  estimated_take_profit_price: string | null;
+  estimated_stop_loss_price: string | null;
   estimated_liquidation_price: string | null;
   reference_price: string;
   limit_distance_percentage: string | null;

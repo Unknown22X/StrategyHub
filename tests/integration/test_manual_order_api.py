@@ -77,9 +77,7 @@ def test_manual_live_order_uses_central_manager_without_old_live_arming(
 
     with TestClient(app) as client:
         rules = client.get("/v1/futures/contracts/BTC_USDT/rules")
-        preview = client.post(
-            "/v1/manual-orders/preview", json=_manual_live_payload()
-        )
+        preview = client.post("/v1/manual-orders/preview", json=_manual_live_payload())
 
         assert rules.status_code == 200
         assert rules.json()["maximum_leverage"] == 20
@@ -129,9 +127,7 @@ def test_manual_preview_returns_structured_risk_errors_and_never_submits(
     )
 
     with TestClient(app) as client:
-        preview = client.post(
-            "/v1/manual-orders/preview", json=_manual_live_payload()
-        )
+        preview = client.post("/v1/manual-orders/preview", json=_manual_live_payload())
         body = preview.json()
         codes = {issue["code"] for issue in body["validation_issues"]}
         submitted = client.post(
@@ -147,6 +143,53 @@ def test_manual_preview_returns_structured_risk_errors_and_never_submits(
     assert "credentials_missing" in codes
     assert "daily_risk_limit" in codes
     assert "reconciliation_not_ready" in codes
+    assert submitted.status_code == 409
+    assert adapter.position_quantity == 0
+    assert adapter.submissions == {}
+
+
+def test_zero_quantity_preview_returns_guidance_and_never_calls_adapter(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "rangebot.engine.api.load_gate_credentials",
+        lambda mode: object(),
+    )
+    database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
+    adapter = MockGateIoAdapter()
+    app = create_app(
+        database_url,
+        exchange_adapter=adapter,
+        market_data_manager=_market(),
+        contract_rules_provider=lambda symbol: _rules(symbol),
+    )
+    request = {
+        **_manual_live_payload(),
+        "margin_amount": "0.01",
+        "leverage": 1,
+    }
+
+    with TestClient(app) as client:
+        preview = client.post("/v1/manual-orders/preview", json=request)
+        body = preview.json()
+        submitted = client.post(
+            "/v1/manual-orders",
+            json={
+                "request": request,
+                "preview_fingerprint": body["safety_fingerprint"],
+            },
+        )
+
+    codes = {issue["code"] for issue in body["validation_issues"]}
+    assert preview.status_code == 200
+    assert body["can_submit"] is False
+    assert Decimal(body["estimated_quantity"]) == 0
+    assert body["estimated_take_profit_price"] is None
+    assert body["estimated_stop_loss_price"] is None
+    assert Decimal(body["minimum_quantity"]) == Decimal("1")
+    assert Decimal(body["minimum_notional"]) == Decimal("65.0005")
+    assert Decimal(body["approximate_minimum_margin"]) == Decimal("65.0005")
+    assert {"quantity_zero", "minimum_quantity", "notional_zero"} <= codes
     assert submitted.status_code == 409
     assert adapter.position_quantity == 0
     assert adapter.submissions == {}
@@ -170,9 +213,7 @@ def test_manual_order_rejects_environment_that_does_not_match_signed_adapter(
     )
 
     with TestClient(app) as client:
-        preview = client.post(
-            "/v1/manual-orders/preview", json=_manual_live_payload()
-        )
+        preview = client.post("/v1/manual-orders/preview", json=_manual_live_payload())
         body = preview.json()
         submitted = client.post(
             "/v1/manual-orders",

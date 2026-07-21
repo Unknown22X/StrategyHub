@@ -802,6 +802,8 @@ function manualPreview(request: ManualOrderRequest): ManualOrderPreview {
     contract_multiplier: "0.0001",
     quantity_step: "1",
     minimum_quantity: "1",
+    minimum_notional: "6",
+    approximate_minimum_margin: "1.2",
     maximum_leverage: 100,
     estimated_quantity: "83",
     estimated_notional: "498",
