@@ -4,40 +4,9 @@ Last updated: 2026-07-21 UTC
 
 ## Current progress
 
-- Feature scope is frozen. Work is limited to the smallest reliable Paper demo.
-- The installed Windows service is located at `C:\Program Files\RangeBot`.
-- The preserved existing profile is `C:\Users\JORY\AppData\Local\RangeBot`.
-- A verified non-destructive backup was created at `C:\Users\JORY\AppData\Local\RangeBot-Live-Preserved-20260721T1711Z`.
-- Original and backup contain 22 files and 5,727,168 bytes. Their `data\rangebot.db` SHA-256 values match.
-- The currently installed service points to `C:\Users\JORY\AppData\Local\StrategyHub-Demo`, but that profile is not clean and will not be reused or deleted.
-- The running service currently reports Paper, ready, activated, no exchange adapter, and no Credential Profile.
-- Root cause identified: if Windows service recovery fails, the packaged launcher fallback starts without the service-configured `RANGEBOT_HOME`, so it can resolve the old `%LOCALAPPDATA%\RangeBot` profile. A focused code fix is in progress.
+The smallest reliable Paper demo is prepared and running on a completely separate data root. The existing profile was not reset, migrated, renamed, or overwritten.
 
-## Exact root cause
-
-The installed Windows service has an explicit `RANGEBOT_HOME`, but `src/rangebot/ui/engine_bootstrap.py` previously launched its detached emergency fallback with inherited environment only. When the service could not be started or restarted, that fallback used the normal default `%LOCALAPPDATA%\RangeBot`. This could restore the preserved Live profile even though the service XML pointed at a separate Paper profile.
-
-## Preserved old data root
-
-`C:\Users\JORY\AppData\Local\RangeBot`
-
-Verified backup:
-
-`C:\Users\JORY\AppData\Local\RangeBot-Live-Preserved-20260721T1711Z`
-
-Do not delete, rename, reset, migrate, or overwrite either directory during demo preparation.
-
-## New clean demo data root
-
-Planned and not yet activated:
-
-`C:\Users\JORY\AppData\Local\StrategyHub-Paper-Demo-20260721\RangeBot`
-
-The final path ends in `RangeBot` so it remains compatible with the service installation safety checks while staying completely separate from the preserved profile.
-
-## Current installed runtime state
-
-Verified through `http://127.0.0.1:8765/v1/runtime/environment`:
+The dedicated demo engine uses port `8876`, unauthenticated Gate.io public market data, and no private exchange adapter. It reports the required state:
 
 - `configured_environment = paper`
 - `requested_environment = paper`
@@ -46,88 +15,276 @@ Verified through `http://127.0.0.1:8765/v1/runtime/environment`:
 - `transition_state = ready`
 - `activated = true`
 - `credential_profile = null`
+- `private_websocket_environment = null`
 
-Paper intentionally uses unauthenticated public Live market data for prices; this does not use Live Credentials or submit Live Orders.
+Paper public price data uses Gate.io's public Live market feed by design. This does not use Live Credentials, private Account state, Live Orders, real transactions, or real funds.
+
+## Root causes fixed
+
+### Old profile could return during launcher fallback
+
+The installed Windows service had an explicit `RANGEBOT_HOME`, but the packaged launcher's detached fallback previously inherited no data-root override. If service recovery failed, the fallback resolved the normal `%LOCALAPPDATA%\RangeBot` profile and could reopen the preserved Live state.
+
+Fix commit: `48968edde45bd256e80950105ba7de3fdf1b65d3`
+
+The fallback now reads the installed service XML and uses its exact `RANGEBOT_HOME`. If an installed XML exists but the root is missing or invalid, fallback startup is refused instead of opening the default profile.
+
+### `context_unavailable:AttributeError` during Strategy Running
+
+`StrategyRegistry.get()` returns `StrategyTypeMetadata` directly, but `StrategyRuntimeRunner` incorrectly accessed `descriptor.metadata.evaluation_cadence`. The first evaluation waited for candles with a normal `LookupError`; once candles arrived, the invalid nested attribute produced `context_unavailable:AttributeError`.
+
+Fix commit: `ec70b3b7f9445f6bd86845b62b07d391a863bc31`
+
+The rebuilt packaged engine now records normal `warming_up/history` decisions. A fresh Start/Run/Stop cycle produced no new `context_unavailable:*` decisions.
+
+### Previous `market_data_unavailable`
+
+The failure is not reproducible in the prepared profile. Current checks succeeded for:
+
+- BTC_USDT contract lookup;
+- fresh BTC_USDT price from `gate_websocket`;
+- a real Gate.io historical request containing 672 completed 15-minute candles;
+- a persisted completed Backtest.
+
+The earlier failure was therefore most likely transient public Gate.io/network/DNS availability or the previous packaged/profile state. It is not currently an application-logic blocker. Public network access can still fail during a recording, so use the prepared result rather than starting a new Backtest live.
+
+## Preserved existing data
+
+Original profile, treated as read-only during this work:
+
+`C:\Users\JORY\AppData\Local\RangeBot`
+
+Verified backup:
+
+`C:\Users\JORY\AppData\Local\RangeBot-Live-Preserved-20260721T1711Z`
+
+Both copies contained 22 files and 5,727,168 bytes when verified. The original and backup database SHA-256 values matched:
+
+`a9907a76ba00e0c3d14c619511d3b168565eef73998bd79cfadccffac8323a64`
+
+The original database hash and modification time were checked again after launching and exercising the clean Paper profile and remained unchanged.
+
+An older separate demo root also exists and was not deleted or reused:
+
+`C:\Users\JORY\AppData\Local\StrategyHub-Demo`
+
+## Clean Paper demo root
+
+`C:\Users\JORY\AppData\Local\StrategyHub-Paper-Demo-20260721\RangeBot`
+
+The root has its own database, runtime files, logs, backup directory, and empty Credential directory. It contains no copied Live database, no API Credentials, and no unmanaged exchange state.
+
+Prepared safe data in this root:
+
+- Paper Account initialized with 1,000 USDT;
+- one completed Paper Order verification trade, now closed;
+- no open Position;
+- no pending Paper Order;
+- Emergency Stop inactive;
+- one stopped Strategy: `BTC Paper Range Demo`;
+- five fresh Opportunities from a real public scan;
+- one completed real-data Backtest.
 
 ## Exact launch instructions
 
-Current temporary route before the clean profile is activated:
+### Current machine — shortest route
 
-1. Ensure the `RangeBotEngine` Windows service is running.
-2. Launch RangeBot from the Start menu or desktop shortcut.
-3. Open `http://127.0.0.1:8765/app/` if the browser does not open automatically.
-4. Confirm the environment badge says `PAPER` before any demo action.
+Double-click:
 
-Final launch instructions will be updated after the clean profile and rebuilt launcher are verified.
+`D:\codes\projects\RangeBot\demo\StrategyHub-Paper-Demo.cmd`
 
-## Features passed
+Or run:
 
-- Installed engine `/health` responds.
-- Installed runtime reports the required Paper/ready/activated/no-adapter/no-Credential state.
-- The existing packaged Paper engine smoke test passed previously with a fresh isolated database.
-- Launcher fallback unit suite passes after the focused root-isolation fix: 6 tests passed.
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "D:\codes\projects\RangeBot\demo\Start-StrategyHub-Paper-Demo.ps1"
+```
 
-## Features still to verify on the new clean profile
+The script:
 
-- No old Strategies, Orders, Positions, Credentials, or unmanaged state.
-- BTC_USDT public price and freshness.
-- Manual Order Preview.
-- Paper Order submission and Position creation.
-- Take Profit and Stop Loss.
-- Position close.
-- Direct Paper Strategy start, Running state, and stop.
-- Opportunities.
-- Prepared completed Backtest result from real historical data if available.
-- Risk Management and Emergency Stop.
-- `context_unavailable:AttributeError` impact on Paper.
-- Backtest `market_data_unavailable` root cause.
+1. uses only the dedicated data root;
+2. launches the rebuilt packaged engine on `127.0.0.1:8876`;
+3. enables public market WebSocket data only;
+4. validates every required Paper runtime field;
+5. opens `http://127.0.0.1:8876/app/`.
 
-## Tests run
+To stop only the dedicated demo engine:
 
-- `uv run pytest tests/unit/test_ui_engine_bootstrap.py -q` — 6 passed.
-- Installed `/health` and `/v1/runtime/environment` — healthy and Paper-ready.
-- Live-profile backup verification — source and backup metadata and database SHA-256 match.
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "D:\codes\projects\RangeBot\demo\Stop-StrategyHub-Paper-Demo.ps1"
+```
 
-## Latest commit hash
+Stopping the demo preserves its prepared data. It does not stop, edit, or migrate the normal installed `RangeBotEngine` service.
 
-Before the current focused fix: `c92a7e030a740e39c2674bead39a11b9bebc028c`
+### Rebuilt installer
 
-The fallback isolation fix is not committed yet.
+The rebuilt installer includes a separate **StrategyHub Paper Demo** Start-menu shortcut and optional Desktop shortcut. The normal RangeBot shortcut remains separate and retains its normal profile behavior.
+
+## Verified demo features
+
+### Launch and isolation
+
+- Packaged engine launches from a fresh/separate root.
+- Exact Paper/ready/activated/no-adapter/no-Credential state verified.
+- Preserved database hash and modification time unchanged.
+
+### Public market data
+
+- BTC_USDT appears in the contract picker API.
+- BTC_USDT price was fresh from `gate_websocket`.
+- Price response included source, timestamp, environment policy, and freshness state.
+
+### Manual Paper Order
+
+Verified end to end using a small Market Long:
+
+- Preview succeeds;
+- Quantity is positive;
+- Margin and Leverage are shown;
+- estimated fee is shown;
+- Take Profit and Stop Loss are calculated;
+- `uses_real_funds = false`;
+- submission is accepted by Paper only;
+- Position is created and marked managed;
+- TP and SL protection state is `protected`;
+- Position closes successfully;
+- final Position quantity is zero.
+
+### Strategy
+
+Prepared Instance:
+
+- Name: `BTC Paper Range Demo`
+- Symbol: `BTC_USDT`
+- Environment: Paper
+- Instance ID: `572919a7-5920-42ac-a5e5-11a5815d7b9c`
+- Final state: `stopped`
+
+Verified:
+
+- direct Paper start without Backtesting;
+- `never_backtested` appears as a warning, not a blocker;
+- Running state;
+- immutable Run configuration snapshot;
+- background evaluation after the AttributeError fix;
+- Stop returns the Strategy to stopped.
+
+The evaluator currently reports `warming_up/history` until enough live candles accumulate. This is honest and safe; it is not an error and no ownership is fabricated.
+
+### Opportunities
+
+A real public scan completed:
+
+- Scan ID: `f2aa200d-cd0f-44ff-a1ba-5181f34db9a8`
+- 5 symbols scanned;
+- 5 Opportunities stored;
+- 0 scan failures;
+- BTC_USDT Opportunity price state: fresh.
+
+The Opportunities screen can demonstrate Review, Shortlist, Ignore/Undo, and compatible Strategy selection. Do not say the candidate is an active trade signal when `eligible_now` is false.
+
+### Prepared Backtest
+
+Backtest ID:
+
+`4c68447c-450c-490a-8f3e-cb7b7c3346ad`
+
+Verified facts:
+
+- BTC_USDT;
+- Range Strategy;
+- 15-minute timeframe;
+- 2026-07-14 through 2026-07-21 UTC;
+- 672 real historical candles;
+- completed and persisted;
+- zero qualifying Trades;
+- start/end balance 1,000 USDT;
+- assessment `insufficient_data`.
+
+This result is intentionally honest and not a performance claim. During the demo, say that real data loaded successfully but the configured rules produced no qualifying entries in that short window.
+
+### Risk Management and Emergency Stop
+
+Verified:
+
+- all three explicit global Limit states load;
+- Paper risk snapshot loads;
+- Emergency Stop activates only with `EMERGENCY STOP`;
+- Resume succeeds only with `RESUME`;
+- final Emergency Stop state is inactive.
+
+## Features that still fail or remain limited
+
+- The prepared Backtest has zero Trades and is not suitable for claiming Strategy performance. It is suitable for demonstrating real-data execution, metrics, warnings, and honest insufficient-data handling.
+- The Strategy begins in `warming_up/history` because a fresh live process has limited candle history. Use Running state and recent activity; do not promise an immediate Position.
+- A new Backtest or scan still depends on public internet/Gate.io availability. Use the prepared records during recording.
+- The attempted non-elevated service-root change was blocked by Windows Program Files permissions before changing the service XML. The dedicated port-8876 launcher avoids UAC and leaves the installed service untouched.
+- Creating a Windows COM desktop shortcut directly through the WSL bridge was unreliable. The installer creates the shortcut normally, and the repository `.cmd` launcher is already double-clickable.
+
+## Tests and verification run
+
+Focused source suites:
+
+- `tests/unit/test_ui_engine_bootstrap.py` — 6 passed.
+- `tests/unit/test_strategy_runtime_runner.py` plus `tests/integration/test_strategy_runtime_lifespan.py` — 10 passed.
+- Ruff check and format check for both focused Python fixes — passed.
+
+Prepared packaged demo checks:
+
+- clean root launch and exact runtime state — passed;
+- original Live database hash/mtime isolation — passed;
+- BTC_USDT contract and fresh price — passed;
+- Manual Preview/submit/Position/TP/SL/close — passed;
+- direct Strategy start/snapshot/stop — passed;
+- rebuilt Strategy evaluator with no new `context_unavailable:*` — passed;
+- Opportunities public scan — passed;
+- real historical Backtest — passed;
+- Risk Management and Emergency Stop/Resume — passed.
+
+## Commits
+
+- `48968edde45bd256e80950105ba7de3fdf1b65d3` — isolate packaged fallback data root.
+- `ec70b3b7f9445f6bd86845b62b07d391a863bc31` — fix Strategy runtime registry metadata access.
+
+The final demo-assets/status commit is listed in the final report after it is created.
 
 ## Installer
 
-- Rebuilt for this overnight task: no, not yet.
-- Current installer: `D:\codes\projects\RangeBot\release\RangeBot-Setup.exe`
-- Previously verified size: 38,424,924 bytes.
-- Previously verified SHA-256: `4b2329154ad325c0836c8057496d919e984ca9be783745a96d2a74c1b164127c`.
+A rebuild is required because the packaged engine and launcher safety behavior changed. Final path, size, and SHA-256 are updated after compilation.
 
-The installer will be rebuilt only because the launcher fallback fix affects installed-profile safety.
+Expected path:
+
+`D:\codes\projects\RangeBot\release\RangeBot-Setup.exe`
 
 ## Shortest reliable demo route
 
-Pending final clean-profile verification. Intended route:
-
-1. Launch in Paper.
-2. Preview and submit one small BTC_USDT Market Long Paper Order.
-3. Show Position, Take Profit, Stop Loss, and close it.
-4. Open one prepared Paper Strategy, start it directly, show Running, then stop it.
-5. Show Opportunities.
-6. Open one prepared completed Backtest result.
-7. Show Risk Management and Emergency Stop.
+1. Double-click `demo\StrategyHub-Paper-Demo.cmd`.
+2. Point to the `PAPER` badge and explain that no Credentials or real funds are used.
+3. Open Manual Trade and choose BTC_USDT.
+4. Use Market, Long, Margin 25 USDT, Leverage 2x.
+5. Preview and show Quantity, Margin, fee, TP, and SL.
+6. Submit the Paper Order.
+7. Show the managed Position and protection, then close it.
+8. Open `BTC Paper Range Demo`.
+9. Show readiness and the honest Never Backtested warning.
+10. Start it, show Running and recent `warming_up/history` activity, then stop it.
+11. Open Opportunities and Review the BTC_USDT result. Explain that Shortlist does not trade.
+12. Open Backtesting and select Backtest `4c68447c-450c-490a-8f3e-cb7b7c3346ad`. Explain that 672 real candles loaded but the short window produced no qualifying Trades.
+13. Open Risk Management, show the three Limit toggles and Emergency Stop, but leave Emergency Stop inactive when finished.
 
 ## Backup demo route
 
-If public market data or Backtesting is unavailable:
+If public Gate.io data is temporarily unavailable:
 
-1. Launch in Paper and show the authoritative environment state.
-2. Use a previously prepared valid public price snapshot only if the app still marks it accurately as stale; do not call it live.
-3. Demonstrate Strategy readiness/start/stop, Opportunities, and Risk Management.
-4. Omit the live Backtest run and show a previously completed real-data result if available.
+1. Launch and show the exact Paper environment state.
+2. Open the prepared Strategy and demonstrate readiness, Start, Running, recent activity, and Stop.
+3. Show the five stored Opportunities, clearly noting the saved observation time/freshness state.
+4. Show the prepared completed Backtest and its honest insufficient-data warning.
+5. Show Risk Management and Emergency Stop.
+6. Omit creating a new Order if the app correctly marks current price as unavailable or stale.
 
 ## Exact next action if work stops early
 
-1. Finish and commit the launcher fallback `RANGEBOT_HOME` isolation fix.
-2. Create `C:\Users\JORY\AppData\Local\StrategyHub-Paper-Demo-20260721\RangeBot` without copying any old database or Credentials.
-3. Point the installed service XML and log path at that root, restart the service, and verify the required runtime fields.
-4. Run the focused Paper demo flow against the clean profile.
-5. Rebuild and smoke-test the installer because the launcher binary changed.
+1. Commit the three `demo` launcher files, installer shortcut entry, this status file, and their source-contract test.
+2. Rebuild the packaged UI launcher and installer from the clean commit.
+3. Verify installer checksum and packaged Paper engine smoke.
+4. Confirm the Git working tree is clean.

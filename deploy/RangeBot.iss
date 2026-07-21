@@ -47,10 +47,13 @@ Source: "..\vendor\WinSW-LICENSE.txt"; DestDir: "{app}\licenses"; Flags: ignorev
 Source: "..\USER_GUIDE.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "..\KNOWN_LIMITATIONS.md"; DestDir: "{app}\docs"; Flags: ignoreversion
+Source: "..\demo\*"; DestDir: "{app}\demo"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\RangeBot"; Filename: "{app}\launcher\{#MyAppExeName}"; WorkingDir: "{app}"
+Name: "{group}\StrategyHub Paper Demo"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\demo\Start-StrategyHub-Paper-Demo.ps1"""; WorkingDir: "{app}\demo"; IconFilename: "{app}\launcher\{#MyAppExeName}"
 Name: "{autodesktop}\RangeBot"; Filename: "{app}\launcher\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autodesktop}\StrategyHub Paper Demo"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\demo\Start-StrategyHub-Paper-Demo.ps1"""; WorkingDir: "{app}\demo"; IconFilename: "{app}\launcher\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\launcher\{#MyAppExeName}"; Description: "{cm:LaunchProgram,RangeBot}"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent
