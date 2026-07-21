@@ -99,7 +99,17 @@ release/*.exe
 .DS_Store
 Thumbs.db
 
-# Keep repository planning and documentation artifacts trackable
-!.scratch/
-!docs/
-!AGENTS.md
+# Internal planning, personal, and generated evidence
+.scratch/
+AGENTS.md
+CONTEXT.md
+acceptance/
+artifacts/
+
+# Internal demo and submission notes
+DEMO.md
+KNOWN_LIMITATIONS.md
+SUBMISSION_CHECKLIST.md
+BUILD_WEEK_CHANGES.md
+docs/acceptance-evidence.md
+docs/final-checklist.md
