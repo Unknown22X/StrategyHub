@@ -19,24 +19,44 @@ import type {
   WorkflowSummary,
 } from "./types";
 
-async function workflowRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, {
-    ...options,
-    headers: {
-      Accept: "application/json",
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
-      ...options.headers,
-    },
-  });
-  const contentType = response.headers.get("content-type") ?? "";
-  const body = contentType.includes("application/json") ? await response.json() : await response.text();
-  if (!response.ok) {
-    const detail = typeof body === "object" && body !== null && "detail" in body
-      ? (body as { detail: unknown }).detail
-      : body;
-    throw new Error(typeof detail === "string" ? detail : `تعذر إكمال الطلب (${response.status})`);
+interface WorkflowRequestOptions extends RequestInit {
+  timeoutMs?: number;
+}
+
+async function workflowRequest<T>(path: string, options: WorkflowRequestOptions = {}): Promise<T> {
+  const { timeoutMs = 15000, signal, ...requestOptions } = options;
+  const controller = new AbortController();
+  const abortFromParent = () => controller.abort();
+  signal?.addEventListener("abort", abortFromParent, { once: true });
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(path, {
+      ...requestOptions,
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+        ...(requestOptions.body ? { "Content-Type": "application/json" } : {}),
+        ...requestOptions.headers,
+      },
+    });
+    const contentType = response.headers.get("content-type") ?? "";
+    const body = contentType.includes("application/json") ? await response.json() : await response.text();
+    if (!response.ok) {
+      const detail = typeof body === "object" && body !== null && "detail" in body
+        ? (body as { detail: unknown }).detail
+        : body;
+      throw new Error(typeof detail === "string" ? detail : `تعذر إكمال الطلب (${response.status})`);
+    }
+    return body as T;
+  } catch (error) {
+    if (controller.signal.aborted && !signal?.aborted) {
+      throw new Error("Request timed out. Check the failed stage and retry.");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+    signal?.removeEventListener("abort", abortFromParent);
   }
-  return body as T;
 }
 
 export function defaultStrategySetupDefaults(): StrategySetupDefaults {
@@ -257,10 +277,13 @@ export function runSetupBacktest(
 
 export function runPortfolioBacktest(
   request: BacktestPortfolioRequest,
+  signal?: AbortSignal,
 ): Promise<StoredPortfolioBacktestRun> {
   return workflowRequest<StoredPortfolioBacktestRun>("/v1/backtests/portfolio", {
     method: "POST",
     body: JSON.stringify(request),
+    signal,
+    timeoutMs: 30000,
   });
 }
 
@@ -275,12 +298,25 @@ export function checkPortfolioBacktestReadiness(
 
 export function loadPortfolioBacktest(
   backtestId: string,
+  signal?: AbortSignal,
 ): Promise<StoredPortfolioBacktestRun> {
-  return workflowRequest<StoredPortfolioBacktestRun>(`/v1/backtests/portfolio/${encodeURIComponent(backtestId)}`);
+  return workflowRequest<StoredPortfolioBacktestRun>(
+    `/v1/backtests/portfolio/${encodeURIComponent(backtestId)}`,
+    { signal, timeoutMs: 10000 },
+  );
 }
 
-export function listPortfolioBacktests(limit = 50): Promise<StoredPortfolioBacktestRun[]> {
-  return workflowRequest<StoredPortfolioBacktestRun[]>(`/v1/backtests/portfolio?limit=${limit}`);
+export function cancelPortfolioBacktest(
+  backtestId: string,
+): Promise<StoredPortfolioBacktestRun> {
+  return workflowRequest<StoredPortfolioBacktestRun>(
+    `/v1/backtests/portfolio/${encodeURIComponent(backtestId)}`,
+    { method: "DELETE", timeoutMs: 10000 },
+  );
+}
+
+export function listPortfolioBacktests(limit = 50, signal?: AbortSignal): Promise<StoredPortfolioBacktestRun[]> {
+  return workflowRequest<StoredPortfolioBacktestRun[]>(`/v1/backtests/portfolio?limit=${limit}`, { signal });
 }
 
 export function updatePortfolioBacktestNotes(

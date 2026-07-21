@@ -3789,6 +3789,56 @@ tbody tr:hover {
   color: var(--text);
 }
 
+.page-header-actions,
+.beginner-preset-card,
+.final-step-action {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.backtest-capital-step {
+  display: grid;
+  gap: 16px;
+}
+
+.beginner-preset-card,
+.final-step-action {
+  justify-content: space-between;
+  padding: 14px;
+  border: 1px solid rgba(79, 156, 249, 0.25);
+  border-radius: var(--radius-md);
+  background: rgba(79, 156, 249, 0.07);
+}
+
+.beginner-preset-card > div,
+.final-step-action > span {
+  flex: 1 1 260px;
+}
+
+.beginner-preset-card p,
+.final-step-action span,
+.wizard-final-label {
+  color: var(--muted);
+}
+
+.advanced-settings-toggle {
+  justify-self: start;
+}
+
+.advanced-backtest-settings {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+}
+
+.wizard-final-label {
+  padding: 10px 0;
+  font-weight: 700;
+}
+
 .workflow-template-card,
 .opportunity-card,
 .deployment-card {

@@ -31,16 +31,24 @@ class _Evaluator:
     def evaluate(self, context: StrategyEvaluationContext, configuration):
         eligible = context.last_price == Decimal("100")
         return StrategyEvaluationResult(
-            type_id=self.type_id, symbol=context.symbol,
+            type_id=self.type_id,
+            symbol=context.symbol,
             evaluated_at=context.evaluated_at,
-            signal="long" if eligible else "none", eligible=eligible,
-            reason_codes=("fixture",), explanation_ar="قرار محفوظ",
+            signal="long" if eligible else "none",
+            eligible=eligible,
+            reason_codes=("fixture",),
+            explanation_ar="قرار محفوظ",
             used_closed_candles=len(context.completed_candles()),
             trade_request=StrategyTradeRequest(
-                symbol=context.symbol, direction="long", reference_price=context.last_price,
-                take_profit_price=Decimal("110"), stop_loss_price=Decimal("90"),
+                symbol=context.symbol,
+                direction="long",
+                reference_price=context.last_price,
+                take_profit_price=Decimal("110"),
+                stop_loss_price=Decimal("90"),
                 reason_code="fixture",
-            ) if eligible else None,
+            )
+            if eligible
+            else None,
         )
 
 
@@ -51,8 +59,12 @@ class _MarketData:
             NormalizedCandle(
                 opened_at=start + timedelta(hours=index),
                 closed_at=start + timedelta(hours=index + 1),
-                open=Decimal(open_), high=Decimal(high), low=Decimal(low),
-                close=Decimal(close), volume=Decimal("1000"), closed=True,
+                open=Decimal(open_),
+                high=Decimal(high),
+                low=Decimal(low),
+                close=Decimal(close),
+                volume=Decimal("1000"),
+                closed=True,
             )
             for index, (open_, high, low, close) in enumerate(
                 (("99", "101", "98", "100"), ("100", "111", "99", "110"))
@@ -73,10 +85,15 @@ def _registry():
     registry = StrategyRegistry()
     registry.register(
         StrategyTypeMetadata(
-            type_id="persisted_test", display_name_ar="اختبار",
-            display_name_en="Test", description_ar="اختبار",
-            description_en="Test", version="1", supported_timeframes=(60,),
-            supports_backtesting=True, configuration_schema={},
+            type_id="persisted_test",
+            display_name_ar="اختبار",
+            display_name_en="Test",
+            description_ar="اختبار",
+            description_en="Test",
+            version="1",
+            supported_timeframes=(60,),
+            supports_backtesting=True,
+            configuration_schema={},
         ),
         _Evaluator,
     )
@@ -89,13 +106,19 @@ def test_completed_run_persists_snapshot_logs_and_editable_post_note(tmp_path) -
     repository = PortfolioBacktestRepository(create_database_engine(database_url))
     service = HistoricalBacktestService(_registry(), _MarketData(), repository)
     request = BacktestPortfolioRequest(
-        mode="manual_symbols", strategy_type_id="persisted_test",
-        strategy_version="1", symbols=("BTC_USDT",), timeframe_minutes=60,
+        mode="manual_symbols",
+        strategy_type_id="persisted_test",
+        strategy_version="1",
+        symbols=("BTC_USDT",),
+        timeframe_minutes=60,
         start=datetime(2026, 1, 1, tzinfo=UTC),
         end=datetime(2026, 1, 2, tzinfo=UTC),
         settings=BacktestSettings(
-            initial_balance=Decimal("1000"), margin_per_trade=Decimal("100"),
-            leverage=1, maker_fee_rate=Decimal("0"), taker_fee_rate=Decimal("0"),
+            initial_balance=Decimal("1000"),
+            margin_per_trade=Decimal("100"),
+            leverage=1,
+            maker_fee_rate=Decimal("0"),
+            taker_fee_rate=Decimal("0"),
             minimum_trades_for_assessment=1,
         ),
         pre_test_hypothesis="فرضية قبل الاختبار",
@@ -118,13 +141,19 @@ def test_completed_run_persists_snapshot_logs_and_editable_post_note(tmp_path) -
 
 def test_portfolio_api_isolated_from_execution_routes(tmp_path) -> None:
     request = BacktestPortfolioRequest(
-        mode="manual_symbols", strategy_type_id="persisted_test",
-        strategy_version="1", symbols=("BTC_USDT",), timeframe_minutes=60,
+        mode="manual_symbols",
+        strategy_type_id="persisted_test",
+        strategy_version="1",
+        symbols=("BTC_USDT",),
+        timeframe_minutes=60,
         start=datetime(2026, 1, 1, tzinfo=UTC),
         end=datetime(2026, 1, 2, tzinfo=UTC),
         settings=BacktestSettings(
-            initial_balance=Decimal("1000"), margin_per_trade=Decimal("100"),
-            leverage=1, maker_fee_rate=Decimal("0"), taker_fee_rate=Decimal("0"),
+            initial_balance=Decimal("1000"),
+            margin_per_trade=Decimal("100"),
+            leverage=1,
+            maker_fee_rate=Decimal("0"),
+            taker_fee_rate=Decimal("0"),
             minimum_trades_for_assessment=1,
         ),
     )
@@ -141,12 +170,88 @@ def test_portfolio_api_isolated_from_execution_routes(tmp_path) -> None:
         assert response.status_code == 200
         payload = response.json()
         assert payload["status"] == "queued"
-        completed = client.get(
-            f"/v1/backtests/portfolio/{payload['backtest_id']}"
-        )
+        completed = client.get(f"/v1/backtests/portfolio/{payload['backtest_id']}")
         assert completed.status_code == 200
         assert completed.json()["status"] == "completed"
         assert completed.json()["result"]["orders"][0]["status"] == "filled"
 
     # Simulated orders exist only in the portfolio result and never in runtime order state.
     assert app.state.strategy_instance_repository.list() == []
+
+
+def _request() -> BacktestPortfolioRequest:
+    return BacktestPortfolioRequest(
+        mode="manual_symbols",
+        strategy_type_id="persisted_test",
+        strategy_version="1",
+        symbols=("BTC_USDT",),
+        timeframe_minutes=60,
+        start=datetime(2026, 1, 1, tzinfo=UTC),
+        end=datetime(2026, 1, 2, tzinfo=UTC),
+        settings=BacktestSettings(
+            initial_balance=Decimal("1000"),
+            margin_per_trade=Decimal("100"),
+            leverage=1,
+            maker_fee_rate=Decimal("0"),
+            taker_fee_rate=Decimal("0"),
+            minimum_trades_for_assessment=1,
+        ),
+    )
+
+
+def test_queued_portfolio_backtest_can_be_canceled_idempotently(tmp_path) -> None:
+    database_url = f"sqlite:///{(tmp_path / 'cancel.db').as_posix()}"
+    apply_migrations(database_url)
+    repository = PortfolioBacktestRepository(create_database_engine(database_url))
+    queued = repository.create(_request())
+
+    first = repository.cancel(queued.backtest_id)
+    second = repository.cancel(queued.backtest_id)
+
+    assert first.status == "canceled"
+    assert second.status == "canceled"
+    assert first.completed_at is not None
+    assert first.failure_code is None
+
+
+def test_portfolio_failure_preserves_structured_stage_and_retryable_code(
+    tmp_path,
+) -> None:
+    class FailingMarketData(_MarketData):
+        def candles(self, symbol, timeframe_minutes, *, start, end):
+            raise ConnectionError("private transport details must not be exposed")
+
+    database_url = f"sqlite:///{(tmp_path / 'failure.db').as_posix()}"
+    apply_migrations(database_url)
+    repository = PortfolioBacktestRepository(create_database_engine(database_url))
+    service = HistoricalBacktestService(_registry(), FailingMarketData(), repository)
+    queued = service.enqueue(_request())
+
+    try:
+        service.execute(queued.backtest_id, queued.request)
+    except ConnectionError:
+        pass
+    failed = service.get(queued.backtest_id)
+
+    assert failed.status == "failed"
+    assert failed.failure_code == "market_data_unavailable"
+    assert failed.failure_stage == "loading_data"
+    assert "private transport details" not in (failed.failure_reason or "")
+    assert "Retry" in (failed.failure_reason or "")
+
+
+def test_portfolio_cancel_endpoint_returns_structured_terminal_run(tmp_path) -> None:
+    database_url = f"sqlite:///{(tmp_path / 'cancel-api.db').as_posix()}"
+    app = create_app(database_url)
+    repository = PortfolioBacktestRepository(create_database_engine(database_url))
+
+    with TestClient(app) as client:
+        queued = repository.create(_request())
+        canceled = client.delete(f"/v1/backtests/portfolio/{queued.backtest_id}")
+        repeated = client.delete(f"/v1/backtests/portfolio/{queued.backtest_id}")
+
+    assert canceled.status_code == 200
+    assert canceled.json()["status"] == "canceled"
+    assert canceled.json()["failure_code"] is None
+    assert repeated.status_code == 200
+    assert repeated.json()["status"] == "canceled"

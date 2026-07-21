@@ -25,6 +25,10 @@ from rangebot.engine.strategy_registry import StrategyRegistry
 logger = logging.getLogger(__name__)
 
 
+class BacktestCanceled(RuntimeError):
+    """Internal control flow used when a persisted Backtest was canceled."""
+
+
 class HistoricalBacktestService:
     """Persist progress and run both opportunity sources through BacktestEngine."""
 
@@ -36,7 +40,8 @@ class HistoricalBacktestService:
         *,
         contract_rules: Callable[[str], FuturesContractRules] | None = None,
         funding_costs: FundingCostProvider | None = None,
-        setup_validation: Callable[[BacktestPortfolioRequest], tuple[str, ...]] | None = None,
+        setup_validation: Callable[[BacktestPortfolioRequest], tuple[str, ...]]
+        | None = None,
     ) -> None:
         self._registry = registry
         self._market_data = market_data
@@ -68,7 +73,10 @@ class HistoricalBacktestService:
             missing.append("إصدار الاستراتيجية المطلوب لا يطابق الإصدار المسجل حالياً.")
         if request.timeframe_minutes not in metadata.supported_timeframes:
             missing.append("الإطار الزمني غير مدعوم من الاستراتيجية.")
-        if request.settings.position_sizing_mode == "risk_based" and request.execution.stop_loss_percentage is None:
+        if (
+            request.settings.position_sizing_mode == "risk_based"
+            and request.execution.stop_loss_percentage is None
+        ):
             # An evaluator may supply a stop, but readiness cannot assume every signal will.
             missing.append("حجم المخاطرة يحتاج قاعدة وقف خسارة صريحة لكل صفقة.")
         if request.mode == "historical_scanner" and not metadata.supports_scanning:
@@ -77,7 +85,9 @@ class HistoricalBacktestService:
             try:
                 self._registry.scanner(request.strategy_type_id)
             except LookupError:
-                missing.append("لا يوجد ماسح مسجل قابل لإعادة التشغيل لهذه الاستراتيجية.")
+                missing.append(
+                    "لا يوجد ماسح مسجل قابل لإعادة التشغيل لهذه الاستراتيجية."
+                )
         if request.mode == "historical_scanner" and request.scanner_version is None:
             missing.append("إعادة تشغيل الماسح تحتاج إصدار ماسح ثابتاً داخل الإعداد.")
         if (
@@ -91,7 +101,9 @@ class HistoricalBacktestService:
         if request.quote_currency != "USDT":
             missing.append("الإصدار الحالي يدعم عقود USDT فقط.")
         if request.universe_quality != "exact_historical":
-            warnings.append("بيانات الإدراج التاريخية ليست كاملة؛ سيظهر تحذير تحيز الكون.")
+            warnings.append(
+                "بيانات الإدراج التاريخية ليست كاملة؛ سيظهر تحذير تحيز الكون."
+            )
         if request.setup_id is not None and self._setup_validation is not None:
             try:
                 missing.extend(self._setup_validation(request))
@@ -112,7 +124,9 @@ class HistoricalBacktestService:
             request = request.model_copy(update={"code_version": self._code_version})
         readiness = self.readiness(request)
         if not readiness.ready:
-            raise ValueError("Not ready for backtesting: " + " ".join(readiness.missing_rules))
+            raise ValueError(
+                "Not ready for backtesting: " + " ".join(readiness.missing_rules)
+            )
         return self._repository.create(request)
 
     def execute(
@@ -124,9 +138,13 @@ class HistoricalBacktestService:
     def _execute(
         self, backtest_id: str, request: BacktestPortfolioRequest
     ) -> StoredPortfolioBacktestRun:
+        stage = "loading_data"
         try:
+            self._raise_if_canceled(backtest_id)
             self._repository.progress(
-                backtest_id, "loading_data", 10,
+                backtest_id,
+                "loading_data",
+                10,
                 "جارٍ تحميل الشموع التاريخية المكتملة وقواعد العقود.",
             )
             warmup_start = request.start - timedelta(
@@ -134,11 +152,15 @@ class HistoricalBacktestService:
             )
             candles = {
                 symbol: self._market_data.candles(
-                    symbol, request.timeframe_minutes,
-                    start=warmup_start, end=request.end,
+                    symbol,
+                    request.timeframe_minutes,
+                    start=warmup_start,
+                    end=request.end,
                 )
                 for symbol in request.symbols
             }
+            self._raise_if_canceled(backtest_id)
+            stage = "validating_data"
             for symbol, values in candles.items():
                 warmup_count = sum(item.closed_at < request.start for item in values)
                 if warmup_count < request.warmup_candles:
@@ -149,10 +171,10 @@ class HistoricalBacktestService:
             higher_timeframes = {
                 symbol: {
                     timeframe: self._market_data.candles(
-                        symbol, timeframe,
-                        start=request.start - timedelta(
-                            minutes=timeframe * request.warmup_candles
-                        ),
+                        symbol,
+                        timeframe,
+                        start=request.start
+                        - timedelta(minutes=timeframe * request.warmup_candles),
                         end=request.end,
                     )
                     for timeframe in request.additional_timeframes
@@ -170,7 +192,9 @@ class HistoricalBacktestService:
                 },
                 "additional_timeframes": {
                     symbol: {
-                        str(timeframe): [item.model_dump(mode="json") for item in values]
+                        str(timeframe): [
+                            item.model_dump(mode="json") for item in values
+                        ]
                         for timeframe, values in sorted(by_timeframe.items())
                     }
                     for symbol, by_timeframe in sorted(higher_timeframes.items())
@@ -189,30 +213,74 @@ class HistoricalBacktestService:
                 ).encode("utf-8")
             ).hexdigest()
             self._repository.record_input_fingerprint(backtest_id, input_fingerprint)
+            self._raise_if_canceled(backtest_id)
+            stage = "running_simulation"
             self._repository.progress(
-                backtest_id, "running", 40,
+                backtest_id,
+                "running",
+                40,
                 "جارٍ إعادة تشغيل الإشارات والمحفظة زمنياً دون بيانات مستقبلية.",
             )
             result = self._engine.run_portfolio(
                 request, candles, rules, higher_timeframes
             )
+            self._raise_if_canceled(backtest_id)
+            stage = "calculating_results"
             self._repository.progress(
-                backtest_id, "calculating_results", 90,
+                backtest_id,
+                "calculating_results",
+                90,
                 "جارٍ حساب المقاييس ومنحنى الحقوق وسجل القرارات.",
             )
+            self._raise_if_canceled(backtest_id)
             return self._repository.complete(backtest_id, result)
+        except BacktestCanceled:
+            return self._repository.get(backtest_id)
         except Exception as error:
-            logger.exception("Portfolio backtest failed", extra={"backtest_id": backtest_id})
-            public_reason = (
-                str(error)
-                if isinstance(error, ValueError)
-                else "Internal historical simulation failure. Review sanitized service logs."
+            logger.exception(
+                "Portfolio backtest failed",
+                extra={"backtest_id": backtest_id, "failure_stage": stage},
             )
-            self._repository.fail(backtest_id, public_reason)
+            code, public_reason = self._public_failure(error, stage)
+            self._repository.fail(
+                backtest_id,
+                public_reason,
+                code=code,
+                stage=stage,
+            )
             raise
+
+    def cancel(self, backtest_id: str) -> StoredPortfolioBacktestRun:
+        return self._repository.cancel(backtest_id)
 
     def get(self, backtest_id: str) -> StoredPortfolioBacktestRun:
         return self._repository.get(backtest_id)
+
+    def _raise_if_canceled(self, backtest_id: str) -> None:
+        if self._repository.is_canceled(backtest_id):
+            raise BacktestCanceled(backtest_id)
+
+    @staticmethod
+    def _public_failure(error: Exception, stage: str) -> tuple[str, str]:
+        if isinstance(error, TimeoutError):
+            return (
+                "backtest_timeout",
+                f"Backtest timed out during {stage}. Retry the run or reduce the date range.",
+            )
+        if isinstance(error, ConnectionError):
+            return (
+                "market_data_unavailable",
+                f"Gate historical data was unavailable during {stage}. Retry after the connection recovers.",
+            )
+        if isinstance(error, (LookupError, ValueError)):
+            return (
+                "invalid_backtest_input",
+                f"Backtest could not continue during {stage}: {error}",
+            )
+        return (
+            "internal_backtest_error",
+            f"Backtest failed during {stage}. Review sanitized service logs and retry.",
+        )
 
     def list(self, limit: int = 50) -> list[StoredPortfolioBacktestRun]:
         return self._repository.list(limit)
@@ -220,5 +288,7 @@ class HistoricalBacktestService:
     def fail_interrupted_runs(self) -> int:
         return self._repository.fail_interrupted_runs()
 
-    def update_notes(self, backtest_id: str, observations: str) -> StoredPortfolioBacktestRun:
+    def update_notes(
+        self, backtest_id: str, observations: str
+    ) -> StoredPortfolioBacktestRun:
         return self._repository.update_notes(backtest_id, observations)

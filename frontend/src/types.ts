@@ -642,6 +642,8 @@ export interface StoredPortfolioBacktestRun {
   request: BacktestPortfolioRequest;
   result: BacktestResult | null;
   failure_reason: string | null;
+  failure_code: string | null;
+  failure_stage: string | null;
   post_test_observations: string;
 }
 

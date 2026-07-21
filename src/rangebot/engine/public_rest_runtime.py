@@ -84,11 +84,17 @@ class PublicRestEnvironmentManager:
         """Build replacements first, then swap them together without mixed endpoints."""
         effective_environment = public_rest_environment(environment)
         replacements = self._build(effective_environment)
+        previous_historical: GateHistoricalMarketDataProvider | None = None
         with self._lock:
+            previous_historical = self._historical
             self._public_market, self._contract_rules, self._historical = replacements
             self._application_environment = environment
             self._effective_environment = effective_environment
             self._revision += 1
+        if previous_historical is not replacements[2]:
+            close = getattr(previous_historical, "close", None)
+            if callable(close):
+                close()
 
     def _build(
         self,

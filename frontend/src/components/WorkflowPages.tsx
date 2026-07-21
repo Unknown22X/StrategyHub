@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import {
@@ -12,6 +12,7 @@ import {
   approveStrategySetup,
   archiveStrategySetup,
   archiveStrategyTemplate,
+  cancelPortfolioBacktest,
   checkPortfolioBacktestReadiness,
   convertOpportunity,
   createBotDeployment,
@@ -959,8 +960,12 @@ export function BacktestingPage({ initialSetupId, onOpenSetup }: { initialSetupI
   const [positionSizePercentage, setPositionSizePercentage] = useState("10");
   const [riskPercentage, setRiskPercentage] = useState("1");
   const [hypothesis, setHypothesis] = useState("");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState("");
+  const [activeBacktestId, setActiveBacktestId] = useState<string | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const runController = useRef<AbortController | null>(null);
   const [result, setResult] = useState<StoredPortfolioBacktestRun | null>(null);
   const [portfolioHistory, setPortfolioHistory] = useState<StoredPortfolioBacktestRun[]>([]);
   const [readiness, setReadiness] = useState<BacktestReadiness | null>(null);
@@ -976,16 +981,71 @@ export function BacktestingPage({ initialSetupId, onOpenSetup }: { initialSetupI
   }, [setup?.setup_id, setup?.revision]);
   useEffect(() => {
     let active = true;
-    void listPortfolioBacktests().then((items) => { if (active) setPortfolioHistory(items); }).catch(() => undefined);
-    return () => { active = false; };
+    void listPortfolioBacktests()
+      .then((items) => {
+        if (active) {
+          setPortfolioHistory(items);
+          setHistoryError(null);
+        }
+      })
+      .catch((caught: unknown) => {
+        if (active) setHistoryError(caught instanceof Error ? caught.message : "Backtest history could not be loaded.");
+      });
+    return () => {
+      active = false;
+      runController.current?.abort();
+    };
   }, []);
+
+  function applyBeginnerPreset() {
+    setStartingBalance("1000");
+    setMargin("100");
+    setMaximumPositions(1);
+    setMakerFee("0.0002");
+    setTakerFee("0.0005");
+    setSlippage("5");
+    setSpread("2");
+    setFallbackTakeProfit("5");
+    setFallbackStopLoss("3");
+    setAmbiguity("conservative");
+    setWarmup(200);
+    setPositionSizing("fixed_quote");
+    setPositionSizePercentage("10");
+    setRiskPercentage("1");
+    setAdvancedOpen(false);
+    setStage("Beginner preset applied — realistic and conservative.");
+  }
+
+  async function cancelActiveBacktest() {
+    runController.current?.abort();
+    if (!activeBacktestId) {
+      setBusy(false);
+      setStage("Canceled before the Backtest was queued.");
+      return;
+    }
+    try {
+      const canceled = await cancelPortfolioBacktest(activeBacktestId);
+      setResult(canceled);
+      setStage(canceled.stage_message_ar);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Backtest cancellation failed.");
+    } finally {
+      setBusy(false);
+      setActiveBacktestId(null);
+    }
+  }
+
   async function run() {
     if (!setup || state.status !== "ready") return;
     const template = state.data.templates.find((item) => item.template_id === setup.template_id);
     const strategyType = state.data.strategyTypes.find((item) => item.type_id === template?.type_id);
     const selectedSymbols = symbols.split(/[\s,]+/).map((item) => item.trim().toUpperCase()).filter(Boolean);
     if (!template || !strategyType || selectedSymbols.length === 0) { setError("اختر استراتيجية ورمزاً واحداً على الأقل."); return; }
-    setBusy(true); setError(null); setStage("تحميل البيانات التاريخية…");
+    runController.current?.abort();
+    const controller = new AbortController();
+    runController.current = controller;
+    setBusy(true); setError(null); setStage("Preparing Backtest request…");
+    setActiveBacktestId(null);
     try {
       const dca = setup.effective_setup_defaults.dca;
       const allocations = dca.enabled
@@ -1032,28 +1092,63 @@ export function BacktestingPage({ initialSetupId, onOpenSetup }: { initialSetupI
           minimum_trades_for_assessment: 5,
         },
       };
+      setStage("Checking Backtest readiness…");
       const readinessCheck = await checkPortfolioBacktestReadiness(portfolioRequest);
       setReadiness(readinessCheck);
       if (!readinessCheck.ready) {
-        throw new Error(`غير جاهز للاختبار: ${readinessCheck.missing_rules.join(" ")}`);
+        throw new Error(`Backtest is not ready: ${readinessCheck.missing_rules.join(" ")}`);
       }
-      let stored = await runPortfolioBacktest(portfolioRequest);
+      let stored = await runPortfolioBacktest(portfolioRequest, controller.signal);
+      setActiveBacktestId(stored.backtest_id);
+      const deadline = Date.now() + 10 * 60 * 1000;
+      let consecutivePollFailures = 0;
       while (!["completed", "failed", "canceled"].includes(stored.status)) {
-        setStage(stored.stage_message_ar || "جارٍ تنفيذ الاختبار…");
-        await new Promise((resolve) => window.setTimeout(resolve, 500));
-        stored = await loadPortfolioBacktest(stored.backtest_id);
+        if (Date.now() >= deadline) {
+          throw new Error("Backtest polling timed out after 10 minutes. Cancel or retry with a smaller date range.");
+        }
+        setStage(`${stored.stage_message_ar || stored.status} · ${stored.progress_percentage}%`);
+        await new Promise((resolve) => window.setTimeout(resolve, 1500));
+        try {
+          stored = await loadPortfolioBacktest(stored.backtest_id, controller.signal);
+          consecutivePollFailures = 0;
+        } catch (pollError) {
+          if (controller.signal.aborted) throw pollError;
+          consecutivePollFailures += 1;
+          if (consecutivePollFailures >= 3) throw pollError;
+          setStage(`Temporary status refresh failure (${consecutivePollFailures}/3). Retrying…`);
+          await new Promise((resolve) => window.setTimeout(resolve, 1000 * consecutivePollFailures));
+        }
       }
-      if (stored.status === "failed") throw new Error(stored.failure_reason || "فشل الاختبار التاريخي.");
-      setStage("اكتمل الاختبار"); setResult(stored);
+      setResult(stored);
       setPortfolioHistory((items) => [stored, ...items.filter((item) => item.backtest_id !== stored.backtest_id)]);
+      if (stored.status === "failed") {
+        throw new Error(`${stored.failure_code ?? "backtest_failed"} · ${stored.failure_stage ?? "unknown"}: ${stored.failure_reason ?? "Backtest failed."}`);
+      }
+      setStage(stored.status === "canceled" ? "Backtest canceled." : "Backtest completed.");
       await refresh();
-    } catch (caught) { setError(caught instanceof Error ? caught.message : "تعذر تشغيل الاختبار."); }
-    finally { setBusy(false); }
+    } catch (caught) {
+      if (!controller.signal.aborted) setError(caught instanceof Error ? caught.message : "Backtest could not run.");
+    } finally {
+      if (runController.current === controller) runController.current = null;
+      setBusy(false);
+      setActiveBacktestId(null);
+    }
   }
   return (
     <div className="dashboard-content workflow-page">
-      <PageHeader eyebrow="محاكاة تاريخية حتمية" title="الاختبار التاريخي" description="مصدران للفرص ومحرك محفظة واحد. لا تُرسل أي أوامر إلى Paper أو Gate.io." action={<button className="primary-button" type="button" disabled={busy || !setup || step !== 5} onClick={() => void run()}><Icon name="chart" />{busy ? stage : "تشغيل الاختبار"}</button>} />
-      <Feedback message={error} error />
+      <PageHeader
+        eyebrow="Deterministic historical simulation"
+        title="Backtesting"
+        description="Backtests are optional research. They never submit Orders to Paper or Gate.io."
+        action={(
+          <div className="page-header-actions">
+            <button className="secondary-button" type="button" disabled={busy} onClick={applyBeginnerPreset}><Icon name="shield" /> Beginner preset</button>
+            {busy ? <button className="danger-button" type="button" onClick={() => void cancelActiveBacktest()}><Icon name="x" /> Cancel Backtest</button> : <button className="primary-button" type="button" disabled={!setup || step !== 5} onClick={() => void run()}><Icon name="chart" /> Run Backtest</button>}
+          </div>
+        )}
+      />
+      <Feedback message={error ?? historyError} error />
+      {!error && !historyError && stage && <div className="inline-alert neutral-alert" role="status"><Icon name="activity" /><span>{stage}</span></div>}
       <StateView value={state} unavailableLabel="تعذر تحميل إعدادات الاختبار">
         {(data) => data.setups.length === 0 ? <EmptyState title="لا توجد إعدادات عملات" description="أضف عملة إلى استراتيجية أولاً." /> : (
           <>
@@ -1062,9 +1157,34 @@ export function BacktestingPage({ initialSetupId, onOpenSetup }: { initialSetupI
               {step === 1 && <><div className="field-group two-columns"><label className="field"><span>إعداد العملة والاستراتيجية</span><select value={setupId} onChange={(event) => { setSetupId(event.target.value); setResult(null); setReadiness(null); }}><option value="">اختر إعداداً</option>{data.setups.map((item) => <option key={item.setup_id} value={item.setup_id}>{item.symbol} · {data.templates.find((template) => template.template_id === item.template_id)?.name}</option>)}</select></label><div className="review-callout"><strong>{readiness ? readiness.ready ? "جاهز للاختبار" : "غير جاهز للاختبار" : setup ? "سيُفحص قبل التشغيل" : "غير جاهز للاختبار"}</strong><p>{setup ? `نسخة الإعداد #${setup.revision} وإصدار الاستراتيجية سيبقيان ثابتين داخل النتيجة.` : "اختر إعداداً مكتمل القواعد."}</p>{readiness?.missing_rules.map((item) => <small key={item}>{item}</small>)}</div></div></>}
               {step === 2 && <div className="field-group"><div className="mode-choice"><button className={mode === "manual_symbols" ? "active" : ""} type="button" onClick={() => setMode("manual_symbols")}><strong>رموز يدوية</strong><small>تتجاوز الاكتشاف فقط، ولا تتجاوز محفز الدخول.</small></button><button className={mode === "historical_scanner" ? "active" : ""} type="button" onClick={() => setMode("historical_scanner")}><strong>إعادة تشغيل الماسح</strong><small>تقييم وترتيب تاريخي عند كل توقيت.</small></button></div><label className="field"><span>{mode === "historical_scanner" ? "كون الرموز التاريخي التقريبي" : "الرموز"}، مفصولة بفاصلة</span><textarea dir="ltr" value={symbols} onChange={(event) => setSymbols(event.target.value)} /></label>{mode === "historical_scanner" && <><div className="field-group two-columns"><label className="field"><span>تكرار المسح (شموع)</span><input type="number" min={1} value={scanFrequency} onChange={(event) => setScanFrequency(Number(event.target.value))} /></label><label className="field"><span>أقصى مرشحين في كل مسح</span><input type="number" min={1} value={maximumCandidates} onChange={(event) => setMaximumCandidates(Number(event.target.value))} /></label></div><div className="inline-alert warning-alert"><Icon name="alert" /><span>يستخدم هذا الإصدار كون العملات الحالية كبديل تاريخي، لذلك ستظهر ملاحظة تحيز العملات الباقية.</span></div></>}</div>}
               {step === 3 && <div className="field-group two-columns"><label className="field"><span>من تاريخ</span><input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label><label className="field"><span>إلى تاريخ</span><input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label><label className="field"><span>شموع التهيئة قبل البداية</span><input type="number" min={0} value={warmup} onChange={(event) => setWarmup(Number(event.target.value))} /></label><label className="field"><span>أطر إضافية بالدقائق</span><input dir="ltr" placeholder="15, 240" value={additionalTimeframes} onChange={(event) => setAdditionalTimeframes(event.target.value)} /></label><div className="review-callout"><strong>Gate.io · USDT Perpetual · {setup ? timeframeText(setup.timeframe_minutes) : "—"}</strong><p>تُستخدم الشموع المغلقة فقط، ولا تدخل فترة التهيئة في العائد المعلن.</p></div></div>}
-              {step === 4 && <div className="field-group two-columns"><label className="field"><span>الرصيد الابتدائي USDT</span><input dir="ltr" value={startingBalance} onChange={(event) => setStartingBalance(event.target.value)} /></label><label className="field"><span>طريقة حجم المركز</span><select value={positionSizing} onChange={(event) => setPositionSizing(event.target.value as typeof positionSizing)}><option value="fixed_quote">مبلغ ثابت</option><option value="percentage_available">نسبة من المتاح</option><option value="percentage_starting">نسبة من الرصيد الابتدائي</option><option value="risk_based">مخاطرة حسب مسافة الوقف</option></select></label>{positionSizing === "fixed_quote" ? <label className="field"><span>الهامش لكل صفقة</span><input dir="ltr" value={margin} onChange={(event) => setMargin(event.target.value)} /></label> : positionSizing === "risk_based" ? <label className="field"><span>المخاطرة من الرصيد %</span><input dir="ltr" value={riskPercentage} onChange={(event) => setRiskPercentage(event.target.value)} /></label> : <label className="field"><span>حجم المركز %</span><input dir="ltr" value={positionSizePercentage} onChange={(event) => setPositionSizePercentage(event.target.value)} /></label>}<label className="field"><span>أقصى مراكز متزامنة</span><input type="number" min={1} value={maximumPositions} onChange={(event) => setMaximumPositions(Number(event.target.value))} /></label><label className="field"><span>رسوم Maker</span><input dir="ltr" value={makerFee} onChange={(event) => setMakerFee(event.target.value)} /></label><label className="field"><span>رسوم Taker</span><input dir="ltr" value={takerFee} onChange={(event) => setTakerFee(event.target.value)} /></label><label className="field"><span>الانزلاق (نقطة أساس)</span><input dir="ltr" value={slippage} onChange={(event) => setSlippage(event.target.value)} /></label><label className="field"><span>فرق العرض/الطلب (نقطة أساس)</span><input dir="ltr" value={spread} onChange={(event) => setSpread(event.target.value)} /></label><label className="field"><span>هدف احتياطي % عند غياب هدف الاستراتيجية</span><input dir="ltr" value={fallbackTakeProfit} onChange={(event) => setFallbackTakeProfit(event.target.value)} /></label><label className="field"><span>وقف احتياطي % عند غياب وقف الاستراتيجية</span><input dir="ltr" value={fallbackStopLoss} onChange={(event) => setFallbackStopLoss(event.target.value)} /></label><label className="field"><span>غموض وقف/هدف داخل الشمعة</span><select value={ambiguity} onChange={(event) => setAmbiguity(event.target.value as typeof ambiguity)}><option value="conservative">محافظ: وقف الخسارة أولاً</option><option value="optimistic">متفائل: الهدف أولاً</option><option value="lower_timeframe">إطار أدنى عند توفره</option><option value="mark_ambiguous">تعليم الصفقة كغامضة</option></select></label></div>}
-              {step === 5 && <div className="backtest-review"><h3>ملخص التنفيذ</h3><p>تُقيّم الإشارات بعد إغلاق شمعة {setup ? timeframeText(setup.timeframe_minutes) : "—"}. أوامر السوق تُنفذ عند أول افتتاح لاحق مع انزلاق {slippage} ونصف فرق عرض/طلب {spread} نقطة أساس. تُطبّق رسوم Maker {makerFee} وTaker {takerFee} على الدخول والخروج. تُستخدم أهداف ووقوف الاستراتيجية أولاً؛ والبديل فقط عند غيابها هو {fallbackTakeProfit}% / {fallbackStopLoss}%. الحد الأقصى {maximumPositions} مراكز. سياسة الغموض: {ambiguity === "conservative" ? "وقف الخسارة أولاً" : ambiguity}.</p><label className="field"><span>فرضية قبل الاختبار (اختيارية)</span><textarea value={hypothesis} onChange={(event) => setHypothesis(event.target.value)} /></label>{setup && <div className="workflow-fact-row"><span dir="ltr">{symbols}</span><span>نسخة الإعداد #{setup.revision}</span><button className="secondary-button" type="button" onClick={() => onOpenSetup(setup.setup_id)}>فتح مراجعة الإعداد</button></div>}</div>}
-              <div className="wizard-actions"><button className="secondary-button" type="button" disabled={step === 1} onClick={() => setStep((value) => Math.max(1, value - 1))}>السابق</button><button className="primary-button" type="button" disabled={step === 5} onClick={() => setStep((value) => Math.min(5, value + 1))}>التالي</button></div>
+              {step === 4 && (
+                <div className="backtest-capital-step">
+                  <div className="beginner-preset-card">
+                    <div><strong>Beginner — realistic and conservative</strong><p>Uses conservative ambiguity, realistic fees, 5 bps Slippage, 2 bps Spread, one Position, and 200 warm-up candles.</p></div>
+                    <button className="secondary-button" type="button" onClick={applyBeginnerPreset}>Apply preset</button>
+                  </div>
+                  <div className="field-group two-columns">
+                    <label className="field"><span>Starting balance USDT</span><input dir="ltr" value={startingBalance} onChange={(event) => setStartingBalance(event.target.value)} /></label>
+                    <label className="field"><span>Position sizing</span><select value={positionSizing} onChange={(event) => setPositionSizing(event.target.value as typeof positionSizing)}><option value="fixed_quote">Fixed quote amount</option><option value="percentage_available">Percentage available</option><option value="percentage_starting">Percentage starting balance</option><option value="risk_based">Risk-based</option></select></label>
+                    {positionSizing === "fixed_quote" ? <label className="field"><span>Margin per Trade</span><input dir="ltr" value={margin} onChange={(event) => setMargin(event.target.value)} /></label> : positionSizing === "risk_based" ? <label className="field"><span>Risk per Trade %</span><input dir="ltr" value={riskPercentage} onChange={(event) => setRiskPercentage(event.target.value)} /></label> : <label className="field"><span>Position size %</span><input dir="ltr" value={positionSizePercentage} onChange={(event) => setPositionSizePercentage(event.target.value)} /></label>}
+                    <label className="field"><span>Maximum simultaneous Positions</span><input type="number" min={1} value={maximumPositions} onChange={(event) => setMaximumPositions(Number(event.target.value))} /></label>
+                  </div>
+                  <button className="secondary-button advanced-settings-toggle" type="button" aria-expanded={advancedOpen} onClick={() => setAdvancedOpen((value) => !value)}><Icon name="settings" />{advancedOpen ? "Hide advanced execution assumptions" : "Show advanced execution assumptions"}</button>
+                  {advancedOpen && (
+                    <div className="field-group two-columns advanced-backtest-settings">
+                      <label className="field"><span>Maker Fee</span><input dir="ltr" value={makerFee} onChange={(event) => setMakerFee(event.target.value)} /></label>
+                      <label className="field"><span>Taker Fee</span><input dir="ltr" value={takerFee} onChange={(event) => setTakerFee(event.target.value)} /></label>
+                      <label className="field"><span>Slippage (basis points)</span><input dir="ltr" value={slippage} onChange={(event) => setSlippage(event.target.value)} /></label>
+                      <label className="field"><span>Spread (basis points)</span><input dir="ltr" value={spread} onChange={(event) => setSpread(event.target.value)} /></label>
+                      <label className="field"><span>Fallback Take Profit %</span><input dir="ltr" value={fallbackTakeProfit} onChange={(event) => setFallbackTakeProfit(event.target.value)} /></label>
+                      <label className="field"><span>Fallback Stop Loss %</span><input dir="ltr" value={fallbackStopLoss} onChange={(event) => setFallbackStopLoss(event.target.value)} /></label>
+                      <label className="field"><span>Intrabar ambiguity</span><select value={ambiguity} onChange={(event) => setAmbiguity(event.target.value as typeof ambiguity)}><option value="conservative">Conservative: Stop Loss first</option><option value="optimistic">Optimistic: Take Profit first</option><option value="lower_timeframe">Use lower Timeframe</option><option value="mark_ambiguous">Mark Trade ambiguous</option></select></label>
+                    </div>
+                  )}
+                </div>
+              )}
+              {step === 5 && <div className="backtest-review"><span className="eyebrow">Final step</span><h3>Review and run</h3><p>Signals are evaluated after each closed {setup ? timeframeText(setup.timeframe_minutes) : "—"} candle. Market Orders use {slippage} bps Slippage and {spread} bps Spread. Maker Fee {makerFee}; Taker Fee {takerFee}; fallback Take Profit / Stop Loss {fallbackTakeProfit}% / {fallbackStopLoss}%; maximum {maximumPositions} Positions; ambiguity policy {ambiguity}.</p><label className="field"><span>Optional: pre-test hypothesis</span><textarea value={hypothesis} onChange={(event) => setHypothesis(event.target.value)} /></label>{setup && <div className="workflow-fact-row"><span dir="ltr">{symbols}</span><span>Setup revision #{setup.revision}</span><button className="secondary-button" type="button" onClick={() => onOpenSetup(setup.setup_id)}>Optional: Open Setup Review</button></div>}<div className="final-step-action"><strong>No more setup steps.</strong><span>Run the Backtest now or go back to change an assumption.</span><button className="primary-button" type="button" disabled={busy || !setup} onClick={() => void run()}><Icon name="chart" /> Run Backtest</button></div></div>}
+              <div className="wizard-actions"><button className="secondary-button" type="button" disabled={step === 1 || busy} onClick={() => setStep((value) => Math.max(1, value - 1))}>Previous</button>{step < 5 ? <button className="primary-button" type="button" disabled={busy} onClick={() => setStep((value) => Math.min(5, value + 1))}>Next</button> : <span className="wizard-final-label">Step 5 of 5 · Final step</span>}</div>
             </section>
             {result && <PortfolioBacktestResultPanel stored={result} onChange={setResult} />}
             <section className="panel"><div className="panel-header"><div><h2>آخر اختبارات المحفظة المحفوظة</h2><p>لقطات إعداد ونتائج ثابتة للبحث فقط؛ لا تدخل في P&amp;L الحساب. تُحمّل التفاصيل عند فتح نتيجة فقط.</p></div></div><div className="history-list">{portfolioHistory.length === 0 ? <EmptyState title="لا توجد اختبارات محفظة بعد" description="شغّل أول اختبار من الخطوات أعلاه." /> : portfolioHistory.slice(0, 20).map((item) => <div className="history-row" key={item.backtest_id}><div><strong dir="ltr">{item.request.symbols.join(", ")}</strong><small>{formatDateTime(item.created_at)} · {item.request.mode === "historical_scanner" ? "ماسح تاريخي" : "رموز يدوية"} · {item.status}</small></div><div>{item.result ? <><strong>{assessmentLabel(item.result.assessment.label)}</strong><small>{formatPercent(item.result.metrics.return_percentage)}</small><button className="secondary-button" type="button" onClick={() => setResult(item)}>فتح</button></> : <><strong>{item.stage_message_ar}</strong>{item.status === "completed" && <button className="secondary-button" type="button" onClick={() => void loadPortfolioBacktest(item.backtest_id).then(setResult)}>فتح</button>}</>}</div></div>)}</div></section>

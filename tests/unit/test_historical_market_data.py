@@ -71,6 +71,7 @@ def test_contract_universe_excludes_delisting_and_ranks_by_quote_volume() -> Non
 
 def test_candle_loader_excludes_current_unfinished_candle() -> None:
     base = datetime(2026, 1, 1, tzinfo=UTC)
+
     def clock():
         return base + timedelta(minutes=3, seconds=30)
 
@@ -249,3 +250,28 @@ def test_latest_candles_requests_extra_point_and_returns_only_completed_limit() 
 
     assert len(candles) == 3
     assert candles[-1].opened_at == base + timedelta(minutes=2)
+
+
+def test_historical_provider_reuses_client_and_retries_temporary_failures() -> None:
+    attempts = 0
+    delays: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            return httpx.Response(503, json={"label": "temporary"})
+        return httpx.Response(200, json=[])
+
+    provider = GateHistoricalMarketDataProvider(
+        "live",
+        transport=httpx.MockTransport(handler),
+        maximum_attempts=3,
+        retry_delay_seconds=0.1,
+        sleep=delays.append,
+    )
+
+    assert provider.contracts() == ()
+    assert attempts == 4  # contracts and tickers share one reusable client after retry.
+    assert delays == [0.1, 0.2]
+    provider.close()

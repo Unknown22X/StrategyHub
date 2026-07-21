@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from time import sleep as default_sleep
 from typing import Literal
 
 import httpx
@@ -46,15 +47,33 @@ class GateHistoricalMarketDataProvider:
         transport: httpx.BaseTransport | None = None,
         timeout_seconds: float = 15.0,
         clock: UtcClock | None = None,
+        maximum_attempts: int = 3,
+        retry_delay_seconds: float = 0.15,
+        sleep: Callable[[float], None] = default_sleep,
     ) -> None:
         if timeout_seconds <= 0:
             raise ValueError("Gate historical REST timeout must be positive.")
+        if maximum_attempts < 1 or maximum_attempts > 5:
+            raise ValueError("Gate historical REST attempts must be between 1 and 5.")
+        if retry_delay_seconds < 0:
+            raise ValueError("Gate historical retry delay cannot be negative.")
         self._base_url = (
             base_url or (LIVE_REST_URL if environment == "live" else TESTNET_REST_URL)
         ).rstrip("/")
         self._transport = transport
         self._timeout_seconds = timeout_seconds
+        self._maximum_attempts = maximum_attempts
+        self._retry_delay_seconds = retry_delay_seconds
+        self._sleep = sleep
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._client = httpx.Client(
+            transport=self._transport,
+            timeout=self._timeout_seconds,
+            headers={
+                "Accept": "application/json",
+                "X-Gate-Size-Decimal": "1",
+            },
+        )
 
     def contracts(
         self,
@@ -294,22 +313,33 @@ class GateHistoricalMarketDataProvider:
         *,
         params: dict[str, str] | None = None,
     ) -> object:
-        try:
-            with httpx.Client(
-                transport=self._transport,
-                timeout=self._timeout_seconds,
-                headers={
-                    "Accept": "application/json",
-                    "X-Gate-Size-Decimal": "1",
-                },
-            ) as client:
-                response = client.get(f"{self._base_url}/{path}", params=params)
-            response.raise_for_status()
-            return response.json()
-        except (httpx.HTTPError, ValueError) as error:
-            raise ConnectionError(
-                f"Gate historical REST request failed: {path}"
-            ) from error
+        last_error: Exception | None = None
+        for attempt in range(1, self._maximum_attempts + 1):
+            try:
+                response = self._client.get(f"{self._base_url}/{path}", params=params)
+                response.raise_for_status()
+                return response.json()
+            except (httpx.HTTPError, ValueError) as error:
+                last_error = error
+                retryable = isinstance(
+                    error,
+                    (httpx.TimeoutException, httpx.TransportError),
+                ) or (
+                    isinstance(error, httpx.HTTPStatusError)
+                    and (
+                        error.response.status_code == 429
+                        or error.response.status_code >= 500
+                    )
+                )
+                if not retryable or attempt >= self._maximum_attempts:
+                    break
+                self._sleep(self._retry_delay_seconds * attempt)
+        raise ConnectionError(
+            f"Gate historical REST request failed after {self._maximum_attempts} attempt(s): {path}"
+        ) from last_error
+
+    def close(self) -> None:
+        self._client.close()
 
     @staticmethod
     def _interval(timeframe_minutes: int) -> str:

@@ -34,8 +34,13 @@ BacktestOrderStatus = Literal[
     "pending", "submitted", "filled", "canceled", "expired", "rejected"
 ]
 BacktestRunStatus = Literal[
-    "queued", "loading_data", "running", "calculating_results",
-    "completed", "failed", "canceled"
+    "queued",
+    "loading_data",
+    "running",
+    "calculating_results",
+    "completed",
+    "failed",
+    "canceled",
 ]
 
 
@@ -86,18 +91,12 @@ class BacktestSettings(BaseModel):
     position_size_percentage: Decimal = Field(default=Decimal("10"), gt=0, le=100)
     risk_percentage: Decimal = Field(default=Decimal("1"), gt=0, le=100)
     maximum_positions: int = Field(default=1, ge=1, le=100)
-    maximum_allocation_percentage: Decimal = Field(
-        default=Decimal("100"), gt=0, le=100
-    )
+    maximum_allocation_percentage: Decimal = Field(default=Decimal("100"), gt=0, le=100)
     maximum_volume_participation_percentage: Decimal | None = Field(
         default=None, gt=0, le=100
     )
-    default_take_profit_percentage: Decimal = Field(
-        default=Decimal("5"), gt=0, le=1000
-    )
-    default_stop_loss_percentage: Decimal = Field(
-        default=Decimal("3"), gt=0, le=1000
-    )
+    default_take_profit_percentage: Decimal = Field(default=Decimal("5"), gt=0, le=1000)
+    default_stop_loss_percentage: Decimal = Field(default=Decimal("3"), gt=0, le=1000)
     minimum_trades_for_assessment: int = Field(default=5, ge=1, le=10000)
 
 
@@ -130,7 +129,9 @@ class BacktestPortfolioRequest(BaseModel):
     data_version: str | None = Field(default=None, max_length=500)
     code_version: str | None = Field(default=None, max_length=200)
     pre_test_hypothesis: str = Field(default="", max_length=4000)
-    execution: BacktestExecutionSettings = Field(default_factory=BacktestExecutionSettings)
+    execution: BacktestExecutionSettings = Field(
+        default_factory=BacktestExecutionSettings
+    )
     settings: BacktestSettings = Field(default_factory=BacktestSettings)
 
     @field_validator("start", "end")
@@ -172,7 +173,9 @@ class BacktestDecision(BaseModel):
     decision_id: str
     occurred_at: datetime
     symbol: str
-    event: Literal["evaluated", "qualified", "selected", "rejected", "entered", "exited"]
+    event: Literal[
+        "evaluated", "qualified", "selected", "rejected", "entered", "exited"
+    ]
     qualified: bool = False
     selected: bool = False
     reason_codes: tuple[str, ...] = ()
@@ -417,6 +420,8 @@ class StoredPortfolioBacktestRun(BaseModel):
     request: BacktestPortfolioRequest
     result: BacktestResult | None = None
     failure_reason: str | None = None
+    failure_code: str | None = None
+    failure_stage: str | None = None
     post_test_observations: str = ""
 
 

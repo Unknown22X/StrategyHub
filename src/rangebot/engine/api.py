@@ -3545,6 +3545,18 @@ def create_app(
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
 
+    @app.delete(
+        "/v1/backtests/portfolio/{backtest_id}",
+        response_model=StoredPortfolioBacktestRun,
+    )
+    def cancel_portfolio_backtest(backtest_id: str) -> StoredPortfolioBacktestRun:
+        try:
+            return historical_backtests.cancel(backtest_id)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except RuntimeError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
     @app.get(
         "/v1/backtests/portfolio/{backtest_id}",
         response_model=StoredPortfolioBacktestRun,
