@@ -41,6 +41,57 @@ def test_bundled_engine_fallback_starts_paper_with_real_safety_boundaries(
     assert "RANGEBOT_ENV_FILE" not in calls["env"]
 
 
+def test_installed_fallback_uses_service_configured_data_root(
+    monkeypatch, tmp_path: Path
+) -> None:
+    executable = tmp_path / "engine" / "bot-engine.exe"
+    executable.parent.mkdir()
+    executable.touch()
+    service = tmp_path / "service"
+    service.mkdir()
+    demo_root = tmp_path / "paper-demo"
+    (service / "RangeBot.Engine.xml").write_text(
+        """<service>
+        <env name="RANGEBOT_HOME" value="{data_root}" />
+        </service>""".format(data_root=demo_root),
+        encoding="utf-8",
+    )
+    calls: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        engine_bootstrap.subprocess,
+        "Popen",
+        lambda command, **kwargs: calls.update(command=command, **kwargs),
+    )
+
+    assert engine_bootstrap._start_detached_fallback(executable, tmp_path) is True
+    assert calls["env"]["RANGEBOT_HOME"] == str(demo_root)
+
+
+def test_installed_fallback_refuses_missing_data_root_in_service_config(
+    monkeypatch, tmp_path: Path
+) -> None:
+    executable = tmp_path / "engine" / "bot-engine.exe"
+    executable.parent.mkdir()
+    executable.touch()
+    service = tmp_path / "service"
+    service.mkdir()
+    (service / "RangeBot.Engine.xml").write_text(
+        """<service><env name="RANGEBOT_HOME" value="" /></service>""",
+        encoding="utf-8",
+    )
+    started = False
+
+    def start_process(*args, **kwargs):
+        nonlocal started
+        started = True
+
+    monkeypatch.setattr(engine_bootstrap.subprocess, "Popen", start_process)
+
+    assert engine_bootstrap._start_detached_fallback(executable, tmp_path) is False
+    assert started is False
+
+
 def test_launcher_recovers_installed_service_before_using_fallback(
     monkeypatch, tmp_path: Path
 ) -> None:

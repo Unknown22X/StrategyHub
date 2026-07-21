@@ -7,6 +7,7 @@ from pathlib import Path
 import socket
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 
 
 LOCAL_ENGINE_PORT = 8765
@@ -95,9 +96,41 @@ def _recover_windows_service(wrapper: Path) -> bool:
     return restarted is not None and restarted.returncode == 0
 
 
+def _installed_data_root(root: Path) -> Path | None:
+    """Read the installed service's authoritative mutable-data root.
+
+    The packaged launcher must not silently fall back to the current user's
+    default ``%LOCALAPPDATA%\\RangeBot`` profile when the service was installed
+    with a separate demo or production root.
+    """
+
+    configuration = root / "service" / "RangeBot.Engine.xml"
+    if not configuration.is_file():
+        return None
+    try:
+        document = ET.parse(configuration)
+    except (OSError, ET.ParseError):
+        return None
+    for node in document.getroot().findall("env"):
+        if node.get("name") != "RANGEBOT_HOME":
+            continue
+        value = (node.get("value") or "").strip()
+        if not value:
+            return None
+        candidate = Path(value).expanduser()
+        return candidate if candidate.is_absolute() else None
+    return None
+
+
 def _start_detached_fallback(executable: Path, root: Path) -> bool:
     environment = os.environ.copy()
     environment.pop("RANGEBOT_ENV_FILE", None)
+    service_configuration = root / "service" / "RangeBot.Engine.xml"
+    if service_configuration.exists():
+        data_root = _installed_data_root(root)
+        if data_root is None:
+            return False
+        environment["RANGEBOT_HOME"] = str(data_root)
     try:
         subprocess.Popen(
             [str(executable), *_ENGINE_ARGUMENTS],
