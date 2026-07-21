@@ -8,6 +8,7 @@ import type {
   StrategyInstance,
   StrategyTypeMetadata,
 } from "../types";
+import { ContractSymbolPicker } from "./ContractSymbolPicker";
 import { Icon } from "./Icon";
 import {
   normalizeFixedPriceLadderLevels,
@@ -194,16 +195,13 @@ export function StrategyCreateDrawer({
                   placeholder="مثال: نطاق BTC خمس دقائق"
                 />
               </label>
-              <label className="field">
-                <span>العقد</span>
-                <input
-                  required
-                  maxLength={64}
-                  value={symbol}
-                  onChange={(event) => setSymbol(event.target.value)}
-                  placeholder="BTC_USDT"
-                />
-              </label>
+              <ContractSymbolPicker
+                value={symbol}
+                onChange={setSymbol}
+                environment={environment}
+                label="Coin / contract"
+                required
+              />
             </div>
 
             <div className="field-group three-columns">

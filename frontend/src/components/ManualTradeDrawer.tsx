@@ -13,6 +13,7 @@ import type {
   OrderType,
   TimeInForce,
 } from "../types";
+import { ContractSymbolPicker } from "./ContractSymbolPicker";
 import { Icon } from "./Icon";
 import { StatusPill } from "./StateView";
 
@@ -251,18 +252,15 @@ export function ManualTradeDrawer({
             </button>
           </div>
 
-          <label className="field">
-            <span>عقد Gate.io USDT الدائم</span>
-            <input
-              autoComplete="off"
-              value={symbol}
-              onChange={(event) => {
-                setSymbol(event.target.value);
-                invalidatePreview();
-              }}
-              placeholder="BTC_USDT"
-            />
-          </label>
+          <ContractSymbolPicker
+            value={symbol}
+            onChange={(value) => {
+              setSymbol(value);
+              invalidatePreview();
+            }}
+            environment={environment}
+            label="Gate.io USDT perpetual contract"
+          />
 
           <div className="field-group three-columns">
             <label className="field">

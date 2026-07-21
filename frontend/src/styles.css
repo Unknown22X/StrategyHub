@@ -1372,6 +1372,34 @@ tbody tr:hover {
 
 .field select option {
   background: #111827;
+  color: #f8fafc;
+}
+
+.contract-symbol-picker {
+  min-width: 0;
+}
+
+.contract-picker-input-wrap {
+  position: relative;
+}
+
+.contract-picker-input-wrap > svg {
+  position: absolute;
+  top: 50%;
+  inset-inline-end: 12px;
+  transform: translateY(-50%);
+  color: var(--info);
+}
+
+.contract-picker-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+}
+
+.contract-picker-status > small {
+  width: 100%;
 }
 
 .field-group.two-columns {

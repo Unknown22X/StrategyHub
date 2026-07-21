@@ -45,6 +45,7 @@ import type {
   TradeFill,
   TradeHistorySummary,
 } from "../types";
+import { ContractSymbolPicker } from "./ContractSymbolPicker";
 import { Icon } from "./Icon";
 import { StateView, StatusPill } from "./StateView";
 import { StrategyChart } from "./StrategyChart";
@@ -687,7 +688,7 @@ export function StrategyDetailPage({
           )}
           <div className="field-group two-columns">
             <label className="field"><span>الاسم</span><input disabled={!editing} value={name} onChange={(event) => setName(event.target.value)} /></label>
-            <label className="field"><span>العقد</span><input disabled={!editing} value={symbol} onChange={(event) => setSymbol(event.target.value)} /></label>
+            <ContractSymbolPicker value={symbol} onChange={setSymbol} environment={environment} label="Coin / contract" disabled={!editing} />
           </div>
           <div className="field-group three-columns">
             <label className="field"><span>البيئة</span><select disabled={!editing} value={environment} onChange={(event) => setEnvironment(event.target.value as StrategyInstance["environment"])}><option value="live">Live</option><option value="testnet">Testnet</option><option value="paper">Paper</option></select></label>

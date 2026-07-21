@@ -29,6 +29,7 @@ import type {
   PaperRisk,
   PaperWatchlist,
   PrivateStreamState,
+  PublicContract,
   ReconciliationReadiness,
   RemoteData,
   RuntimeState,
@@ -284,6 +285,14 @@ export function loadMarketSnapshot(
     `/v1/market-data/${encodeURIComponent(symbol)}`,
     { signal },
   );
+}
+
+export function loadGateContracts(
+  query = "",
+  signal?: AbortSignal,
+): Promise<PublicContract[]> {
+  const search = new URLSearchParams({ query });
+  return request<PublicContract[]>(`/v1/paper/contracts?${search.toString()}`, { signal });
 }
 
 export function cancelPaperPendingEntry(): Promise<PaperAccount> {

@@ -22,6 +22,7 @@ import {
   loadBacktestTrades,
   loadCredentialStatus,
   loadDashboard,
+  loadGateContracts,
   loadMarketCandles,
   loadMarketSnapshot,
   loadReconciliationReadiness,
@@ -644,6 +645,20 @@ describe("dashboard API boundary", () => {
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
       "/v1/market-data/BTC_USDT",
+      expect.any(Object),
+    );
+  });
+
+  it("searches the Gate public contract catalog for symbol pickers", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse([
+      { symbol: "BTC_USDT", quantity_step: "1", minimum_quantity: "1" },
+    ]));
+
+    const contracts = await loadGateContracts("btc");
+
+    expect(contracts[0]?.symbol).toBe("BTC_USDT");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/v1/paper/contracts?query=btc",
       expect.any(Object),
     );
   });

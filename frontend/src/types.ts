@@ -134,6 +134,12 @@ export interface MarketCandleSeries {
   updated_at: string;
 }
 
+export interface PublicContract {
+  symbol: string;
+  quantity_step: string;
+  minimum_quantity: string;
+}
+
 export interface MarketDataSnapshot {
   symbol: string;
   last_price: string;

@@ -62,6 +62,7 @@ import type {
   StrategyTypeMetadata,
   WorkflowSummary,
 } from "../types";
+import { ContractSymbolPicker } from "./ContractSymbolPicker";
 import { Icon } from "./Icon";
 import { EmptyState, StateView, StatusPill } from "./StateView";
 import {
@@ -413,7 +414,13 @@ export function StrategiesPage({
                     ))}
                   </div>
                   <div className="workflow-add-coin-row">
-                    <input dir="ltr" value={coinDrafts[template.template_id] ?? ""} onChange={(event) => setCoinDrafts((current) => ({ ...current, [template.template_id]: event.target.value }))} placeholder="BTC_USDT" />
+                    <ContractSymbolPicker
+                      value={coinDrafts[template.template_id] ?? ""}
+                      onChange={(value) => setCoinDrafts((current) => ({ ...current, [template.template_id]: value }))}
+                      environment="paper"
+                      label="Add coin"
+                      help="Choose a Gate contract or enter a symbol manually; the backend validates it before saving."
+                    />
                     <button className="primary-button" type="button" disabled={busy} onClick={() => void addCoin(template.template_id)}><Icon name="plus" /> إضافة عملة</button>
                     <button className="secondary-button" type="button" disabled={busy} onClick={() => editTemplate(template)}><Icon name="settings" /> تعديل</button>
                     <button className="secondary-button" type="button" disabled={busy} onClick={() => void archiveTemplate(template.template_id)}><Icon name="archive" /> أرشفة</button>
