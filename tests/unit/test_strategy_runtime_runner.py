@@ -66,6 +66,8 @@ def _context(evaluated_at: datetime = NOW) -> StrategyEvaluationContext:
 class Repository:
     def __init__(self, instance: StrategyInstance) -> None:
         self.instance = instance
+        self.run_instance = instance
+        self.run_extensions = {}
         self.blocks = []
 
     def list(self):
@@ -73,7 +75,14 @@ class Repository:
 
     def active_run(self, instance_id):
         assert instance_id == self.instance.instance_id
-        return SimpleNamespace(run_id="run-1")
+        return SimpleNamespace(
+            run_id="run-1",
+            configuration_snapshot={
+                "schema_version": 1,
+                "instance": self.run_instance.model_dump(mode="json"),
+                **self.run_extensions,
+            },
+        )
 
     def decisions(self, instance_id, limit=100):
         assert instance_id == self.instance.instance_id
@@ -111,9 +120,17 @@ class StrategyManager:
         self.calls = 0
         self.runtime_event_keys = []
 
-    def evaluate(self, instance_id, context, *, runtime_event_key=None):
+    def evaluate(
+        self,
+        instance_id,
+        context,
+        *,
+        runtime_event_key=None,
+        instance_snapshot=None,
+    ):
         self.calls += 1
         self.runtime_event_keys.append(runtime_event_key)
+        self.instance_snapshot = instance_snapshot
         return self.result
 
 
@@ -221,6 +238,30 @@ def test_approved_execution_plan_controls_limit_entry_submission() -> None:
     assert request.expires_at == NOW + timedelta(minutes=5)
 
 
+def test_stored_run_execution_plan_overrides_mutable_resolver() -> None:
+    stored_plan = StrategyExecutionPlan(
+        entry=EntryExecutionSettings(
+            order_type="limit",
+            limit_price_formula="last-2%",
+            time_in_force="gtc",
+            expires_after_minutes=3,
+        )
+    )
+    mutable_plan = StrategyExecutionPlan()
+    runner, repository, _, orders = _runner(
+        _instance("running"), execution_plan=mutable_plan
+    )
+    repository.run_extensions["execution_plan"] = stored_plan.model_dump(mode="json")
+
+    outcome = asyncio.run(runner.run_once())[0]
+
+    assert outcome.submitted is True
+    request, _ = orders.calls[0]
+    assert request.order_type == "limit"
+    assert request.limit_price == Decimal("98.98")
+    assert request.expires_at == NOW + timedelta(minutes=3)
+
+
 def test_trailing_stop_intent_is_submitted_with_exact_initial_stop() -> None:
     runner, repository, _, orders = _runner(
         _instance("running"), evaluation=_evaluation(trailing=True)
@@ -257,6 +298,27 @@ def test_market_update_cadence_evaluates_only_when_observed_timestamp_changes() 
     asyncio.run(runner.run_once())
 
     assert manager.calls == 2
+
+
+def test_runtime_uses_stored_run_snapshot_for_signal_and_order_sizing() -> None:
+    runner, repository, manager, orders = _runner(_instance("running"))
+    repository.instance = repository.instance.model_copy(
+        update={
+            "requested_margin": Decimal("99"),
+            "requested_leverage": 10,
+            "configuration": {"mutated": True},
+        }
+    )
+
+    outcome = asyncio.run(runner.run_once())[0]
+
+    assert outcome.submitted is True
+    request, _ = orders.calls[0]
+    assert request.margin_amount == Decimal("25")
+    assert request.leverage == 5
+    assert manager.instance_snapshot.requested_margin == Decimal("25")
+    assert manager.instance_snapshot.requested_leverage == 5
+    assert manager.instance_snapshot.configuration == {}
 
 
 def test_context_failure_is_audited_once_until_the_runtime_recovers() -> None:

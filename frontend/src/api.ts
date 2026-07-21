@@ -40,6 +40,7 @@ import type {
   StrategyOverviewItem,
   StrategyInstanceUpdate,
   StrategyRun,
+  StrategyStartReadiness,
   StrategyScanRequest,
   StrategyTypeMetadata,
   StoredBacktestRun,
@@ -495,13 +496,29 @@ export function submitManualOrder(
   });
 }
 
+export function loadStrategyStartReadiness(
+  instanceId: string,
+  signal?: AbortSignal,
+): Promise<StrategyStartReadiness> {
+  return request<StrategyStartReadiness>(
+    `/v1/strategies/${encodeURIComponent(instanceId)}/start-readiness`,
+    { signal },
+  );
+}
+
 export function transitionStrategy(
   instanceId: string,
   action: "start" | "monitor" | "pause" | "stop",
+  confirmation?: string,
 ): Promise<StrategyInstance> {
   return request<StrategyInstance>(
     `/v1/strategies/${encodeURIComponent(instanceId)}/${action}`,
-    { method: "POST" },
+    {
+      method: "POST",
+      ...(action === "start" && confirmation
+        ? { body: JSON.stringify({ confirmation }) }
+        : {}),
+    },
   );
 }
 

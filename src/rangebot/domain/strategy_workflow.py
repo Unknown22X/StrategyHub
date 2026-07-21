@@ -48,6 +48,12 @@ DeploymentStatus = Literal[
 ExecutionOrderType = Literal["market", "limit"]
 TimeInForce = Literal["gtc", "ioc", "poc", "fok"]
 PriceState = Literal["fresh", "delayed", "unavailable"]
+BacktestState = Literal[
+    "never_backtested",
+    "current_successful",
+    "current_failed",
+    "stale",
+]
 
 
 class EntryExecutionSettings(BaseModel):
@@ -404,6 +410,31 @@ class BotDeploymentCreate(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     environment: StrategyEnvironment
+
+
+class StrategyStartRequest(BaseModel):
+    """Optional confirmation required only for real-funds Strategy starts."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    confirmation: str | None = Field(default=None, max_length=100)
+
+
+class StrategyStartReadiness(BaseModel):
+    """Structured, user-facing authorization state for one Strategy start."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    instance_id: str
+    environment: StrategyEnvironment
+    ready: bool
+    backtest_state: BacktestState
+    backtest_id: str | None = None
+    backtest_assessment: BacktestAssessmentLabel | None = None
+    blocker_codes: tuple[str, ...] = ()
+    warning_codes: tuple[str, ...] = ()
+    checks: dict[str, bool] = Field(default_factory=dict)
+    messages_ar: dict[str, str] = Field(default_factory=dict)
 
 
 class BotDeployment(BaseModel):

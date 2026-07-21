@@ -6,6 +6,7 @@ import {
   loadStrategyConfigurationVersions,
   loadStrategyDecisions,
   loadStrategyRuns,
+  loadStrategyStartReadiness,
   loadTradeHistory,
   loadTradeHistorySummary,
   transitionStrategy,
@@ -27,6 +28,7 @@ import type {
   StrategyDecision,
   StrategyInstance,
   StrategyRun,
+  StrategyStartReadiness,
   StrategyTypeMetadata,
   TradeFill,
   TradeHistorySummary,
@@ -67,6 +69,7 @@ export function StrategyDetailPage({
   const [feedback, setFeedback] = useState<Feedback>(null);
   const [decisions, setDecisions] = useState<RemoteData<StrategyDecision[]>>({ status: "loading" });
   const [runs, setRuns] = useState<RemoteData<StrategyRun[]>>({ status: "loading" });
+  const [startReadiness, setStartReadiness] = useState<RemoteData<StrategyStartReadiness>>({ status: "loading" });
   const [versions, setVersions] = useState<RemoteData<StrategyConfigurationVersion[]>>({ status: "loading" });
   const [tradeSummary, setTradeSummary] = useState<RemoteData<TradeHistorySummary>>({ status: "loading" });
   const [tradeFills, setTradeFills] = useState<RemoteData<TradeFill[]>>({ status: "loading" });
@@ -117,19 +120,22 @@ export function StrategyDetailPage({
     const controller = new AbortController();
     setDecisions({ status: "loading" });
     setRuns({ status: "loading" });
+    setStartReadiness({ status: "loading" });
     setVersions({ status: "loading" });
     setTradeSummary({ status: "loading" });
     setTradeFills({ status: "loading" });
     Promise.all([
       loadStrategyDecisions(strategy.instance_id, controller.signal),
       loadStrategyRuns(strategy.instance_id, controller.signal),
+      loadStrategyStartReadiness(strategy.instance_id, controller.signal),
       loadStrategyConfigurationVersions(strategy.instance_id, controller.signal),
       loadTradeHistorySummary({ instanceId: strategy.instance_id }, controller.signal),
       loadTradeHistory({ instanceId: strategy.instance_id, limit: 20 }, controller.signal),
     ])
-      .then(([decisionData, runData, versionData, summaryData, fillData]) => {
+      .then(([decisionData, runData, readinessData, versionData, summaryData, fillData]) => {
         setDecisions({ status: "ready", data: decisionData });
         setRuns({ status: "ready", data: runData });
+        setStartReadiness({ status: "ready", data: readinessData });
         setVersions({ status: "ready", data: versionData });
         setTradeSummary({ status: "ready", data: summaryData });
         setTradeFills({ status: "ready", data: fillData });
@@ -141,6 +147,7 @@ export function StrategyDetailPage({
         const message = error instanceof Error ? error.message : "تعذر تحميل سجل الاستراتيجية.";
         setDecisions({ status: "error", message });
         setRuns({ status: "error", message });
+        setStartReadiness({ status: "error", message });
         setVersions({ status: "error", message });
         setTradeSummary({ status: "error", message });
         setTradeFills({ status: "error", message });
@@ -149,10 +156,20 @@ export function StrategyDetailPage({
   }, [strategy.instance_id, strategy.revision]);
 
   async function handleLifecycle(action: "start" | "monitor" | "pause" | "stop") {
+    let confirmation: string | undefined;
+    if (action === "start" && strategy.environment === "live") {
+      const confirmed = window.confirm(
+        "LIVE يستخدم أموالاً حقيقية. تأكد من Environment وCredentials وRisk Management وTake Profit وStop Loss قبل البدء.",
+      );
+      if (!confirmed) {
+        return;
+      }
+      confirmation = "START LIVE STRATEGY";
+    }
     setBusy(action);
     setFeedback(null);
     try {
-      const updated = await transitionStrategy(strategy.instance_id, action);
+      const updated = await transitionStrategy(strategy.instance_id, action, confirmation);
       onChanged(updated);
       setFeedback({ tone: "success", message: "حُدثت حالة الاستراتيجية بعد تأكيد المحرك." });
     } catch (error) {
@@ -310,6 +327,50 @@ export function StrategyDetailPage({
           <span>{feedback.message}</span>
         </div>
       )}
+
+      <section className="panel strategy-readiness-panel" aria-label="Strategy start readiness">
+        <div className="panel-header">
+          <div>
+            <h2>Start readiness</h2>
+            <p>Backtest حالة معلوماتية؛ أما Environment وCredentials وAccount safety فهي شروط فعلية.</p>
+          </div>
+        </div>
+        <StateView value={startReadiness} unavailableLabel="تعذر قراءة جاهزية Strategy">
+          {(readiness) => (
+            <div className="readiness-stack">
+              <div className="readiness-summary">
+                <StatusPill
+                  label={readiness.ready ? "Ready to start" : "Not ready"}
+                  tone={readiness.ready ? "positive" : "warning"}
+                />
+                <StatusPill
+                  label={backtestStateLabel(readiness.backtest_state)}
+                  tone={backtestStateTone(readiness.backtest_state)}
+                />
+              </div>
+              {readiness.warning_codes.length > 0 && (
+                <div className="inline-alert warning-alert" role="note">
+                  <Icon name="alert" />
+                  <div>
+                    <strong>{backtestWarningTitle(readiness.backtest_state)}</strong>
+                    <p>{readiness.warning_codes.map((code) => readiness.messages_ar[code] ?? code).join(" · ")}</p>
+                  </div>
+                </div>
+              )}
+              {readiness.blocker_codes.length > 0 && (
+                <div className="readiness-blockers" role="alert">
+                  <strong>المطلوب قبل البدء</strong>
+                  <ul className="warning-list">
+                    {readiness.blocker_codes.map((code) => (
+                      <li key={code}>{readiness.messages_ar[code] ?? code}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+        </StateView>
+      </section>
 
       <nav className="detail-tabs" aria-label="أقسام الاستراتيجية">
         <button className={tab === "overview" ? "active" : ""} type="button" onClick={() => setTab("overview")}>نظرة عامة وتحليل</button>
@@ -511,6 +572,28 @@ function statusTone(status: StrategyInstance["status"]): "positive" | "warning" 
   if (status === "monitoring" || status === "paused") return "warning";
   if (status === "error") return "negative";
   return "neutral";
+}
+
+function backtestStateLabel(state: StrategyStartReadiness["backtest_state"]): string {
+  if (state === "current_successful") return "Backtest current — successful";
+  if (state === "current_failed") return "Backtest current — failed";
+  if (state === "stale") return "Backtest stale";
+  return "Never Backtested";
+}
+
+function backtestStateTone(
+  state: StrategyStartReadiness["backtest_state"],
+): "positive" | "warning" | "negative" | "neutral" {
+  if (state === "current_successful") return "positive";
+  if (state === "current_failed") return "negative";
+  return "warning";
+}
+
+function backtestWarningTitle(state: StrategyStartReadiness["backtest_state"]): string {
+  if (state === "never_backtested") return "Never Backtested — لا يمنع البدء وحده";
+  if (state === "stale") return "Backtest لا يطابق الإعدادات الحالية";
+  if (state === "current_failed") return "آخر Backtest لم ينجح";
+  return "تنبيه الجاهزية";
 }
 
 function displayValue(value: JsonValue, unit?: string | null): string {

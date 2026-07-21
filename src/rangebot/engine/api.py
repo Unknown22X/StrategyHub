@@ -176,6 +176,8 @@ from rangebot.domain.strategy_workflow import (
     StrategyPresetUpdate,
     StrategyPresetVersion,
     StrategySetupApproval,
+    StrategyStartReadiness,
+    StrategyStartRequest,
     StrategyTemplate,
     StrategyTemplateCreate,
     StrategyTemplateUpdate,
@@ -2557,10 +2559,225 @@ def create_app(
             preset.current_revision if preset is not None else None,
         )
 
+    def _strategy_backtest_state(
+        instance: StrategyInstance,
+    ) -> tuple[str, str | None, str | None]:
+        deployment = strategy_workflow_repository.deployment_for_instance(
+            instance.instance_id
+        )
+        if deployment is not None:
+            setup = strategy_workflow_repository.get_setup(deployment.setup_id)
+            if setup.latest_backtest_id is None:
+                return "never_backtested", None, None
+            if setup.latest_backtest_revision != setup.revision:
+                return (
+                    "stale",
+                    setup.latest_backtest_id,
+                    setup.latest_backtest_assessment,
+                )
+            return (
+                "current_successful"
+                if setup.latest_backtest_assessment == "promising"
+                else "current_failed",
+                setup.latest_backtest_id,
+                setup.latest_backtest_assessment,
+            )
+
+        applied = [
+            item
+            for item in research_repository.list_backtests(limit=500)
+            if item.applied_instance_id == instance.instance_id
+        ]
+        if not applied:
+            return "never_backtested", None, None
+        latest = applied[0]
+        request = latest.request
+        current = (
+            request.strategy_type_id == instance.type_id
+            and request.symbol == instance.symbol
+            and request.timeframe_minutes == instance.timeframe_minutes
+            and request.configuration == instance.configuration
+            and request.settings.margin_per_trade == instance.requested_margin
+            and request.settings.leverage == instance.requested_leverage
+        )
+        assessment = latest.result.assessment.label
+        if not current:
+            return "stale", latest.backtest_id, assessment
+        return (
+            "current_successful" if assessment == "promising" else "current_failed",
+            latest.backtest_id,
+            assessment,
+        )
+
+    def _strategy_start_readiness(
+        instance: StrategyInstance,
+        confirmation: str | None = None,
+    ) -> StrategyStartReadiness:
+        backtest_state, backtest_id, assessment = _strategy_backtest_state(instance)
+        blocker_codes: list[str] = []
+        warning_codes: list[str] = []
+        checks: dict[str, bool] = {}
+        messages = {
+            "environment_switching": "جارٍ تبديل بيئة RangeBot. انتظر حتى تكتمل العملية.",
+            "environment_mismatch": "بيئة Strategy Instance لا تطابق بيئة المحرك الفعلية.",
+            "adapter_mode_mismatch": "وضع Gate.io الفعلي لا يطابق بيئة Strategy Instance.",
+            "credentials_missing": "Credentials الخاصة بهذه البيئة غير محفوظة.",
+            "account_snapshot_missing": "لم تصل بعد لقطة موثوقة لحساب Gate.io.",
+            "account_data_not_ready": "بيانات الحساب غير جاهزة بعد.",
+            "insufficient_balance": "الرصيد المتاح لا يكفي لبدء التداول الآلي.",
+            "one_way_not_confirmed": "One-way Mode غير مؤكد في Gate.io.",
+            "cross_margin_not_confirmed": "Cross Margin غير مؤكد في Gate.io.",
+            "market_data_not_ready": "بيانات السوق لهذا الرمز غير حديثة بعد.",
+            "risk_data_not_ready": "بيانات المخاطر غير جاهزة بعد.",
+            "protection_not_ready": "حماية Take Profit وStop Loss غير جاهزة.",
+            "unmanaged_exchange_state": "توجد Position أو Orders غير مُدارة في Gate.io.",
+            "emergency_stop_active": "Emergency Stop مفعّل.",
+            "live_confirmation_required": "بدء Live يتطلب تأكيداً صريحاً بأن أموالاً حقيقية ستُستخدم.",
+            "never_backtested": "هذه Strategy لم تُختبر باستخدام Backtest من قبل.",
+            "backtest_failed": "آخر Backtest حالي لكنه لم يحصل على نتيجة ناجحة.",
+            "backtest_stale": "إعدادات Strategy تغيرت بعد آخر Backtest.",
+        }
+
+        environment_ready = environment_runtime.transition_state == "ready"
+        checks["environment_transition_ready"] = environment_ready
+        if not environment_ready:
+            blocker_codes.append("environment_switching")
+        environment_matches = (
+            environment_runtime.active_environment == instance.environment
+        )
+        checks["environment_matches"] = environment_matches
+        if not environment_matches:
+            blocker_codes.append("environment_mismatch")
+        adapter_matches = (
+            instance.environment == "paper"
+            and environment_runtime.active_adapter_mode is None
+        ) or environment_runtime.active_adapter_mode == instance.environment
+        checks["adapter_mode_matches"] = adapter_matches
+        if not adapter_matches:
+            blocker_codes.append("adapter_mode_mismatch")
+
+        market_status = normalized_market_data.status(instance.symbol)
+        market_fresh = market_status.state == "fresh"
+        checks["market_data_fresh"] = market_fresh
+        if instance.environment == "paper":
+            if not market_fresh:
+                warning_codes.append("market_data_not_ready")
+        else:
+            credentials_ready = (
+                load_gate_credentials(cast(TradingMode, instance.environment))
+                is not None
+            )
+            checks["credentials_configured"] = credentials_ready
+            if not credentials_ready:
+                blocker_codes.append("credentials_missing")
+            if not market_fresh:
+                blocker_codes.append("market_data_not_ready")
+
+            mode = cast(TradingMode, instance.environment)
+            readiness = reconciliation_coordinator.status(
+                mode,
+                request_refresh=True,
+                wait_for_refresh=isinstance(
+                    environment_runtime.current_adapter,
+                    MockGateIoAdapter,
+                ),
+            )
+            checks["reconciliation_ready"] = readiness.ready
+            blocker_codes.extend(readiness.reason_codes)
+            snapshot = readiness.snapshot
+            if snapshot is None:
+                blocker_codes.append("account_snapshot_missing")
+                checks["account_snapshot_available"] = False
+            else:
+                checks["account_snapshot_available"] = True
+                account_context = _order_account_context(
+                    instance.environment,
+                    "automatic_strategy",
+                )
+                checks["account_data_ready"] = account_context.account_ready
+                checks["one_way_confirmed"] = snapshot.one_way_confirmed
+                checks["cross_margin_confirmed"] = snapshot.cross_margin_confirmed
+                checks["risk_ready"] = (
+                    snapshot.risk_ready and account_context.daily_risk_allowed
+                )
+                checks["protection_ready"] = snapshot.protection_ready
+                checks["unmanaged_state_clear"] = not snapshot.unmanaged_state
+                checks["balance_available"] = snapshot.available_futures_balance > 0
+                if not account_context.account_ready:
+                    blocker_codes.append("account_data_not_ready")
+                if not snapshot.one_way_confirmed:
+                    blocker_codes.append("one_way_not_confirmed")
+                if not snapshot.cross_margin_confirmed:
+                    blocker_codes.append("cross_margin_not_confirmed")
+                if not snapshot.risk_ready:
+                    blocker_codes.append("risk_data_not_ready")
+                blocker_codes.extend(account_context.risk_reason_codes)
+                if not snapshot.protection_ready:
+                    blocker_codes.append("protection_not_ready")
+                if snapshot.unmanaged_state:
+                    blocker_codes.append("unmanaged_exchange_state")
+                if snapshot.available_futures_balance <= 0:
+                    blocker_codes.append("insufficient_balance")
+                if account_context.emergency_stop:
+                    blocker_codes.append("emergency_stop_active")
+
+        if instance.environment == "paper":
+            paper_context = _order_account_context("paper", "automatic_strategy")
+            checks["emergency_stop_clear"] = not paper_context.emergency_stop
+            if paper_context.emergency_stop:
+                blocker_codes.append("emergency_stop_active")
+
+        if instance.environment == "live":
+            confirmed = confirmation == "START LIVE STRATEGY"
+            checks["real_funds_confirmed"] = confirmed
+            if not confirmed:
+                blocker_codes.append("live_confirmation_required")
+
+        if backtest_state == "never_backtested":
+            warning_codes.append("never_backtested")
+        elif backtest_state == "current_failed":
+            warning_codes.append("backtest_failed")
+        elif backtest_state == "stale":
+            warning_codes.append("backtest_stale")
+
+        blocker_codes = list(dict.fromkeys(blocker_codes))
+        warning_codes = list(dict.fromkeys(warning_codes))
+        return StrategyStartReadiness(
+            instance_id=instance.instance_id,
+            environment=instance.environment,
+            ready=not blocker_codes,
+            backtest_state=backtest_state,
+            backtest_id=backtest_id,
+            backtest_assessment=assessment,
+            blocker_codes=tuple(blocker_codes),
+            warning_codes=tuple(warning_codes),
+            checks=checks,
+            messages_ar={
+                code: messages.get(code, code)
+                for code in (*blocker_codes, *warning_codes)
+            },
+        )
+
     def _transition_strategy(
-        instance_id: str, target: StrategyLifecycle
+        instance_id: str,
+        target: StrategyLifecycle,
+        request: StrategyStartRequest | None = None,
     ) -> StrategyInstance:
-        _strategy_instance_or_404(instance_id)
+        instance = _strategy_instance_or_404(instance_id)
+        start_readiness = None
+        if target == "running":
+            start_readiness = _strategy_start_readiness(
+                instance,
+                request.confirmation if request is not None else None,
+            )
+            if not start_readiness.ready:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "strategy_start_not_ready",
+                        "readiness": start_readiness.model_dump(mode="json"),
+                    },
+                )
         try:
             deployment = strategy_workflow_repository.deployment_for_instance(
                 instance_id
@@ -2575,9 +2792,18 @@ def create_app(
                     deployment.deployment_id, deployment_action
                 )
                 return strategy_instance_repository.get(instance_id)
-            if target == "running":
-                strategy_workflow_repository.ensure_instance_can_start(instance_id)
-            return strategy_instance_repository.transition(instance_id, target)
+            run_extensions = None
+            if target in {"running", "monitoring"}:
+                run_extensions = {}
+                if start_readiness is not None:
+                    run_extensions["start_readiness"] = start_readiness.model_dump(
+                        mode="json"
+                    )
+            return strategy_instance_repository.transition(
+                instance_id,
+                target,
+                configuration_snapshot_extensions=run_extensions,
+            )
         except LookupError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         except RuntimeError as error:
@@ -3133,9 +3359,19 @@ def create_app(
         except RuntimeError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
+    @app.get(
+        "/v1/strategies/{instance_id}/start-readiness",
+        response_model=StrategyStartReadiness,
+    )
+    def strategy_start_readiness(instance_id: str) -> StrategyStartReadiness:
+        return _strategy_start_readiness(_strategy_instance_or_404(instance_id))
+
     @app.post("/v1/strategies/{instance_id}/start", response_model=StrategyInstance)
-    def start_strategy_instance(instance_id: str) -> StrategyInstance:
-        return _transition_strategy(instance_id, "running")
+    def start_strategy_instance(
+        instance_id: str,
+        request: StrategyStartRequest | None = None,
+    ) -> StrategyInstance:
+        return _transition_strategy(instance_id, "running", request)
 
     @app.post("/v1/strategies/{instance_id}/monitor", response_model=StrategyInstance)
     def monitor_strategy_instance(instance_id: str) -> StrategyInstance:

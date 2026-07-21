@@ -1,6 +1,6 @@
 """Central strategy orchestration without exchange submission side effects."""
 
-from rangebot.domain.strategy import StrategyDecisionCreate
+from rangebot.domain.strategy import StrategyDecisionCreate, StrategyInstance
 from rangebot.domain.strategy_runtime import (
     StrategyEvaluationContext,
     StrategyEvaluationResult,
@@ -26,14 +26,21 @@ class StrategyManager:
         context: StrategyEvaluationContext,
         *,
         runtime_event_key: str | None = None,
+        instance_snapshot: StrategyInstance | None = None,
     ) -> StrategyEvaluationResult:
-        instance = self._instances.get(instance_id)
+        instance = instance_snapshot or self._instances.get(instance_id)
         if instance.status not in {"running", "monitoring"}:
-            raise RuntimeError("Strategy evaluation requires a running or monitoring instance.")
+            raise RuntimeError(
+                "Strategy evaluation requires a running or monitoring instance."
+            )
         if context.symbol != instance.symbol:
-            raise ValueError("Market context symbol does not match the strategy instance.")
+            raise ValueError(
+                "Market context symbol does not match the strategy instance."
+            )
         if context.timeframe_minutes != instance.timeframe_minutes:
-            raise ValueError("Market context timeframe does not match the strategy instance.")
+            raise ValueError(
+                "Market context timeframe does not match the strategy instance."
+            )
 
         evaluator = self._registry.evaluator(instance.type_id)
         configuration = dict(instance.configuration)

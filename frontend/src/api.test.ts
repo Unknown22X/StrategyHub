@@ -23,6 +23,7 @@ import {
   loadMarketCandles,
   loadMarketSnapshot,
   loadReconciliationReadiness,
+  loadStrategyStartReadiness,
   loadTradeHistory,
   loadTradeHistorySummary,
   previewManualOrder,
@@ -37,6 +38,7 @@ import {
   submitManualOrder,
   switchRuntimeEnvironment,
   testCredentials,
+  transitionStrategy,
   updateStrategy,
 } from "./api";
 import type {
@@ -466,6 +468,49 @@ describe("dashboard API boundary", () => {
       2,
       "/v1/strategy-instances",
       expect.objectContaining({ method: "POST", body: JSON.stringify(request) }),
+    );
+  });
+
+  it("loads structured start readiness and sends explicit Live confirmation", async () => {
+    const readiness = {
+      instance_id: "strategy-live",
+      environment: "live",
+      ready: false,
+      backtest_state: "never_backtested",
+      backtest_id: null,
+      backtest_assessment: null,
+      blocker_codes: ["live_confirmation_required"],
+      warning_codes: ["never_backtested"],
+      checks: { real_funds_confirmed: false },
+      messages_ar: {
+        live_confirmation_required: "بدء Live يتطلب تأكيداً صريحاً.",
+        never_backtested: "هذه Strategy لم تُختبر باستخدام Backtest من قبل.",
+      },
+    } as const;
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(readiness))
+      .mockResolvedValueOnce(jsonResponse({
+        instance_id: "strategy-live",
+        status: "running",
+      }));
+
+    const loaded = await loadStrategyStartReadiness("strategy-live");
+    await transitionStrategy("strategy-live", "start", "START LIVE STRATEGY");
+
+    expect(loaded.backtest_state).toBe("never_backtested");
+    expect(loaded.warning_codes).toContain("never_backtested");
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/v1/strategies/strategy-live/start-readiness",
+      expect.any(Object),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/v1/strategies/strategy-live/start",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ confirmation: "START LIVE STRATEGY" }),
+      }),
     );
   });
 

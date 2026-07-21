@@ -359,10 +359,18 @@ export default function App() {
     strategy: StrategyInstance,
     action: "start" | "monitor" | "pause" | "stop",
   ) {
+    let confirmation: string | undefined;
+    if (action === "start" && strategy.environment === "live") {
+      const confirmed = window.confirm(
+        "LIVE يستخدم أموالاً حقيقية. ابدأ فقط بعد مراجعة Environment وCredentials وRisk Management والحماية.",
+      );
+      if (!confirmed) return;
+      confirmation = "START LIVE STRATEGY";
+    }
     setActionBusy(`${strategy.instance_id}:${action}`);
     setActionError(null);
     try {
-      await transitionStrategy(strategy.instance_id, action);
+      await transitionStrategy(strategy.instance_id, action, confirmation);
       await refresh();
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "تعذر تحديث الاستراتيجية.");

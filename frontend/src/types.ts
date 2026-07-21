@@ -727,9 +727,27 @@ export interface StrategyRun {
   mode: "automatic" | "monitoring";
   status: "active" | "completed" | "error";
   configuration_revision: number;
+  configuration_snapshot: Record<string, JsonValue>;
   started_at: string;
   ended_at: string | null;
   end_reason: string | null;
+}
+
+export interface StrategyStartReadiness {
+  instance_id: string;
+  environment: Environment;
+  ready: boolean;
+  backtest_state:
+    | "never_backtested"
+    | "current_successful"
+    | "current_failed"
+    | "stale";
+  backtest_id: string | null;
+  backtest_assessment: "promising" | "mixed" | "weak" | "insufficient_data" | null;
+  blocker_codes: string[];
+  warning_codes: string[];
+  checks: Record<string, boolean>;
+  messages_ar: Record<string, string>;
 }
 
 export interface StrategyInstance {

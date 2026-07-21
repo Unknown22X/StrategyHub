@@ -84,6 +84,7 @@ class StrategyRunRecord(StrategyInstanceBase):
     mode: Mapped[str] = mapped_column(String(16), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     configuration_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    configuration_snapshot_json: Mapped[str] = mapped_column(Text, nullable=False)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
@@ -282,7 +283,11 @@ class StrategyInstanceRepository:
             session.commit()
 
     def transition(
-        self, instance_id: str, target: StrategyLifecycle
+        self,
+        instance_id: str,
+        target: StrategyLifecycle,
+        *,
+        configuration_snapshot_extensions: dict[str, object] | None = None,
     ) -> StrategyInstance:
         with self._lock, Session(self._database_engine) as session:
             record = self._instance(session, instance_id)
@@ -316,6 +321,13 @@ class StrategyInstanceRepository:
                 configuration_revision = self._latest_configuration_revision(
                     session, instance_id
                 )
+                snapshot = self._run_configuration_snapshot(
+                    session,
+                    record,
+                    configuration_revision,
+                )
+                if configuration_snapshot_extensions:
+                    snapshot.update(configuration_snapshot_extensions)
                 session.add(
                     StrategyRunRecord(
                         run_id=str(uuid4()),
@@ -323,6 +335,7 @@ class StrategyInstanceRepository:
                         mode="automatic" if target == "running" else "monitoring",
                         status="active",
                         configuration_revision=configuration_revision,
+                        configuration_snapshot_json=self._configuration_json(snapshot),
                         started_at=now,
                         ended_at=None,
                         end_reason=None,
@@ -577,6 +590,48 @@ class StrategyInstanceRepository:
             )
         return revision
 
+    @classmethod
+    def _run_configuration_snapshot(
+        cls,
+        session: Session,
+        record: StrategyInstanceRecord,
+        configuration_revision: int,
+    ) -> dict[str, object]:
+        version = session.scalar(
+            select(StrategyConfigurationVersionRecord).where(
+                StrategyConfigurationVersionRecord.instance_id == record.instance_id,
+                StrategyConfigurationVersionRecord.revision == configuration_revision,
+            )
+        )
+        if version is None:
+            raise RuntimeError(
+                "Strategy run cannot start without its configuration-version snapshot."
+            )
+        return {
+            "schema_version": 1,
+            "instance": {
+                "instance_id": record.instance_id,
+                "type_id": record.type_id,
+                "template_id": record.template_id,
+                "template_version": record.template_version,
+                "preset_id": record.preset_id,
+                "preset_revision": record.preset_revision,
+                "name": record.name,
+                "environment": record.environment,
+                "symbol": record.symbol,
+                "timeframe_minutes": record.timeframe_minutes,
+                "direction": record.direction,
+                "requested_margin": str(version.requested_margin),
+                "requested_leverage": version.requested_leverage,
+                "configuration": json.loads(version.configuration_json),
+                "status": record.status,
+                "created_at": cls._with_utc(record.created_at).isoformat(),
+                "updated_at": cls._with_utc(record.updated_at).isoformat(),
+                "revision": record.revision,
+            },
+            "configuration_revision": configuration_revision,
+        }
+
     def _finish_active_run(
         self,
         session: Session,
@@ -651,6 +706,7 @@ class StrategyInstanceRepository:
             mode=record.mode,
             status=record.status,
             configuration_revision=record.configuration_revision,
+            configuration_snapshot=json.loads(record.configuration_snapshot_json),
             started_at=cls._with_utc(record.started_at),
             ended_at=cls._with_utc(record.ended_at) if record.ended_at else None,
             end_reason=record.end_reason,

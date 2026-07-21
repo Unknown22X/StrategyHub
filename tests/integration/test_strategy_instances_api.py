@@ -1,13 +1,13 @@
 from fastapi.testclient import TestClient
 
 from rangebot.engine.api import create_app
-from tests.integration.workflow_test_helpers import authorize_existing_strategy_instance
 
 
 def _strategy_payload(name: str, symbol: str = "BTC_USDT") -> dict[str, object]:
     return {
         "type_id": "range",
         "name": name,
+        "environment": "paper",
         "symbol": symbol,
         "timeframe_minutes": 15,
         "direction": "both",
@@ -39,25 +39,17 @@ def test_strategy_instances_persist_and_enforce_lifecycle_conflicts(tmp_path) ->
         assert unknown.status_code == 422
         first = first_response.json()
         second = second_response.json()
-        assert first["environment"] == "live"
+        assert first["environment"] == "paper"
         assert first["status"] == "stopped"
-        authorize_existing_strategy_instance(client.app, first["instance_id"])
-        authorize_existing_strategy_instance(client.app, second["instance_id"])
 
         started = client.post(f"/v1/strategies/{first['instance_id']}/start")
-        conflicting_start = client.post(
-            f"/v1/strategies/{second['instance_id']}/start"
-        )
-        monitoring = client.post(
-            f"/v1/strategies/{second['instance_id']}/monitor"
-        )
+        conflicting_start = client.post(f"/v1/strategies/{second['instance_id']}/start")
+        monitoring = client.post(f"/v1/strategies/{second['instance_id']}/monitor")
         edit_running = client.put(
             f"/v1/strategies/{first['instance_id']}",
             json={"name": "Must not change"},
         )
-        delete_monitoring = client.delete(
-            f"/v1/strategies/{second['instance_id']}"
-        )
+        delete_monitoring = client.delete(f"/v1/strategies/{second['instance_id']}")
 
         assert started.status_code == 200
         assert started.json()["status"] == "running"
@@ -72,12 +64,8 @@ def test_strategy_instances_persist_and_enforce_lifecycle_conflicts(tmp_path) ->
             f"/v1/strategies/{first['instance_id']}",
             json={"name": "BTC Range Updated", "timeframe_minutes": 60},
         )
-        stopped_second = client.post(
-            f"/v1/strategies/{second['instance_id']}/stop"
-        )
-        deleted_second = client.delete(
-            f"/v1/strategies/{second['instance_id']}"
-        )
+        stopped_second = client.post(f"/v1/strategies/{second['instance_id']}/stop")
+        deleted_second = client.delete(f"/v1/strategies/{second['instance_id']}")
 
         assert paused.json()["status"] == "paused"
         assert updated.status_code == 200
@@ -145,14 +133,15 @@ def test_strategy_instance_missing_resources_return_not_found(tmp_path) -> None:
     assert deleted.status_code == 404
 
 
-def test_strategy_instance_can_be_duplicated_without_copying_runtime_state(tmp_path) -> None:
+def test_strategy_instance_can_be_duplicated_without_copying_runtime_state(
+    tmp_path,
+) -> None:
     database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
 
     with TestClient(create_app(database_url)) as client:
         original = client.post(
             "/v1/strategies", json=_strategy_payload("BTC Range Original")
         ).json()
-        authorize_existing_strategy_instance(client.app, original["instance_id"])
         started = client.post(f"/v1/strategies/{original['instance_id']}/start")
         duplicated = client.post(
             f"/v1/strategies/{original['instance_id']}/duplicate",

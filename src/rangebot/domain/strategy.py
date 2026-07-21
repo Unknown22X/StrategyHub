@@ -202,6 +202,7 @@ class StrategyRun(BaseModel):
     mode: StrategyRunMode
     status: StrategyRunStatus
     configuration_revision: int = Field(ge=1)
+    configuration_snapshot: dict[str, Any]
     started_at: datetime
     ended_at: datetime | None = None
     end_reason: str | None = None

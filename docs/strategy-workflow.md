@@ -87,9 +87,29 @@ research records.
 
 ### Backtest Run
 
-A deterministic historical simulation linked to both `setup_id` and
-`setup_revision`. A result is valid approval evidence only while the setup remains
-on that exact revision. Historical account P&L and backtest P&L remain separate.
+A deterministic historical simulation linked to either a Strategy Instance or a
+coin setup revision. Backtesting is optional for starting a Strategy. The product
+shows one of four informational states:
+
+- `never_backtested`;
+- `current_successful`;
+- `current_failed`;
+- `stale` when the current configuration no longer matches the tested snapshot.
+
+These states remain visible warnings and evidence; they do not replace environment,
+account, risk, or Order safety checks. Historical account P&L and Backtest P&L remain
+separate.
+
+### Strategy Run
+
+Each automatic or monitoring start creates a persisted immutable Run snapshot. It
+contains the exact Template and optional Preset lineage, environment, symbol,
+Timeframe, direction, Strategy configuration, Margin, Leverage, configuration
+revision, start-readiness result, and deployment execution plan when one exists.
+Runtime signal evaluation, risk inputs, and Order sizing read this snapshot rather
+than mutable current Instance or Preset values. Migration
+`0034_strategy_run_configuration_snapshot` backfills existing historical Runs
+without changing their IDs, status, dates, decisions, Trades, or ownership.
 
 ### Setup Approval
 
@@ -118,18 +138,30 @@ Deployment states are `not_started`, `starting`, `running`, `monitoring`, `pause
 
 ## 2. User workflow
 
-1. Create a reusable Strategy Template from the schema-driven Arabic form.
-2. Add one or more Gate.io USDT perpetual coins manually, or convert a current
-   scanner Opportunity.
-3. Review the coin setup, current price freshness, inherited values, overrides,
-   execution behavior, DCA support, and risk defaults.
-4. Run a historical backtest for the current setup revision.
-5. Review the assessment and metrics.
-6. Explicitly approve the current revision for Paper, Testnet, or Live.
-7. Create an immutable Bot Deployment.
-8. Start trading or monitoring from the Trading page.
-9. Pause or stop the deployment through the deployment lifecycle.
-10. Any setup edit requires a new backtest and approval before a new deployment.
+The direct Instance path is intentionally simple:
+
+1. Select an immutable Strategy Template and optional user Preset.
+2. Create a named Strategy Instance for one symbol, Timeframe, environment, and
+   effective configuration.
+3. Review structured Start readiness and the visible Backtest state.
+4. Start Paper directly. Start Testnet only after authoritative environment,
+   Credentials, fresh market/account data, reconciliation, risk, and protection
+   checks pass. Start Live only after those checks plus the exact real-funds
+   confirmation `START LIVE STRATEGY`.
+5. Pause or stop the Instance. Later edits create a new configuration revision but
+   cannot mutate a Run that already started.
+
+The setup/deployment workflow remains available for reusable Presets and explicit
+approval evidence:
+
+1. Add coins manually or convert a current Opportunity.
+2. Review inherited values and overrides.
+3. Optionally run and review a Backtest.
+4. Explicitly approve the setup revision for an environment.
+5. Create and operate an immutable Bot Deployment.
+
+A missing, failed, or stale Backtest alone never bypasses or creates a genuine
+safety check, and it is not by itself a universal start blocker.
 
 ## 3. Primary navigation
 

@@ -143,16 +143,21 @@ class DiscoveryLabService:
                 )
         else:
             tested_direction = request.direction
+        metadata = self._registry.get(stored.request.strategy_type_id)
         instance = self._strategy_instances.create(
             StrategyInstanceCreate(
                 type_id=stored.request.strategy_type_id,
+                template_id=self._registry.template_id(stored.request.strategy_type_id),
                 name=request.name,
                 environment=request.environment,
                 symbol=stored.request.symbol,
                 timeframe_minutes=stored.request.timeframe_minutes,
                 direction=tested_direction,
+                requested_margin=stored.request.settings.margin_per_trade,
+                requested_leverage=stored.request.settings.leverage,
                 configuration=configuration,
-            )
+            ),
+            template_version=metadata.version,
         )
         try:
             self._repository.record_strategy_application(

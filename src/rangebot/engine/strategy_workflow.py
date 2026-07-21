@@ -1063,6 +1063,7 @@ class StrategyWorkflowRepository:
                         "This deployment approval is missing or stale; approve the current setup revision again."
                     )
             runtime_instance_id = record.runtime_instance_id
+            deployment_snapshot = json.loads(record.configuration_snapshot_json)
         target = {
             "start": "running",
             "monitor": "monitoring",
@@ -1070,7 +1071,21 @@ class StrategyWorkflowRepository:
             "stop": "stopped",
         }[action]
         try:
-            self._strategy_instances.transition(runtime_instance_id, target)
+            run_extensions = None
+            if target in {"running", "monitoring"}:
+                run_extensions = {
+                    "deployment_snapshot": deployment_snapshot,
+                }
+                setup_defaults = deployment_snapshot.get("setup_defaults")
+                if isinstance(setup_defaults, dict):
+                    execution_plan = setup_defaults.get("execution_plan")
+                    if isinstance(execution_plan, dict):
+                        run_extensions["execution_plan"] = execution_plan
+            self._strategy_instances.transition(
+                runtime_instance_id,
+                target,
+                configuration_snapshot_extensions=run_extensions,
+            )
         except Exception as error:
             with self._lock, Session(self._database_engine) as session:
                 record = self._deployment(session, deployment_id)
