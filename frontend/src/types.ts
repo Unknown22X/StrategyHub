@@ -203,6 +203,22 @@ export interface ModeState {
   snapshot: ExchangeSnapshot | null;
 }
 
+export interface ReconciliationReadiness {
+  mode: "testnet" | "live";
+  state: "ready" | "refreshing" | "stale" | "missing" | "failed";
+  ready: boolean;
+  refresh_in_progress: boolean;
+  snapshot_age_seconds: number | null;
+  maximum_snapshot_age_seconds: number;
+  last_attempt_at: string | null;
+  last_success_at: string | null;
+  attempt_count: number;
+  failure_code: string | null;
+  message_ar: string | null;
+  reason_codes: string[];
+  snapshot: ExchangeSnapshot | null;
+}
+
 export interface ExchangeCredentialStatus {
   mode: "testnet" | "live";
   configured: boolean;

@@ -66,6 +66,10 @@ def test_frontend_operations_use_backend_endpoints_and_no_live_lock_contract() -
     assert "environmentReady" in manual_trade
     assert "Minimum Quantity" in manual_trade
     assert "Approx. Minimum Margin" in manual_trade
+    assert "/reconciliation" in api
+    assert "loadReconciliationReadiness" in api
+    assert "requestReconciliation" in api
+    assert "Account sync is running" in manual_trade
     assert "/duplicate" in api
     assert "StrategyConfigurationFields" in detail
     assert "loadStrategyRuns" in detail

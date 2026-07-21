@@ -28,6 +28,7 @@ import type {
   PaperRisk,
   PaperWatchlist,
   PrivateStreamState,
+  ReconciliationReadiness,
   RemoteData,
   RuntimeState,
   StrategyConfigurationVersion,
@@ -303,6 +304,24 @@ export function switchRuntimeEnvironment(
   return request<EnvironmentRuntimeState>("/v1/runtime/environment/switch", {
     method: "POST",
     body: JSON.stringify({ environment, confirmation }),
+  });
+}
+
+export function loadReconciliationReadiness(
+  mode: "testnet" | "live",
+  signal?: AbortSignal,
+): Promise<ReconciliationReadiness> {
+  return request<ReconciliationReadiness>(
+    `/v1/exchange/${mode}/reconciliation`,
+    { signal },
+  );
+}
+
+export function requestReconciliation(
+  mode: "testnet" | "live",
+): Promise<ModeState> {
+  return request<ModeState>(`/v1/exchange/${mode}/reconcile`, {
+    method: "POST",
   });
 }
 

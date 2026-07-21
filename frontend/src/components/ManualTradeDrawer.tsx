@@ -58,6 +58,9 @@ export function ManualTradeDrawer({
     );
   const environmentBlockMessage = environmentRuntime?.message_ar
     ?? "بيئة التداول غير جاهزة. أكمل التبديل وانتظر تأكيد المحرك قبل المعاينة.";
+  const reconciliationFeedback = preview
+    ? reconciliationFeedbackFor(preview)
+    : null;
 
   const request = useMemo<ManualOrderRequest>(() => {
     const base: ManualOrderRequest = {
@@ -402,6 +405,13 @@ export function ManualTradeDrawer({
               />
             </div>
 
+            {reconciliationFeedback && (
+              <div className="inline-alert warning-alert" role="status">
+                <strong>{reconciliationFeedback.title}</strong>
+                <span>{reconciliationFeedback.message}</span>
+              </div>
+            )}
+
             <div className="preview-price-strip">
               <Metric label="Last" value={formatDecimal(preview.last_price)} />
               <Metric label="Mark" value={formatDecimal(preview.mark_price)} />
@@ -461,6 +471,41 @@ export function ManualTradeDrawer({
       </aside>
     </div>
   );
+}
+
+function reconciliationFeedbackFor(preview: ManualOrderPreview): {
+  title: string;
+  message: string;
+} | null {
+  const codes = new Set(preview.validation_issues.map((issue) => issue.code));
+  if (codes.has("reconciliation_refreshing")) {
+    return {
+      title: "Account sync is running",
+      message: "عادت Preview فوراً من دون انتظار Gate.io. يبقى Submit محظوراً حتى تكتمل المزامنة.",
+    };
+  }
+  if (codes.has("reconciliation_snapshot_stale")) {
+    return {
+      title: "Account snapshot is stale",
+      message: "يتم طلب لقطة أحدث في الخلفية قبل السماح بأي Order.",
+    };
+  }
+  if (codes.has("reconciliation_snapshot_missing")) {
+    return {
+      title: "Account snapshot is not available yet",
+      message: "انتظر اكتمال أول Reconciliation ثم أعد Preview.",
+    };
+  }
+  if (
+    codes.has("reconciliation_failed")
+    || codes.has("reconciliation_timeout")
+  ) {
+    return {
+      title: "Account sync failed",
+      message: "راجع Credentials والاتصال ثم أعد Reconciliation. لم يُرسل أي Order.",
+    };
+  }
+  return null;
 }
 
 function defaultLimitExpiration(): string {

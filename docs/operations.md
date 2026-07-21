@@ -32,6 +32,12 @@
 
 يُحفظ سجل تفعيل مستقل فقط بعد نجاح التبديل الكامل، وتستعيده الخدمة عند إعادة التشغيل. لا تُعامل قيم `environment` القديمة في إعدادات الإصدارات السابقة على أنها دليل تفعيل؛ بعد الترقية يبدأ المحرك في `Paper` إلى أن ينفذ المستخدم أول تبديل ناجح عبر المسار الجديد.
 
+## Reconciliation وPreview
+
+لا تنفذ Preview مصالحة Gate.io كاملة داخل طلب المستخدم. يحتفظ `ReconciliationCoordinator` بلقطة حساب محدودة العمر، ويطلب التحديث في الخلفية مع single-flight لمنع تكرار الطلب نفسه، وثلاث محاولات بــ backoff، ومهلة محدودة للطلب اليدوي. إذا كانت اللقطة مفقودة أو قديمة أو فشلت المزامنة، تعود Preview بسرعة مع `can_submit=false` وسبب دقيق مثل `reconciliation_snapshot_missing` أو `reconciliation_snapshot_stale` أو `reconciliation_timeout`. لا يتحول نقص البيانات إلى رسالة خاطئة عن بلوغ حد المخاطر.
+
+يمكن فحص الحالة المنقحة عبر `GET /v1/exchange/{mode}/reconciliation` وطلب تحديث محدود عبر `POST /v1/exchange/{mode}/reconcile`. تبقى Credentials، تطابق البيئة، حداثة السوق، الحماية، الرصيد، وقواعد العقد حواجز مستقلة.
+
 ## نقل بيانات RangeBot إلى القرص D بأمان
 
 1. فعّل Emergency Stop وأوقف أي بوتات نشطة، ثم أوقف خدمة `RangeBotEngine`.

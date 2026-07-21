@@ -20,10 +20,12 @@ import {
   loadDashboard,
   loadMarketCandles,
   loadMarketSnapshot,
+  loadReconciliationReadiness,
   loadTradeHistory,
   loadTradeHistorySummary,
   previewManualOrder,
   removeCredentials,
+  requestReconciliation,
   restoreBackup,
   runBacktest,
   runDiscoveryScan,
@@ -290,6 +292,47 @@ describe("dashboard API boundary", () => {
         method: "POST",
         body: JSON.stringify({ environment: "testnet", confirmation: "" }),
       }),
+    );
+  });
+
+  it("loads structured reconciliation readiness and requests a bounded refresh", async () => {
+    const readiness = {
+      mode: "testnet",
+      state: "refreshing",
+      ready: false,
+      refresh_in_progress: true,
+      snapshot_age_seconds: null,
+      maximum_snapshot_age_seconds: 30,
+      last_attempt_at: "2026-07-21T08:00:00Z",
+      last_success_at: null,
+      attempt_count: 1,
+      failure_code: null,
+      message_ar: null,
+      reason_codes: [
+        "reconciliation_snapshot_missing",
+        "reconciliation_refreshing",
+        "reconciliation_not_ready",
+      ],
+      snapshot: null,
+    };
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(readiness))
+      .mockResolvedValueOnce(jsonResponse(modeState("testnet")));
+
+    const loaded = await loadReconciliationReadiness("testnet");
+    const refreshed = await requestReconciliation("testnet");
+
+    expect(loaded.reason_codes).toContain("reconciliation_refreshing");
+    expect(refreshed.mode).toBe("testnet");
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/v1/exchange/testnet/reconciliation",
+      expect.any(Object),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/v1/exchange/testnet/reconcile",
+      expect.objectContaining({ method: "POST" }),
     );
   });
 

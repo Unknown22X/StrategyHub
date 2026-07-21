@@ -1,8 +1,11 @@
 from datetime import UTC, datetime
 from decimal import Decimal
+from threading import Event, Lock
+import time
 
 from fastapi.testclient import TestClient
 
+from rangebot.domain.exchange import ExchangeSnapshot, TradingMode
 from rangebot.domain.market_data import MarketPriceUpdate
 from rangebot.domain.orders import FuturesContractRules
 from rangebot.engine.api import create_app
@@ -11,6 +14,36 @@ from rangebot.engine.market_data_manager import MarketDataManager
 
 
 NOW = datetime(2026, 5, 2, 12, 0, tzinfo=UTC)
+
+
+class SlowReconciliationAdapter:
+    def __init__(self) -> None:
+        self.entered = Event()
+        self.release = Event()
+        self.calls = 0
+        self._lock = Lock()
+
+    def reconcile(self, mode: TradingMode) -> ExchangeSnapshot:
+        with self._lock:
+            self.calls += 1
+        self.entered.set()
+        if not self.release.wait(timeout=2):
+            raise TimeoutError("slow reconciliation test timed out")
+        return ExchangeSnapshot(
+            mode=mode,
+            reconciled_at=datetime.now(UTC),
+            available_futures_balance=Decimal("1000"),
+            one_way_confirmed=True,
+            cross_margin_confirmed=True,
+            market_ready=True,
+            history_ready=True,
+            risk_ready=True,
+            active_contract_ready=True,
+            daily_baseline_ready=True,
+            protection_ready=True,
+            subscription_confirmed=True,
+            rest_snapshot_confirmed=True,
+        )
 
 
 def _rules(symbol: str = "BTC_USDT") -> FuturesContractRules:
@@ -146,6 +179,56 @@ def test_manual_preview_returns_structured_risk_errors_and_never_submits(
     assert submitted.status_code == 409
     assert adapter.position_quantity == 0
     assert adapter.submissions == {}
+
+
+def test_preview_uses_background_single_flight_reconciliation(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "rangebot.engine.api.load_gate_credentials",
+        lambda mode: object(),
+    )
+    database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
+    adapter = SlowReconciliationAdapter()
+    app = create_app(
+        database_url,
+        exchange_adapter=adapter,
+        market_data_manager=_market(),
+        contract_rules_provider=lambda symbol: _rules(symbol),
+    )
+
+    with TestClient(app) as client:
+        started = time.perf_counter()
+        first = client.post("/v1/manual-orders/preview", json=_manual_live_payload())
+        second = client.post("/v1/manual-orders/preview", json=_manual_live_payload())
+        elapsed = time.perf_counter() - started
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert elapsed < 0.5
+        assert adapter.entered.wait(timeout=1)
+        assert adapter.calls == 1
+        first_codes = {issue["code"] for issue in first.json()["validation_issues"]}
+        assert first.json()["can_submit"] is False
+        assert "reconciliation_snapshot_missing" in first_codes
+        assert "reconciliation_refreshing" in first_codes
+        assert "reconciliation_not_ready" in first_codes
+
+        adapter.release.set()
+        deadline = time.monotonic() + 1
+        readiness = client.get("/v1/exchange/live/reconciliation")
+        while readiness.json()["refresh_in_progress"] and time.monotonic() < deadline:
+            time.sleep(0.01)
+            readiness = client.get("/v1/exchange/live/reconciliation")
+        ready_preview = client.post(
+            "/v1/manual-orders/preview", json=_manual_live_payload()
+        )
+
+    assert readiness.status_code == 200
+    assert readiness.json()["ready"] is True
+    assert ready_preview.status_code == 200
+    assert ready_preview.json()["can_submit"] is True
+    assert adapter.calls == 1
 
 
 def test_zero_quantity_preview_returns_guidance_and_never_calls_adapter(

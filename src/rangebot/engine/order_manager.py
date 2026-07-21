@@ -362,6 +362,8 @@ class OrderManager:
         issues: list[OrderValidationIssue],
     ) -> None:
         def add(code, message, field=None):
+            if any(issue.code == code and issue.field == field for issue in issues):
+                return
             issues.append(
                 OrderValidationIssue(code=code, message_ar=message, field=field)
             )
@@ -393,7 +395,25 @@ class OrderManager:
         if account.emergency_stop:
             add("emergency_stop", "إيقاف الطوارئ مفعّل.")
         if not account.reconciliation_ready:
-            add("reconciliation_not_ready", "المصالحة غير مكتملة.")
+            readiness_messages = {
+                "reconciliation_snapshot_missing": "لا توجد لقطة حساب موثوقة بعد.",
+                "reconciliation_snapshot_stale": "لقطة الحساب قديمة وتحتاج تحديثاً.",
+                "reconciliation_refreshing": "تحديث بيانات الحساب جارٍ في الخلفية.",
+                "reconciliation_timeout": "انتهت مهلة تحديث بيانات الحساب.",
+                "reconciliation_failed": "فشل تحديث بيانات الحساب من Gate.io.",
+                "cross_margin_not_confirmed": "وضع Cross Margin غير مؤكّد.",
+                "risk_data_unavailable": "بيانات المخاطر غير متاحة.",
+                "daily_baseline_missing": "خط الأساس اليومي للمخاطر غير متاح.",
+                "private_stream_not_ready": "Private WebSocket غير جاهز.",
+                "rest_snapshot_not_ready": "لقطة REST للحساب غير مكتملة.",
+                "unmanaged_exchange_state": "توجد حالة Gate.io غير مُدارة.",
+                "reconciliation_not_ready": "المصالحة غير مكتملة.",
+            }
+            reason_codes = account.reconciliation_reason_codes or (
+                "reconciliation_not_ready",
+            )
+            for code in reason_codes:
+                add(code, readiness_messages.get(code, "المصالحة غير مكتملة."))
         if not account.protection_ready:
             add("protection_not_ready", "حماية المراكز غير جاهزة.")
 
@@ -658,7 +678,10 @@ class OrderManager:
             "request": request.model_dump(mode="json"),
             "context": context.model_dump(mode="json"),
             "rules": rules.model_dump(mode="json"),
-            "account": account.model_dump(mode="json"),
+            "account": account.model_dump(
+                mode="json",
+                exclude={"snapshot_age_seconds"},
+            ),
             "market": to_jsonable_python(market_payload),
         }
         serialized = json.dumps(

@@ -61,6 +61,8 @@ class OrderAccountContext(BaseModel):
     daily_risk_allowed: bool
     emergency_stop: bool
     reconciliation_ready: bool
+    reconciliation_reason_codes: tuple[str, ...] = ()
+    snapshot_age_seconds: float | None = Field(default=None, ge=0)
     protection_ready: bool
     account_revision: str = Field(min_length=1, max_length=200)
 

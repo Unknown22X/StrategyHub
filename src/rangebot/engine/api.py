@@ -95,6 +95,7 @@ from rangebot.domain.performance import (
     PerformanceMode,
     PerformancePeriod,
 )
+from rangebot.domain.reconciliation import ReconciliationReadiness
 from rangebot.domain.orders import (
     FuturesContractRules,
     ManualOrderPreview,
@@ -251,6 +252,7 @@ from rangebot.engine.market import PublicMarketProvider
 from rangebot.engine.market_data_manager import MarketDataManager
 from rangebot.engine.performance import AccountPerformanceRepository
 from rangebot.engine.public_rest_runtime import PublicRestEnvironmentManager
+from rangebot.engine.reconciliation import ReconciliationCoordinator
 from rangebot.engine.order_manager import (
     OrderManager,
     OrderValidationError,
@@ -847,6 +849,11 @@ def create_app(
         activate_public_rest=public_rest_runtime.activate,
     )
     gate_adapter = EnvironmentBoundGateIoAdapter(environment_runtime)
+    reconciliation_coordinator = ReconciliationCoordinator(
+        adapter=gate_adapter,
+        load_snapshot=exchange_repository.get_snapshot,
+        save_snapshot=_save_exchange_snapshot,
+    )
     pinned_market_targets = set(
         market_subscription_registry.snapshot()[1]
         if market_subscription_registry is not None
@@ -931,6 +938,13 @@ def create_app(
             )
         )
         await environment_runtime.start()
+        stop_reconciliation = asyncio.Event()
+        reconciliation_task = asyncio.create_task(
+            reconciliation_coordinator.run(
+                stop_reconciliation,
+                lambda: environment_runtime.active_adapter_mode,
+            )
+        )
         strategy_runtime_runner = getattr(
             app_instance.state, "strategy_runtime_runner", None
         )
@@ -947,8 +961,11 @@ def create_app(
                 category="engine", action="stopping", resource="/health"
             )
             stop_heartbeat.set()
+            stop_reconciliation.set()
             stop_strategy_runtime.set()
             await heartbeat_task
+            await reconciliation_task
+            reconciliation_coordinator.close()
             await environment_runtime.stop()
             if strategy_runtime_task is not None:
                 await strategy_runtime_task
@@ -971,6 +988,7 @@ def create_app(
     app.state.market_data_manager = normalized_market_data
     app.state.market_subscription_registry = market_subscription_registry
     app.state.environment_runtime = environment_runtime
+    app.state.reconciliation_coordinator = reconciliation_coordinator
     app.state.backup_manager = backup_manager
     app.state.support_log_exporter = support_log_exporter
     app.state.event_publisher = event_publisher
@@ -1359,14 +1377,15 @@ def create_app(
                     f"active-{environment_runtime.active_environment}"
                 ),
             )
-        reconciliation_succeeded = False
-        snapshot = None
-        try:
-            snapshot = gate_adapter.reconcile(mode)
-            _save_exchange_snapshot(snapshot)
-            reconciliation_succeeded = True
-        except Exception:
-            snapshot = exchange_repository.get_snapshot(mode)
+        readiness = reconciliation_coordinator.status(
+            mode,
+            request_refresh=True,
+            wait_for_refresh=isinstance(
+                environment_runtime.current_adapter,
+                MockGateIoAdapter,
+            ),
+        )
+        snapshot = readiness.snapshot
         if snapshot is None:
             return OrderAccountContext(
                 environment=environment,
@@ -1378,8 +1397,13 @@ def create_app(
                 daily_risk_allowed=False,
                 emergency_stop=exchange_repository.emergency_stop(mode),
                 reconciliation_ready=False,
+                reconciliation_reason_codes=readiness.reason_codes,
+                snapshot_age_seconds=readiness.snapshot_age_seconds,
                 protection_ready=False,
-                account_revision=f"{environment}-missing-snapshot",
+                account_revision=(
+                    f"{environment}-{readiness.state}-"
+                    f"{readiness.attempt_count}-{readiness.failure_code}"
+                ),
             )
         account_risk = account_risk_service.status(environment)
         risk_allowed = (
@@ -1387,19 +1411,13 @@ def create_app(
             if origin == "manual"
             else not account_risk.automatic_entries_blocked
         )
-        reconciliation_ready = (
-            reconciliation_succeeded
-            and snapshot.reconciliation_error is None
-            and not snapshot.unmanaged_state
-            and snapshot.one_way_confirmed
-            and snapshot.cross_margin_confirmed
-            and snapshot.risk_ready
-            and snapshot.daily_baseline_ready
-            and account_risk.baseline_ready
-            and snapshot.protection_ready
-            and snapshot.subscription_confirmed
-            and snapshot.rest_snapshot_confirmed
-        )
+        reconciliation_reason_codes = list(readiness.reason_codes)
+        if not account_risk.baseline_ready:
+            reconciliation_reason_codes.extend(
+                ("daily_baseline_missing", "reconciliation_not_ready")
+            )
+        reconciliation_reason_codes = list(dict.fromkeys(reconciliation_reason_codes))
+        reconciliation_ready = readiness.ready and account_risk.baseline_ready
         risk_revision = (
             f"risk-{account_risk.policy.revision}-{account_risk.day}-"
             f"{account_risk.equity_loss_used}-{account_risk.losing_trades}-"
@@ -1417,6 +1435,8 @@ def create_app(
             ),
             emergency_stop=exchange_repository.emergency_stop(mode),
             reconciliation_ready=reconciliation_ready,
+            reconciliation_reason_codes=tuple(reconciliation_reason_codes),
+            snapshot_age_seconds=readiness.snapshot_age_seconds,
             protection_ready=snapshot.protection_ready,
             account_revision=f"{_snapshot_revision_payload(snapshot)}-{risk_revision}",
         )
@@ -1875,11 +1895,26 @@ def create_app(
             )
         )
 
+    @app.get(
+        "/v1/exchange/{mode}/reconciliation",
+        response_model=ReconciliationReadiness,
+    )
+    def reconciliation_readiness(mode: TradingMode) -> ReconciliationReadiness:
+        return reconciliation_coordinator.status(mode, request_refresh=True)
+
     @app.post("/v1/exchange/{mode}/reconcile", response_model=ModeState)
     def reconcile_exchange(mode: TradingMode) -> ModeState:
-        """Only a configured adapter may supply authoritative exchange state."""
-        snapshot = gate_adapter.reconcile(mode)
-        _save_exchange_snapshot(snapshot)
+        """Request one bounded refresh; duplicate callers share the same operation."""
+        readiness = reconciliation_coordinator.request(mode, wait=True, force=True)
+        if readiness.snapshot is None:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": readiness.failure_code or "reconciliation_not_ready",
+                    "message_ar": readiness.message_ar or "المصالحة غير مكتملة.",
+                    "reason_codes": readiness.reason_codes,
+                },
+            )
         _persist_mock_state(mode)
         return _exchange_state(mode)
 
