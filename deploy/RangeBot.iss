@@ -47,7 +47,6 @@ Source: "..\vendor\WinSW-LICENSE.txt"; DestDir: "{app}\licenses"; Flags: ignorev
 Source: "..\USER_GUIDE.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "..\KNOWN_LIMITATIONS.md"; DestDir: "{app}\docs"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "..\PAPER_DEMO_STATUS.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "..\demo\*"; DestDir: "{app}\demo"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
