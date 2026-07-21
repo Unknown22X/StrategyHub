@@ -174,11 +174,57 @@ def test_manual_preview_returns_structured_risk_errors_and_never_submits(
     assert preview.status_code == 200
     assert body["can_submit"] is False
     assert "credentials_missing" in codes
-    assert "daily_risk_limit" in codes
+    assert "risk_data_unavailable" in codes
+    assert "daily_risk_limit" not in codes
     assert "reconciliation_not_ready" in codes
     assert submitted.status_code == 409
     assert adapter.position_quantity == 0
     assert adapter.submissions == {}
+
+
+def test_disabling_optional_daily_limits_keeps_unrelated_safety_controls(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "rangebot.engine.api.load_gate_credentials",
+        lambda mode: None,
+    )
+    database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
+    adapter = MockGateIoAdapter()
+    adapter.protection_confirmed = False
+    app = create_app(
+        database_url,
+        exchange_adapter=adapter,
+        market_data_manager=_market(),
+        contract_rules_provider=lambda symbol: _rules(symbol),
+    )
+
+    with TestClient(app) as client:
+        disabled = client.put(
+            "/v1/account-risk/policy",
+            json={
+                "daily_loss_enabled": False,
+                "daily_loss_limit": "100",
+                "losing_trade_enabled": False,
+                "losing_trade_limit": 3,
+                "automatic_trade_enabled": False,
+                "automatic_trade_limit": 5,
+                "confirmation": "DISABLE LIVE RISK LIMITS",
+            },
+        )
+        preview = client.post("/v1/manual-orders/preview", json=_manual_live_payload())
+
+    codes = {issue["code"] for issue in preview.json()["validation_issues"]}
+    assert disabled.status_code == 200
+    assert preview.status_code == 200
+    assert preview.json()["can_submit"] is False
+    assert "credentials_missing" in codes
+    assert "protection_not_ready" in codes
+    assert "reconciliation_not_ready" in codes
+    assert "daily_risk_limit" not in codes
+    assert "daily_loss_limit_reached" not in codes
+    assert "losing_trade_limit_reached" not in codes
+    assert "automatic_trade_limit_reached" not in codes
 
 
 def test_preview_uses_background_single_flight_reconciliation(

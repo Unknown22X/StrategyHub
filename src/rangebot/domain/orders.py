@@ -59,6 +59,7 @@ class OrderAccountContext(BaseModel):
     existing_position_quantity: Decimal = Decimal("0")
     one_way_confirmed: bool
     daily_risk_allowed: bool
+    risk_reason_codes: tuple[str, ...] = ()
     emergency_stop: bool
     reconciliation_ready: bool
     reconciliation_reason_codes: tuple[str, ...] = ()

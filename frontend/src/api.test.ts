@@ -203,8 +203,11 @@ describe("dashboard API boundary", () => {
 
   it("loads and commits account-wide risk policy through localhost", async () => {
     const policy = {
+      daily_loss_enabled: false,
       daily_loss_limit: "125",
+      losing_trade_enabled: true,
       losing_trade_limit: 4,
+      automatic_trade_enabled: true,
       automatic_trade_limit: 6,
       revision: 2,
       updated_at: "2026-07-16T20:00:00Z",
@@ -215,9 +218,13 @@ describe("dashboard API boundary", () => {
 
     const loaded = await loadAccountRiskPolicy();
     const saved = await saveAccountRiskPolicy({
+      daily_loss_enabled: false,
       daily_loss_limit: "125",
+      losing_trade_enabled: true,
       losing_trade_limit: 4,
+      automatic_trade_enabled: true,
       automatic_trade_limit: 6,
+      confirmation: "",
     });
 
     expect(loaded.revision).toBe(2);
@@ -235,9 +242,13 @@ describe("dashboard API boundary", () => {
       expect.objectContaining({
         method: "PUT",
         body: JSON.stringify({
+          daily_loss_enabled: false,
           daily_loss_limit: "125",
+          losing_trade_enabled: true,
           losing_trade_limit: 4,
+          automatic_trade_enabled: true,
           automatic_trade_limit: 6,
+          confirmation: "",
         }),
       }),
     );
@@ -811,20 +822,62 @@ function accountRisk(environment: "live" | "testnet") {
   return {
     environment,
     day: "2026-07-16",
+    timezone: "Asia/Riyadh",
+    synchronization_complete: true,
+    risk_data_state: "ready",
     baseline_ready: true,
     baseline_equity: "1000",
+    baseline_captured_at: "2026-07-16T00:00:00Z",
     current_equity: "1000",
     equity_loss_used: "0",
     remaining_loss_allowance: "100",
     losing_trades: 0,
     automatic_trades: 0,
     policy: {
+      daily_loss_enabled: true,
       daily_loss_limit: "100",
+      losing_trade_enabled: true,
       losing_trade_limit: 3,
+      automatic_trade_enabled: true,
       automatic_trade_limit: 5,
       revision: 1,
       updated_at: "2026-07-16T20:00:00Z",
     },
+    limits: [
+      {
+        key: "daily_equity_loss",
+        enabled: true,
+        state: "not_reached",
+        unit: "USDT",
+        limit_value: "100",
+        used_value: "0",
+        remaining_value: "100",
+        blocks_manual_entries: false,
+        blocks_automatic_entries: false,
+      },
+      {
+        key: "daily_losing_trades",
+        enabled: true,
+        state: "not_reached",
+        unit: "trades",
+        limit_value: "3",
+        used_value: "0",
+        remaining_value: "3",
+        blocks_manual_entries: false,
+        blocks_automatic_entries: false,
+      },
+      {
+        key: "daily_automatic_entries",
+        enabled: true,
+        state: "not_reached",
+        unit: "entries",
+        limit_value: "5",
+        used_value: "0",
+        remaining_value: "5",
+        blocks_manual_entries: false,
+        blocks_automatic_entries: false,
+      },
+    ],
     manual_entries_blocked: false,
     automatic_entries_blocked: false,
     blocked_reason_codes: [],

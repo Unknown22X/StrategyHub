@@ -3934,6 +3934,141 @@ tbody tr:hover {
 
 @media (max-width: 640px) { .mode-choice { grid-template-columns: 1fr; } }
 
+.risk-limit-status-list {
+  display: grid;
+  gap: 10px;
+}
+
+.risk-limit-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(10, 18, 31, 0.62);
+}
+
+.risk-limit-status-row > div:first-child {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.risk-limit-status-row strong {
+  direction: ltr;
+  text-align: start;
+  font-size: 13px;
+}
+
+.risk-limit-status-row span:not(.status-pill, .status-dot) {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.risk-limit-status-row.state-reached {
+  border-color: rgba(248, 113, 113, 0.38);
+  background: rgba(127, 29, 29, 0.16);
+}
+
+.risk-limit-status-row.state-disabled {
+  opacity: 0.78;
+}
+
+.risk-limit-field {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(10, 18, 31, 0.72);
+}
+
+.risk-limit-field.disabled {
+  border-color: rgba(148, 163, 184, 0.18);
+  background: rgba(10, 18, 31, 0.42);
+}
+
+.risk-limit-toggle {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.risk-limit-toggle > input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.risk-toggle-track {
+  position: relative;
+  width: 46px;
+  height: 26px;
+  border: 1px solid #334155;
+  border-radius: 999px;
+  background: #111827;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.risk-toggle-track > span {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #94a3b8;
+  transition: transform 160ms ease, background 160ms ease;
+}
+
+.risk-limit-toggle > input:checked + .risk-toggle-track {
+  border-color: #4f6cff;
+  background: rgba(79, 108, 255, 0.34);
+}
+
+.risk-limit-toggle > input:checked + .risk-toggle-track > span {
+  transform: translateX(-20px);
+  background: #dbeafe;
+}
+
+.risk-limit-toggle > input:focus-visible + .risk-toggle-track {
+  outline: 3px solid rgba(96, 165, 250, 0.35);
+  outline-offset: 2px;
+}
+
+.risk-limit-toggle > span:last-child {
+  display: grid;
+  gap: 4px;
+}
+
+.risk-limit-toggle strong {
+  direction: ltr;
+  text-align: start;
+  font-size: 14px;
+}
+
+.risk-limit-toggle small,
+.risk-limit-field .field-block small {
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.risk-limit-field input:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+@media (max-width: 640px) {
+  .risk-limit-toggle {
+    grid-template-columns: auto auto minmax(0, 1fr);
+    gap: 9px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

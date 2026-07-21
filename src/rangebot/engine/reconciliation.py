@@ -29,6 +29,8 @@ ActiveModeProvider = Callable[[], TradingMode | None]
 @dataclass
 class _ModeRunState:
     future: Future[ExchangeSnapshot] | None = None
+    generation: int = 0
+    current_forced: bool = False
     last_attempt_at: datetime | None = None
     last_success_at: datetime | None = None
     attempt_count: int = 0
@@ -102,6 +104,7 @@ class ReconciliationCoordinator:
         wait: bool = False,
         force: bool = False,
     ) -> ReconciliationReadiness:
+        target_generation: int | None = None
         with self._lock:
             state = self._states[mode]
             current = state.future
@@ -109,23 +112,62 @@ class ReconciliationCoordinator:
                 snapshot = self._load_snapshot(mode)
                 if not force and self._snapshot_is_fresh(snapshot):
                     return self._readiness(mode)
-                state.last_attempt_at = self._clock()
-                state.failure_code = None
-                state.message_ar = None
-                state.future = self._executor.submit(self._run, mode)
+                self._start_locked(mode, state, forced=force)
                 current = state.future
+            elif force and wait and not state.current_forced:
+                # A manual forced refresh must observe state that existed after the
+                # caller requested it. Joining an older background flight is not
+                # sufficient because ownership or protection may have changed while
+                # that flight was already running. Concurrent forced callers share
+                # the same one-generation follow-up.
+                target_generation = state.generation + 1
         if wait and current is not None:
-            try:
-                current.result(timeout=self._request_timeout)
-            except FutureTimeout:
-                with self._lock:
-                    state = self._states[mode]
-                    state.failure_code = "reconciliation_timeout"
-                    state.message_ar = "انتهت مهلة المصالحة؛ تستمر المحاولة في الخلفية."
-            except Exception:
-                # _run records a sanitized failure state.
-                pass
+            if not self._wait_for_future(mode, current):
+                return self._readiness(mode)
+        if target_generation is not None:
+            with self._lock:
+                state = self._states[mode]
+                current = state.future
+                if state.generation < target_generation and (
+                    current is None or current.done()
+                ):
+                    self._start_locked(mode, state, forced=True)
+                    current = state.future
+            if wait and current is not None:
+                self._wait_for_future(mode, current)
         return self._readiness(mode)
+
+    def _start_locked(
+        self,
+        mode: TradingMode,
+        state: _ModeRunState,
+        *,
+        forced: bool,
+    ) -> None:
+        state.generation += 1
+        state.current_forced = forced
+        state.last_attempt_at = self._clock()
+        state.failure_code = None
+        state.message_ar = None
+        state.future = self._executor.submit(self._run, mode)
+
+    def _wait_for_future(
+        self,
+        mode: TradingMode,
+        future: Future[ExchangeSnapshot],
+    ) -> bool:
+        try:
+            future.result(timeout=self._request_timeout)
+            return True
+        except FutureTimeout:
+            with self._lock:
+                state = self._states[mode]
+                state.failure_code = "reconciliation_timeout"
+                state.message_ar = "انتهت مهلة المصالحة؛ تستمر المحاولة في الخلفية."
+            return False
+        except Exception:
+            # _run records a sanitized failure state.
+            return True
 
     async def run(
         self,
@@ -265,8 +307,6 @@ class ReconciliationCoordinator:
             reason_codes.append("cross_margin_not_confirmed")
         if not snapshot.risk_ready:
             reason_codes.append("risk_data_unavailable")
-        if not snapshot.daily_baseline_ready:
-            reason_codes.append("daily_baseline_missing")
         if not snapshot.protection_ready:
             reason_codes.append("protection_not_ready")
         if not snapshot.subscription_confirmed:

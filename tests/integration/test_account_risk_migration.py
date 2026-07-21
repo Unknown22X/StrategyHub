@@ -12,7 +12,9 @@ def _alembic_config(database_url: str) -> Config:
     return configuration
 
 
-def test_account_risk_policy_upgrades_existing_database_with_safe_defaults(tmp_path) -> None:
+def test_account_risk_policy_upgrades_existing_database_with_safe_defaults(
+    tmp_path,
+) -> None:
     database_path = tmp_path / "rangebot.db"
     database_url = f"sqlite:///{database_path}"
     configuration = _alembic_config(database_url)
@@ -27,18 +29,40 @@ def test_account_risk_policy_upgrades_existing_database_with_safe_defaults(tmp_p
         }
         values = connection.execute(
             """
-            SELECT daily_loss_limit, losing_trade_limit, automatic_trade_limit,
+            SELECT daily_loss_enabled, daily_loss_limit,
+                   losing_trade_enabled, losing_trade_limit,
+                   automatic_trade_enabled, automatic_trade_limit,
                    revision
             FROM account_risk_policy WHERE id = 1
             """
         ).fetchone()
+        baseline_columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(account_daily_risk_baseline)"
+            )
+        }
+        baselines = connection.execute(
+            "SELECT environment, day, baseline_equity FROM account_daily_risk_baseline"
+        ).fetchall()
 
     assert columns == {
         "id",
+        "daily_loss_enabled",
         "daily_loss_limit",
+        "losing_trade_enabled",
         "losing_trade_limit",
+        "automatic_trade_enabled",
         "automatic_trade_limit",
         "revision",
         "updated_at",
     }
-    assert values == (100, 3, 5, 1)
+    assert values == (1, 100, 1, 3, 1, 5, 1)
+    assert baseline_columns == {
+        "environment",
+        "day",
+        "baseline_equity",
+        "captured_at",
+        "source",
+    }
+    assert baselines == []

@@ -141,12 +141,16 @@ def test_frontend_operations_use_backend_endpoints_and_no_live_lock_contract() -
     assert "/v1/account-risk/testnet" in api
     assert "AccountRiskStatus" in types + app
     assert "remaining_loss_allowance" in types + app
-    assert "خسارة حقوق الملكية اليومية" in app
-    assert "الصفقات التلقائية" in app
+    assert "Daily Equity-Loss Limit" in app
+    assert "Daily Automatic-Entry Limit" in app
     assert "RiskManagementDrawer" in app
     assert "loadAccountRiskPolicy" in api + risk_management
     assert "saveAccountRiskPolicy" in api + risk_management
-    assert "حفظ حدود المخاطر" in risk_management
+    assert "Enable Daily Equity-Loss Limit" in risk_management
+    assert "Enable Daily Losing-Trades Limit" in risk_management
+    assert "Enable Daily Automatic-Entry Limit" in risk_management
+    assert "DISABLE LIVE RISK LIMITS" in risk_management
+    assert "حفظ Risk Policy" in risk_management
     assert "لن يظهر نجاح الحفظ" in risk_management
     assert "localStorage" not in risk_management
     assert "/v1/trades?" in api

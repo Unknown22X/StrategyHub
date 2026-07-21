@@ -959,24 +959,51 @@ export interface PaperAccount {
 }
 
 export interface AccountRiskPolicy {
+  daily_loss_enabled: boolean;
   daily_loss_limit: string;
+  losing_trade_enabled: boolean;
   losing_trade_limit: number;
+  automatic_trade_enabled: boolean;
   automatic_trade_limit: number;
   revision: number;
   updated_at: string;
 }
 
+export type AccountRiskLimitState =
+  | "disabled"
+  | "not_reached"
+  | "reached"
+  | "data_unavailable"
+  | "synchronizing";
+
+export interface AccountRiskLimitStatus {
+  key: "daily_equity_loss" | "daily_losing_trades" | "daily_automatic_entries";
+  enabled: boolean;
+  state: AccountRiskLimitState;
+  unit: "USDT" | "trades" | "entries";
+  limit_value: string;
+  used_value: string | null;
+  remaining_value: string | null;
+  blocks_manual_entries: boolean;
+  blocks_automatic_entries: boolean;
+}
+
 export interface AccountRiskStatus {
   environment: "testnet" | "live";
   day: string;
+  timezone: "Asia/Riyadh";
+  synchronization_complete: boolean;
+  risk_data_state: "ready" | "baseline_missing" | "account_data_unavailable" | "synchronizing";
   baseline_ready: boolean;
   baseline_equity: string | null;
+  baseline_captured_at: string | null;
   current_equity: string | null;
   equity_loss_used: string;
   remaining_loss_allowance: string;
   losing_trades: number;
   automatic_trades: number;
   policy: AccountRiskPolicy;
+  limits: AccountRiskLimitStatus[];
   manual_entries_blocked: boolean;
   automatic_entries_blocked: boolean;
   blocked_reason_codes: string[];

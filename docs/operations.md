@@ -38,6 +38,14 @@
 
 يمكن فحص الحالة المنقحة عبر `GET /v1/exchange/{mode}/reconciliation` وطلب تحديث محدود عبر `POST /v1/exchange/{mode}/reconcile`. تبقى Credentials، تطابق البيئة، حداثة السوق، الحماية، الرصيد، وقواعد العقد حواجز مستقلة.
 
+## Daily Risk Policy
+
+تحتفظ RangeBot بخط أساس Equity واحد غير قابل للتعديل لكل بيئة ولكل يوم حسب `Asia/Riyadh`. يُلتقط أول Equity point موثوق لذلك اليوم مرة واحدة؛ لا يُرفع الخط بعد خسارة ولا يُعاد ضبطه عند Recovery أو Restart. يبدأ يوم جديد بسجل Baseline جديد مستقل، وتبقى سجلات Testnet وLive منفصلة.
+
+لكل Daily Limit حالة `enabled` صريحة في SQLite: Daily Equity-Loss، Daily Losing-Trades، وDaily Automatic-Entry. تعطيل Limit لا يستخدم أرقاماً ضخمة ولا يغير قيمته المحفوظة، بل يجعله يظهر كـ `disabled`. الحالات الأخرى مستقلة وواضحة: `not_reached` و`reached` و`data_unavailable` و`synchronizing`. لا تُعرض رسالة Limit reached عند غياب Baseline أو Account data أو أثناء Reconciliation.
+
+سياسة Limits مشتركة بين Testnet وLIVE، لذلك يتطلب إضعاف أي Limit مفعّل العبارة `DISABLE LIVE RISK LIMITS` حتى عند فتح الإعدادات من Paper أو Testnet. هذا يمنع تجاوز تأكيد الأموال الحقيقية عبر تبديل البيئة أولاً. ولا يتجاوز التعطيل Environment Matching أو Credentials أو Fresh Account Data أو sufficient Balance أو valid Quantity أو unmanaged-state protection أو Protection-Order validation.
+
 ## نقل بيانات RangeBot إلى القرص D بأمان
 
 1. فعّل Emergency Stop وأوقف أي بوتات نشطة، ثم أوقف خدمة `RangeBotEngine`.

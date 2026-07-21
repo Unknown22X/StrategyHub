@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from threading import Event, Lock
+from threading import Event, Lock, Thread
 import time
 
 from rangebot.domain.exchange import ExchangeSnapshot, TradingMode
@@ -89,6 +89,86 @@ def test_stale_snapshot_refresh_is_nonblocking_and_single_flight() -> None:
     assert ready.snapshot_age_seconds == 0
 
 
+def test_forced_wait_queues_one_follow_up_after_an_older_background_flight() -> None:
+    snapshots: dict[TradingMode, ExchangeSnapshot] = {}
+    first_entered = Event()
+    release_first = Event()
+    calls = 0
+    lock = Lock()
+
+    class Adapter:
+        def reconcile(self, mode: TradingMode) -> ExchangeSnapshot:
+            nonlocal calls
+            with lock:
+                calls += 1
+                call_number = calls
+            if call_number == 1:
+                first_entered.set()
+                if not release_first.wait(timeout=2):
+                    raise TimeoutError("first reconciliation was not released")
+            return _snapshot(mode)
+
+    coordinator = ReconciliationCoordinator(
+        adapter=Adapter(),
+        load_snapshot=lambda mode: snapshots.get(mode),
+        save_snapshot=lambda snapshot: snapshots.__setitem__(snapshot.mode, snapshot),
+        clock=lambda: NOW,
+        maximum_attempts=1,
+    )
+    coordinator.request("testnet")
+    assert first_entered.wait(timeout=1)
+
+    results = []
+
+    def force_refresh() -> None:
+        results.append(coordinator.request("testnet", wait=True, force=True))
+
+    callers = [Thread(target=force_refresh), Thread(target=force_refresh)]
+    for caller in callers:
+        caller.start()
+    time.sleep(0.05)
+    release_first.set()
+    for caller in callers:
+        caller.join(timeout=2)
+    coordinator.close()
+
+    assert all(not caller.is_alive() for caller in callers)
+    assert calls == 2
+    assert len(results) == 2
+    assert all(result.ready for result in results)
+
+
+def test_concurrent_forced_callers_share_the_same_forced_flight() -> None:
+    snapshots: dict[TradingMode, ExchangeSnapshot] = {}
+    adapter = _BlockingAdapter()
+    coordinator = ReconciliationCoordinator(
+        adapter=adapter,
+        load_snapshot=lambda mode: snapshots.get(mode),
+        save_snapshot=lambda snapshot: snapshots.__setitem__(snapshot.mode, snapshot),
+        clock=lambda: NOW,
+        maximum_attempts=1,
+    )
+    results = []
+
+    def force_refresh() -> None:
+        results.append(coordinator.request("testnet", wait=True, force=True))
+
+    callers = [Thread(target=force_refresh), Thread(target=force_refresh)]
+    for caller in callers:
+        caller.start()
+    assert adapter.entered.wait(timeout=1)
+    time.sleep(0.05)
+    adapter.release.set()
+    for caller in callers:
+        caller.join(timeout=2)
+    coordinator.close()
+
+    assert all(not caller.is_alive() for caller in callers)
+    assert adapter.calls == 1
+    assert len(results) == 2
+    assert all(result.ready for result in results)
+
+
 def test_retry_backoff_recovers_temporary_failure() -> None:
     snapshots: dict[TradingMode, ExchangeSnapshot] = {}
     attempts = 0
@@ -172,7 +252,6 @@ def test_readiness_preserves_specific_snapshot_reason_codes() -> None:
         "one_way_not_confirmed",
         "cross_margin_not_confirmed",
         "risk_data_unavailable",
-        "daily_baseline_missing",
         "protection_not_ready",
         "private_stream_not_ready",
         "rest_snapshot_not_ready",

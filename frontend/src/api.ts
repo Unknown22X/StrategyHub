@@ -334,8 +334,13 @@ export function loadAccountRiskPolicy(
 export function saveAccountRiskPolicy(
   policy: Pick<
     AccountRiskPolicy,
-    "daily_loss_limit" | "losing_trade_limit" | "automatic_trade_limit"
-  >,
+    | "daily_loss_enabled"
+    | "daily_loss_limit"
+    | "losing_trade_enabled"
+    | "losing_trade_limit"
+    | "automatic_trade_enabled"
+    | "automatic_trade_limit"
+  > & { confirmation?: string },
 ): Promise<AccountRiskPolicy> {
   return request<AccountRiskPolicy>("/v1/account-risk/policy", {
     method: "PUT",

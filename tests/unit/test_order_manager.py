@@ -289,7 +289,6 @@ def test_preview_reports_all_account_contract_and_precision_blockers() -> None:
         "contract_delisting",
         "leverage_above_contract_limit",
         "one_way_not_confirmed",
-        "daily_risk_limit",
         "emergency_stop",
         "reconciliation_not_ready",
         "protection_not_ready",
@@ -299,6 +298,7 @@ def test_preview_reports_all_account_contract_and_precision_blockers() -> None:
         "limit_price_precision",
         "insufficient_available_balance",
     }.issubset(codes)
+    assert "daily_risk_limit" not in codes
 
 
 def test_balance_percentage_preview_and_submission_revalidate_before_execution() -> (

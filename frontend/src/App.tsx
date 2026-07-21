@@ -56,6 +56,7 @@ import {
 } from "./lib/format";
 import type {
   AccountPerformanceSeries,
+  AccountRiskLimitStatus,
   ActivityEvent,
   Environment,
   EnvironmentRuntimeState,
@@ -640,6 +641,7 @@ export default function App() {
       />
       <RiskManagementDrawer
         open={riskManagementOpen}
+        environment={environment}
         onClose={() => setRiskManagementOpen(false)}
         onSaved={() => void refresh()}
       />
@@ -1312,49 +1314,44 @@ function RiskPanel({
           <InfoItem label="إدخالات يدوية" value={risk.manual_entries_blocked ? "محظورة" : "مسموحة"} />
           <InfoItem label="إدخالات تلقائية" value={risk.automatic_entries_blocked ? "محظورة" : "مسموحة"} />
         </div>
-      ) : environment !== "paper" && snapshot && gateRisk ? (
+      ) : environment !== "paper" && gateRisk ? (
         <div className="risk-progress-list">
-          <ProgressRow
-            label="خسارة حقوق الملكية اليومية"
-            value={Number(gateRisk.equity_loss_used)}
-            maximum={Number(gateRisk.policy.daily_loss_limit)}
-            display={`${formatMoney(gateRisk.equity_loss_used)} / ${formatMoney(gateRisk.policy.daily_loss_limit)}`}
-          />
-          <ProgressRow
-            label="الصفقات الخاسرة"
-            value={gateRisk.losing_trades}
-            maximum={gateRisk.policy.losing_trade_limit}
-            display={`${gateRisk.losing_trades} / ${gateRisk.policy.losing_trade_limit}`}
-          />
-          <ProgressRow
-            label="الصفقات التلقائية"
-            value={gateRisk.automatic_trades}
-            maximum={gateRisk.policy.automatic_trade_limit}
-            display={`${gateRisk.automatic_trades} / ${gateRisk.policy.automatic_trade_limit}`}
-          />
+          <div className="risk-limit-status-list">
+            {gateRisk.limits.map((limit) => (
+              <RiskLimitStatusRow key={limit.key} limit={limit} />
+            ))}
+          </div>
           <div className="info-grid compact-info-grid">
-            <InfoItem label="خط الأساس اليومي" value={formatMoney(gateRisk.baseline_equity)} />
-            <InfoItem label="حقوق الملكية الحالية" value={formatMoney(gateRisk.current_equity)} />
-            <InfoItem label="الخسارة المتبقية" value={formatMoney(gateRisk.remaining_loss_allowance)} />
-            <InfoItem label="إدخالات يدوية" value={gateRisk.manual_entries_blocked ? "محظورة" : "مسموحة"} />
-            <InfoItem label="إدخالات تلقائية" value={gateRisk.automatic_entries_blocked ? "محظورة" : "مسموحة"} />
+            <InfoItem label="Risk Data" value={riskDataStateLabel(gateRisk.risk_data_state)} />
+            <InfoItem label="Riyadh Daily Baseline" value={formatMoney(gateRisk.baseline_equity)} />
+            <InfoItem label="Baseline Captured" value={formatDateTime(gateRisk.baseline_captured_at)} />
+            <InfoItem label="Current Equity" value={formatMoney(gateRisk.current_equity)} />
+            <InfoItem label="Remaining Loss Allowance" value={formatMoney(gateRisk.remaining_loss_allowance)} />
+            <InfoItem label="Manual Entries" value={gateRisk.manual_entries_blocked ? "Blocked" : "Allowed"} />
+            <InfoItem label="Automatic Entries" value={gateRisk.automatic_entries_blocked ? "Blocked" : "Allowed"} />
             <InfoItem
-              label="سبب الحظر"
+              label="Main Cause"
               value={gateRisk.blocked_reason_codes.length > 0
                 ? gateRisk.blocked_reason_codes.map(strategyWarningLabel).join("، ")
-                : "لا يوجد"}
+                : "No risk-policy block"}
             />
           </div>
-          <div className="risk-check-grid">
-            <RiskCheck label="المصالحة" healthy={!snapshot.reconciliation_error && !snapshot.unmanaged_state} />
-            <RiskCheck label="One-way" healthy={snapshot.one_way_confirmed} />
-            <RiskCheck label="Cross margin" healthy={snapshot.cross_margin_confirmed} />
-            <RiskCheck label="خط الأساس اليومي" healthy={snapshot.daily_baseline_ready && gateRisk.baseline_ready} />
-            <RiskCheck label="محرك المخاطر" healthy={snapshot.risk_ready && !gateRisk.manual_entries_blocked} />
-            <RiskCheck label="حماية المركز" healthy={snapshot.protection_ready} />
-            <RiskCheck label="REST snapshot" healthy={snapshot.rest_snapshot_confirmed} />
-            <RiskCheck label="Private stream" healthy={snapshot.subscription_confirmed} />
-          </div>
+          {snapshot ? (
+            <div className="risk-check-grid">
+              <RiskCheck label="Reconciliation" healthy={!snapshot.reconciliation_error && !snapshot.unmanaged_state} />
+              <RiskCheck label="One-way" healthy={snapshot.one_way_confirmed} />
+              <RiskCheck label="Cross Margin" healthy={snapshot.cross_margin_confirmed} />
+              <RiskCheck label="Risk Data" healthy={snapshot.risk_ready && gateRisk.risk_data_state === "ready"} />
+              <RiskCheck label="Protection" healthy={snapshot.protection_ready} />
+              <RiskCheck label="REST Snapshot" healthy={snapshot.rest_snapshot_confirmed} />
+              <RiskCheck label="Private Stream" healthy={snapshot.subscription_confirmed} />
+            </div>
+          ) : (
+            <div className="inline-alert warning-alert" role="status">
+              <Icon name="alert" />
+              Account snapshot is unavailable or still synchronizing. No Limit is reported as reached from missing data.
+            </div>
+          )}
         </div>
       ) : (
         <EmptyState title="بيانات المخاطر غير متاحة" description="يُعرض هذا الوضع بدلاً من قيم قديمة أو افتراضية." />
@@ -1888,6 +1885,54 @@ function ProgressRow({ label, value, maximum, display }: { label: string; value:
       <div className="progress-track"><span style={{ width: `${percentage}%` }} /></div>
     </div>
   );
+}
+
+function RiskLimitStatusRow({ limit }: { limit: AccountRiskLimitStatus }) {
+  const labels: Record<AccountRiskLimitStatus["key"], string> = {
+    daily_equity_loss: "Daily Equity-Loss Limit",
+    daily_losing_trades: "Daily Losing-Trades Limit",
+    daily_automatic_entries: "Daily Automatic-Entry Limit",
+  };
+  const display = limit.state === "disabled"
+    ? "Optional Limit disabled"
+    : limit.used_value === null
+      ? "Risk data unavailable"
+      : `${limit.unit === "USDT" ? formatMoney(limit.used_value) : formatDecimal(limit.used_value)} / ${limit.unit === "USDT" ? formatMoney(limit.limit_value) : formatDecimal(limit.limit_value)} ${limit.unit}`;
+  const tone = limit.state === "reached"
+    ? "negative"
+    : limit.state === "not_reached"
+      ? "positive"
+      : limit.state === "disabled"
+        ? "neutral"
+        : "warning";
+  return (
+    <div className={`risk-limit-status-row state-${limit.state}`}>
+      <div>
+        <strong>{labels[limit.key]}</strong>
+        <span>{display}</span>
+      </div>
+      <StatusPill label={riskLimitStateLabel(limit.state)} tone={tone} pulse={limit.state === "synchronizing"} />
+    </div>
+  );
+}
+
+function riskLimitStateLabel(state: AccountRiskLimitStatus["state"]): string {
+  return {
+    disabled: "Disabled",
+    not_reached: "Enabled · Not reached",
+    reached: "Limit reached",
+    data_unavailable: "Data unavailable",
+    synchronizing: "Synchronizing",
+  }[state];
+}
+
+function riskDataStateLabel(state: "ready" | "baseline_missing" | "account_data_unavailable" | "synchronizing"): string {
+  return {
+    ready: "Ready",
+    baseline_missing: "Daily baseline missing",
+    account_data_unavailable: "Account data unavailable",
+    synchronizing: "Synchronizing",
+  }[state];
 }
 
 function RiskCheck({ label, healthy }: { label: string; healthy: boolean }) {

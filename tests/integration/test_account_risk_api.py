@@ -1,11 +1,13 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
 
 from rangebot.domain.exchange import ExchangeSnapshot
 from rangebot.domain.trades import TradeFillCreate
 from rangebot.engine.api import create_app
+from rangebot.engine.exchange import MockGateIoAdapter
 
 
 def _fill(
@@ -37,12 +39,26 @@ def _fill(
     )
 
 
-def test_account_risk_policy_and_daily_status_persist_and_count_distinct_orders(tmp_path) -> None:
+def test_account_risk_policy_and_daily_status_persist_and_count_distinct_orders(
+    tmp_path,
+) -> None:
     database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
-    now = datetime.now(UTC)
-    app = create_app(database_url)
+    adapter = MockGateIoAdapter()
+    app = create_app(
+        database_url,
+        exchange_adapter=adapter,
+        exchange_adapter_mode="live",
+    )
 
     with TestClient(app) as client:
+        assert client.post("/v1/exchange/live/reconcile").status_code == 200
+        now = datetime.now(UTC) + timedelta(seconds=1)
+        app.state.account_risk_baseline_repository.capture_if_missing(
+            environment="live",
+            day=now.astimezone(ZoneInfo("Asia/Riyadh")).date(),
+            baseline_equity=Decimal("1000"),
+            captured_at=now - timedelta(minutes=5),
+        )
         policy = client.put(
             "/v1/account-risk/policy",
             json={
@@ -127,6 +143,10 @@ def test_account_risk_is_fail_closed_without_daily_equity_baseline(tmp_path) -> 
     assert response.status_code == 200
     payload = response.json()
     assert payload["baseline_ready"] is False
+    assert payload["synchronization_complete"] is False
+    assert payload["risk_data_state"] == "synchronizing"
     assert payload["manual_entries_blocked"] is True
     assert payload["automatic_entries_blocked"] is True
-    assert "daily_baseline_unavailable" in payload["blocked_reason_codes"]
+    assert payload["blocked_reason_codes"] == ["synchronization_incomplete"]
+    assert all(limit["state"] == "synchronizing" for limit in payload["limits"])
+    assert "daily_loss_limit_reached" not in payload["blocked_reason_codes"]

@@ -205,6 +205,7 @@ from rangebot.domain.exchange import (
     TradingMode,
 )
 from rangebot.engine.account_risk import (
+    AccountDailyRiskBaselineRepository,
     AccountRiskPolicyRepository,
     AccountRiskService,
 )
@@ -376,12 +377,16 @@ def create_app(
     settings_repository = ApplicationSettingsRepository(database_engine)
     environment_activation_repository = EnvironmentActivationRepository(database_engine)
     account_risk_policy_repository = AccountRiskPolicyRepository(database_engine)
+    account_risk_baseline_repository = AccountDailyRiskBaselineRepository(
+        database_engine
+    )
     strategy_instance_repository = StrategyInstanceRepository(database_engine)
     research_repository = DiscoveryResearchRepository(database_engine)
     portfolio_backtest_repository = PortfolioBacktestRepository(database_engine)
     trade_history_repository = TradeHistoryRepository(database_engine)
     account_risk_service = AccountRiskService(
         account_risk_policy_repository,
+        account_risk_baseline_repository,
         performance_repository,
         trade_history_repository,
     )
@@ -515,6 +520,15 @@ def create_app(
                 }
             )
             trade_history_repository.record(attributed)
+            if ownership is not None and raw_fill.order_id is not None:
+                trade_history_repository.attach_order_ownership(
+                    environment=raw_fill.environment,
+                    order_id=raw_fill.order_id,
+                    origin=ownership.origin,
+                    instance_id=ownership.instance_id,
+                    run_id=ownership.run_id,
+                    strategy_name_snapshot=_strategy_name_snapshot(ownership),
+                )
 
     def _attach_paper_fill_ownership(
         trade_id: str | None, ownership: TradeOwnership | None
@@ -584,6 +598,17 @@ def create_app(
                 ownership.trailing_order_id is not None
                 and ownership.trailing_order_id in current.trailing_order_ids
             ):
+                continue
+            if (
+                ownership.trailing_stop_distance is not None
+                and ownership.trailing_order_id is None
+                and current.trailing_order_ids
+            ):
+                # Keep durable desired ownership while Gate still reports an
+                # unmatched trailing order. A concurrent reconciliation may have
+                # read ownership before it was persisted; deleting it here would
+                # orphan the Gate protection before the next pass can infer and
+                # safely cancel or adopt the order.
                 continue
             strategy_instance_repository.delete_trade_ownership(
                 "position", ownership.external_identity
@@ -854,6 +879,24 @@ def create_app(
         load_snapshot=exchange_repository.get_snapshot,
         save_snapshot=_save_exchange_snapshot,
     )
+
+    def _risk_synchronization_complete(
+        readiness: ReconciliationReadiness,
+    ) -> bool:
+        synchronization_blockers = {
+            "adapter_mode_mismatch",
+            "credentials_invalid",
+            "reconciliation_failed",
+            "reconciliation_not_ready",
+            "reconciliation_refreshing",
+            "reconciliation_snapshot_missing",
+            "reconciliation_snapshot_stale",
+            "reconciliation_timeout",
+            "private_stream_not_ready",
+            "rest_snapshot_not_ready",
+        }
+        return not synchronization_blockers.intersection(readiness.reason_codes)
+
     pinned_market_targets = set(
         market_subscription_registry.snapshot()[1]
         if market_subscription_registry is not None
@@ -977,6 +1020,7 @@ def create_app(
     app.state.strategy_workflow_repository = strategy_workflow_repository
     app.state.strategy_manager = strategy_manager
     app.state.account_risk_policy_repository = account_risk_policy_repository
+    app.state.account_risk_baseline_repository = account_risk_baseline_repository
     app.state.account_risk_service = account_risk_service
     app.state.performance_repository = performance_repository
     app.state.strategy_overview_service = strategy_overview_service
@@ -1405,19 +1449,21 @@ def create_app(
                     f"{readiness.attempt_count}-{readiness.failure_code}"
                 ),
             )
-        account_risk = account_risk_service.status(environment)
+        account_risk = account_risk_service.status(
+            environment,
+            synchronization_complete=_risk_synchronization_complete(readiness),
+        )
         risk_allowed = (
             not account_risk.manual_entries_blocked
             if origin == "manual"
             else not account_risk.automatic_entries_blocked
         )
         reconciliation_reason_codes = list(readiness.reason_codes)
-        if not account_risk.baseline_ready:
-            reconciliation_reason_codes.extend(
-                ("daily_baseline_missing", "reconciliation_not_ready")
-            )
-        reconciliation_reason_codes = list(dict.fromkeys(reconciliation_reason_codes))
-        reconciliation_ready = readiness.ready and account_risk.baseline_ready
+        risk_reason_codes = list(account_risk.blocked_reason_codes)
+        if not snapshot.risk_ready:
+            risk_reason_codes.append("risk_data_unavailable")
+        risk_reason_codes = list(dict.fromkeys(risk_reason_codes))
+        reconciliation_ready = readiness.ready
         risk_revision = (
             f"risk-{account_risk.policy.revision}-{account_risk.day}-"
             f"{account_risk.equity_loss_used}-{account_risk.losing_trades}-"
@@ -1430,9 +1476,8 @@ def create_app(
             available_balance=snapshot.available_futures_balance,
             existing_position_quantity=snapshot.position_quantity,
             one_way_confirmed=snapshot.one_way_confirmed,
-            daily_risk_allowed=(
-                snapshot.risk_ready and snapshot.daily_baseline_ready and risk_allowed
-            ),
+            daily_risk_allowed=snapshot.risk_ready and risk_allowed,
+            risk_reason_codes=tuple(risk_reason_codes),
             emergency_stop=exchange_repository.emergency_stop(mode),
             reconciliation_ready=reconciliation_ready,
             reconciliation_reason_codes=tuple(reconciliation_reason_codes),
@@ -3525,6 +3570,23 @@ def create_app(
     def update_account_risk_policy(
         change: AccountRiskPolicyUpdate,
     ) -> AccountRiskPolicy:
+        current = account_risk_policy_repository.get()
+        disabling_live_protection = (
+            (current.daily_loss_enabled and not change.daily_loss_enabled)
+            or (current.losing_trade_enabled and not change.losing_trade_enabled)
+            or (current.automatic_trade_enabled and not change.automatic_trade_enabled)
+        )
+        if (
+            disabling_live_protection
+            and change.confirmation != "DISABLE LIVE RISK LIMITS"
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "تعطيل حدود المخاطر في LIVE يعرّض أموالاً حقيقية للخطر. "
+                    "يلزم إدخال DISABLE LIVE RISK LIMITS حرفياً."
+                ),
+            )
         return account_risk_policy_repository.update(change)
 
     @app.get(
@@ -3534,7 +3596,14 @@ def create_app(
     def account_risk_status(
         mode: Literal["testnet", "live"],
     ) -> AccountRiskStatus:
-        return account_risk_service.status(mode)
+        readiness = reconciliation_coordinator.status(
+            mode,
+            request_refresh=(environment_runtime.active_adapter_mode == mode),
+        )
+        return account_risk_service.status(
+            mode,
+            synchronization_complete=_risk_synchronization_complete(readiness),
+        )
 
     @app.get("/v1/paper/risk", response_model=PaperRiskSnapshot)
     def paper_risk() -> PaperRiskSnapshot:

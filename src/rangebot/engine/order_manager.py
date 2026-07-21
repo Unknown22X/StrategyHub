@@ -391,7 +391,20 @@ class OrderManager:
         if not account.one_way_confirmed:
             add("one_way_not_confirmed", "وضع One-way غير مؤكّد بالمصالحة.")
         if not account.daily_risk_allowed:
-            add("daily_risk_limit", "حد المخاطر اليومي يمنع دخولاً جديداً.")
+            risk_messages = {
+                "synchronization_incomplete": "مزامنة بيانات المخاطر غير مكتملة.",
+                "risk_data_unavailable": "بيانات حقوق الملكية غير متاحة.",
+                "daily_baseline_missing": "خط الأساس اليومي غير متاح بعد.",
+                "daily_loss_limit_reached": "تم بلوغ حد خسارة حقوق الملكية اليومي.",
+                "losing_trade_limit_reached": "تم بلوغ حد الصفقات الخاسرة اليومي.",
+                "automatic_trade_limit_reached": "تم بلوغ حد الدخولات التلقائية اليومي.",
+                "daily_risk_limit": "حد المخاطر اليومي يمنع دخولاً جديداً.",
+            }
+            reason_codes = account.risk_reason_codes
+            if not reason_codes and account.reconciliation_ready:
+                reason_codes = ("daily_risk_limit",)
+            for code in reason_codes:
+                add(code, risk_messages.get(code, "سياسة المخاطر تمنع دخولاً جديداً."))
         if account.emergency_stop:
             add("emergency_stop", "إيقاف الطوارئ مفعّل.")
         if not account.reconciliation_ready:
