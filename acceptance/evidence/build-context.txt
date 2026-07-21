@@ -1,5 +1,0 @@
-Build UTC: 2026-07-12T23:27:50.0362031Z
-Commit: a1d8cfabdf5c3604f19addc65d5de19c27c1433a
-Branch: master
-Python: Python 3.13.2
-UV: uv 0.11.28 (ebf0f43d7 2026-07-07 x86_64-pc-windows-msvc)
