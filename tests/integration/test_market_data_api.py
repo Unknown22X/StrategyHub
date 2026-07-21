@@ -4,9 +4,29 @@ from decimal import Decimal
 from fastapi.testclient import TestClient
 
 from rangebot.domain.market_data import MarketPriceUpdate
+from rangebot.domain.market import PublicContract, PublicMarketSnapshot
 from rangebot.domain.strategy_runtime import NormalizedCandle
 from rangebot.engine.api import create_app
 from rangebot.engine.market_data_manager import MarketDataManager
+
+
+class _PublicMarket:
+    def eligible_contracts(self) -> list[PublicContract]:
+        return [
+            PublicContract(
+                symbol="AKE_USDT",
+                quantity_step=Decimal("1"),
+                minimum_quantity=Decimal("1"),
+            )
+        ]
+
+    def snapshot(self, symbol: str) -> PublicMarketSnapshot:
+        assert symbol == "AKE_USDT"
+        return PublicMarketSnapshot(
+            symbol=symbol,
+            last_price=Decimal("0.0016964"),
+            observed_at=datetime(2026, 4, 1, 12, 0, tzinfo=UTC),
+        )
 
 
 def test_market_data_api_exposes_real_source_freshness_and_missing_states(
@@ -72,3 +92,22 @@ def test_market_data_api_exposes_real_source_freshness_and_missing_states(
     assert missing_status.json()["state"] == "unavailable"
     assert missing_status.json()["state_reason"] == "symbol_not_tracked"
     assert missing_candles.status_code == 404
+
+
+def test_market_data_api_hydrates_untracked_symbol_from_public_rest(tmp_path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
+    manager = MarketDataManager()
+
+    with TestClient(
+        create_app(
+            database_url,
+            market_data_manager=manager,
+            public_market_provider=_PublicMarket(),
+        )
+    ) as client:
+        response = client.get("/v1/market-data/AKE_USDT")
+
+    assert response.status_code == 200
+    assert response.json()["symbol"] == "AKE_USDT"
+    assert response.json()["last_price"] == "0.0016964"
+    assert response.json()["source"] == "gate_rest"

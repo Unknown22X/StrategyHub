@@ -2308,7 +2308,23 @@ def create_app(
         try:
             return normalized_market_data.snapshot(symbol)
         except LookupError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
+            # A symbol can be selected before the public WebSocket has subscribed
+            # to it.  Hydrate one read-only public REST snapshot so the Paper UI
+            # does not display a false "price unavailable" state.
+            try:
+                public_snapshot = market_provider.snapshot(symbol)
+                normalized_market_data.apply_rest_snapshot(
+                    MarketPriceUpdate(
+                        symbol=public_snapshot.symbol,
+                        last_price=public_snapshot.last_price,
+                        mark_price=public_snapshot.last_price,
+                        observed_at=public_snapshot.observed_at,
+                        source="gate_rest",
+                    )
+                )
+                return normalized_market_data.snapshot(symbol)
+            except LookupError:
+                raise HTTPException(status_code=404, detail=str(error)) from error
 
     @app.get(
         "/v1/futures/contracts/{symbol}/rules",
