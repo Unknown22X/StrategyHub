@@ -31,6 +31,7 @@ import {
   saveApplicationSettings,
   saveCredentials,
   submitManualOrder,
+  switchRuntimeEnvironment,
   testCredentials,
   updateStrategy,
 } from "./api";
@@ -257,6 +258,65 @@ describe("dashboard API boundary", () => {
       "/v1/settings",
       expect.objectContaining({ method: "PUT", body: JSON.stringify(settings) }),
     );
+  });
+
+  it("switches the authoritative runtime environment through the dedicated endpoint", async () => {
+    const runtime = {
+      configured_environment: "testnet",
+      requested_environment: "testnet",
+      active_engine_environment: "testnet",
+      exchange_adapter_environment: "testnet",
+      public_rest_environment: "testnet",
+      public_websocket_environment: "testnet",
+      private_websocket_environment: "testnet",
+      credential_profile: "testnet",
+      transition_state: "ready",
+      restart_required: false,
+      activated: true,
+      transition_started_at: null,
+      transition_completed_at: "2026-07-21T06:00:00Z",
+      failure_code: null,
+      message_ar: null,
+      revision: 2,
+    };
+    fetchMock.mockResolvedValue(jsonResponse(runtime));
+
+    const result = await switchRuntimeEnvironment("testnet");
+
+    expect(result.active_engine_environment).toBe("testnet");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/v1/runtime/environment/switch",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ environment: "testnet", confirmation: "" }),
+      }),
+    );
+  });
+
+  it("surfaces the structured environment-switch failure message", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({
+      configured_environment: "live",
+      requested_environment: "testnet",
+      active_engine_environment: "live",
+      exchange_adapter_environment: "live",
+      public_rest_environment: "live",
+      public_websocket_environment: "live",
+      private_websocket_environment: "live",
+      credential_profile: "live",
+      transition_state: "restart_required",
+      restart_required: true,
+      activated: false,
+      transition_started_at: "2026-07-21T06:00:00Z",
+      transition_completed_at: null,
+      failure_code: "restart_required",
+      message_ar: "يلزم إعادة تشغيل محرك RangeBot بالبيئة المطلوبة.",
+      revision: 3,
+    }, 409));
+
+    await expect(switchRuntimeEnvironment("testnet")).rejects.toMatchObject({
+      code: "restart_required",
+      message: "يلزم إعادة تشغيل محرك RangeBot بالبيئة المطلوبة.",
+    });
   });
 
   it("creates strategy instances using the registry-backed API", async () => {

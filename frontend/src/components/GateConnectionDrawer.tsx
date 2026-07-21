@@ -175,6 +175,9 @@ export function GateConnectionDrawer({
               Testnet
             </button>
           </div>
+          <p className="credential-profile-note">
+            هذا الاختيار يحدد Credential Profile الذي تعدّله فقط. تغيير بيئة التداول الفعلية يتم من شريط البيئة الرئيسي.
+          </p>
 
           <div className="connection-status-block">
             <div>

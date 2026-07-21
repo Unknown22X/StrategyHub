@@ -14,7 +14,14 @@ from threading import RLock
 from typing import Literal, cast
 from uuid import uuid4
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import (
+    BackgroundTasks,
+    FastAPI,
+    HTTPException,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
@@ -67,6 +74,11 @@ from rangebot.domain.entry_preview import (
     preview_is_current,
 )
 from rangebot.domain.events import EngineEventCategory, EngineEventStreamStatus
+from rangebot.domain.environment import (
+    ApplicationEnvironment,
+    EnvironmentRuntimeState,
+    EnvironmentSwitchRequest,
+)
 from rangebot.domain.market import (
     PaperWatchlist,
     PublicContract,
@@ -197,10 +209,10 @@ from rangebot.engine.account_risk import (
 )
 from rangebot.engine.activity_feed import ActivityFeedService
 from rangebot.engine.application_settings import ApplicationSettingsRepository
+from rangebot.engine.environment_activation import EnvironmentActivationRepository
 from rangebot.engine.backups import SQLiteBackupError, SQLiteBackupManager
 from rangebot.engine.backtest_repository import PortfolioBacktestRepository
 from rangebot.engine.backtesting import FundingCostProvider
-from rangebot.engine.contract_rules import GateContractRulesProvider
 from rangebot.engine.credential_adapter import effective_gate_credentials
 from rangebot.engine.database import apply_migrations, create_database_engine
 from rangebot.engine.discovery_lab import DiscoveryLabService
@@ -211,6 +223,11 @@ from rangebot.engine.credentials import (
     save_gate_credentials,
 )
 from rangebot.engine.events import EngineEventPublisher
+from rangebot.engine.environment_runtime import (
+    EnvironmentBoundGateIoAdapter,
+    EnvironmentRuntimeManager,
+    EnvironmentTransitionError,
+)
 from rangebot.engine.exchange import (
     GateIoAdapter,
     MockGateIoAdapter,
@@ -224,15 +241,16 @@ from rangebot.engine.gate_private_websocket import (
     PrivateStreamStateStore,
 )
 from rangebot.engine.gate_websocket import (
+    GateFuturesRestSnapshotProvider,
     GateFuturesWebSocketService,
     GateMarketTarget,
     MarketSubscriptionRegistry,
 )
-from rangebot.engine.historical_market_data import GateHistoricalMarketDataProvider
 from rangebot.engine.historical_backtesting import HistoricalBacktestService
-from rangebot.engine.market import EmptyPublicMarketProvider, PublicMarketProvider
+from rangebot.engine.market import PublicMarketProvider
 from rangebot.engine.market_data_manager import MarketDataManager
 from rangebot.engine.performance import AccountPerformanceRepository
+from rangebot.engine.public_rest_runtime import PublicRestEnvironmentManager
 from rangebot.engine.order_manager import (
     OrderManager,
     OrderValidationError,
@@ -246,7 +264,10 @@ from rangebot.engine.strategy_manager import StrategyManager
 from rangebot.engine.strategy_workflow import StrategyWorkflowRepository
 from rangebot.engine.strategy_overview import StrategyOverviewService
 from rangebot.engine.strategy_runtime_runner import StrategyRuntimeRunner
-from rangebot.engine.strategy_registry import StrategyRegistry, discover_strategy_registry
+from rangebot.engine.strategy_registry import (
+    StrategyRegistry,
+    discover_strategy_registry,
+)
 from rangebot.engine.repository import (
     ENGINE_BUILD_ID,
     PaperAccountRepository,
@@ -320,6 +341,7 @@ def create_app(
     database_url: str,
     public_market_provider: PublicMarketProvider | None = None,
     exchange_adapter: GateIoAdapter | None = None,
+    exchange_adapter_factory: Callable[[TradingMode], GateIoAdapter] | None = None,
     restored_state: bool = False,
     credential_test_adapter_factory: Callable[[TradingMode], GateIoAdapter]
     | None = None,
@@ -328,10 +350,12 @@ def create_app(
     contract_rules_provider: Callable[[str], FuturesContractRules] | None = None,
     order_manager: OrderManager | None = None,
     exchange_adapter_mode: TradingMode | None = None,
+    initial_environment: ApplicationEnvironment | None = None,
     frontend_dist: str | Path | None = None,
     log_directory: str | Path | None = None,
     market_subscription_registry: MarketSubscriptionRegistry | None = None,
     market_websocket_service: GateFuturesWebSocketService | None = None,
+    enable_public_websocket: bool = False,
     enable_private_websocket: bool = False,
     private_stream_state_store: PrivateStreamStateStore | None = None,
     private_websocket_service: GateFuturesPrivateWebSocketService | None = None,
@@ -348,6 +372,7 @@ def create_app(
     exchange_repository = ExchangeModeRepository(database_engine)
     performance_repository = AccountPerformanceRepository(database_engine)
     settings_repository = ApplicationSettingsRepository(database_engine)
+    environment_activation_repository = EnvironmentActivationRepository(database_engine)
     account_risk_policy_repository = AccountRiskPolicyRepository(database_engine)
     strategy_instance_repository = StrategyInstanceRepository(database_engine)
     research_repository = DiscoveryResearchRepository(database_engine)
@@ -383,12 +408,12 @@ def create_app(
     strategy_manager = StrategyManager(
         registered_strategies, strategy_instance_repository
     )
-    historical_environment: Literal["live", "testnet"] = (
-        "testnet" if exchange_adapter_mode == "testnet" else "live"
+    startup_environment: ApplicationEnvironment = (
+        initial_environment or exchange_adapter_mode or "paper"
     )
+    public_rest_runtime = PublicRestEnvironmentManager(startup_environment)
     historical_market_data = (
-        historical_market_data_provider
-        or GateHistoricalMarketDataProvider(historical_environment)
+        historical_market_data_provider or public_rest_runtime.historical
     )
     discovery_lab = discovery_lab_service or DiscoveryLabService(
         registered_strategies,
@@ -411,7 +436,10 @@ def create_app(
             missing.append("نوع الاستراتيجية لا يطابق إعداد العملة المحفوظ.")
         if request.timeframe_minutes != setup.timeframe_minutes:
             missing.append("الإطار الزمني لا يطابق إعداد العملة المحفوظ.")
-        if request.exchange != setup.exchange or request.market_type != setup.market_type:
+        if (
+            request.exchange != setup.exchange
+            or request.market_type != setup.market_type
+        ):
             missing.append("السوق لا يطابق إعداد العملة المحفوظ.")
         if request.configuration != setup.effective_configuration:
             missing.append("إعدادات الاستراتيجية لا تطابق لقطة إعداد العملة الحالية.")
@@ -430,12 +458,19 @@ def create_app(
         ),
         setup_validation=_validate_backtest_setup,
     )
-    gate_adapter = exchange_adapter or UnavailableGateIoAdapter()
+    initial_gate_adapter = exchange_adapter
+    if (
+        initial_gate_adapter is None
+        and exchange_adapter_factory is not None
+        and startup_environment != "paper"
+    ):
+        initial_gate_adapter = exchange_adapter_factory(
+            cast(TradingMode, startup_environment)
+        )
+    gate_adapter: GateIoAdapter = initial_gate_adapter or UnavailableGateIoAdapter()
     _persist_raw_snapshot = exchange_repository.save_snapshot
 
-    def _position_identity(
-        environment: str, symbol: str, direction: str
-    ) -> str:
+    def _position_identity(environment: str, symbol: str, direction: str) -> str:
         return f"{environment}:{symbol}:{direction}"
 
     def _strategy_name_snapshot(ownership: TradeOwnership | None) -> str | None:
@@ -470,7 +505,9 @@ def create_app(
             attributed = raw_fill.model_copy(
                 update={
                     "origin": ownership.origin if ownership is not None else "external",
-                    "instance_id": ownership.instance_id if ownership is not None else None,
+                    "instance_id": ownership.instance_id
+                    if ownership is not None
+                    else None,
                     "run_id": ownership.run_id if ownership is not None else None,
                     "strategy_name_snapshot": _strategy_name_snapshot(ownership),
                 }
@@ -498,7 +535,10 @@ def create_app(
         source: TradeOwnership,
     ) -> None:
         identity = _position_identity(environment, symbol, direction)
-        if strategy_instance_repository.trade_ownership("position", identity) is not None:
+        if (
+            strategy_instance_repository.trade_ownership("position", identity)
+            is not None
+        ):
             return
         strategy_instance_repository.record_trade_ownership(
             TradeOwnershipCreate(
@@ -581,7 +621,10 @@ def create_app(
     def _cleanup_closed_position_trails(
         snapshot: ExchangeSnapshot,
     ) -> ExchangeSnapshot:
-        if not snapshot.trailing_reconciliation_ready or not snapshot.trailing_order_ids:
+        if (
+            not snapshot.trailing_reconciliation_ready
+            or not snapshot.trailing_order_ids
+        ):
             return snapshot
         current_positions = {
             _position_identity(snapshot.mode, position.contract, position.side)
@@ -646,10 +689,7 @@ def create_app(
                 error=result.message_ar,
             )
             cleanup_ready = False
-        if (
-            tuple(remaining_order_ids) == snapshot.trailing_order_ids
-            and cleanup_ready
-        ):
+        if tuple(remaining_order_ids) == snapshot.trailing_order_ids and cleanup_ready:
             return snapshot
         return snapshot.model_copy(
             update={
@@ -669,11 +709,15 @@ def create_app(
         if not snapshot.trailing_reconciliation_ready:
             return
         current_positions = {
-            _position_identity(snapshot.mode, position.contract, position.side): position
+            _position_identity(
+                snapshot.mode, position.contract, position.side
+            ): position
             for position in snapshot.positions
             if position.quantity != 0
         }
-        active_trail_id = snapshot.trailing_order_ids[0] if snapshot.trailing_order_ids else None
+        active_trail_id = (
+            snapshot.trailing_order_ids[0] if snapshot.trailing_order_ids else None
+        )
         for ownership in strategy_instance_repository.trade_ownerships(
             identity_kind="position", environment=snapshot.mode
         ):
@@ -682,7 +726,10 @@ def create_app(
             position = current_positions.get(ownership.external_identity)
             if position is None:
                 continue
-            if active_trail_id is not None and snapshot.trailing_protection_ready is True:
+            if (
+                active_trail_id is not None
+                and snapshot.trailing_protection_ready is True
+            ):
                 strategy_instance_repository.update_trailing_protection(
                     "position",
                     ownership.external_identity,
@@ -691,11 +738,9 @@ def create_app(
                     error=None,
                 )
                 continue
-            if (
-                ownership.trailing_updated_at is not None
-                and datetime.now(UTC) - ownership.trailing_updated_at
-                < timedelta(seconds=30)
-            ):
+            if ownership.trailing_updated_at is not None and datetime.now(
+                UTC
+            ) - ownership.trailing_updated_at < timedelta(seconds=30):
                 continue
             result = gate_adapter.ensure_trailing_protection(
                 snapshot.mode,
@@ -750,23 +795,58 @@ def create_app(
             resource=f"/v1/exchange/{snapshot.mode}/snapshot",
         )
 
-    private_stream_status = private_stream_state_store or PrivateStreamStateStore(
-        exchange_adapter_mode
-    )
-    if (
-        private_websocket_service is None
-        and enable_private_websocket
-        and exchange_adapter_mode is not None
-    ):
-        private_websocket_service = GateFuturesPrivateWebSocketService(
-            mode=exchange_adapter_mode,
-            credentials=effective_gate_credentials,
-            reconcile=gate_adapter.reconcile,
-            persist_snapshot=_save_exchange_snapshot,
-            status_store=private_stream_status,
-        )
-    market_provider = public_market_provider or EmptyPublicMarketProvider()
+    market_provider = public_market_provider or public_rest_runtime.public_market
     normalized_market_data = market_data_manager or MarketDataManager()
+
+    def _public_websocket_factory(mode: TradingMode):
+        if not enable_public_websocket:
+            return None
+        rest_snapshot = GateFuturesRestSnapshotProvider(mode)
+        subscriptions = market_subscription_registry or MarketSubscriptionRegistry()
+        return GateFuturesWebSocketService(
+            environment=mode,
+            market_data=normalized_market_data,
+            subscriptions=subscriptions,
+            rest_snapshot=rest_snapshot.snapshot,
+        )
+
+    def _private_websocket_factory(
+        mode: TradingMode,
+        adapter: GateIoAdapter,
+        status_store: PrivateStreamStateStore,
+    ):
+        if not enable_private_websocket:
+            return None
+        return GateFuturesPrivateWebSocketService(
+            mode=mode,
+            credentials=effective_gate_credentials,
+            reconcile=adapter.reconcile,
+            persist_snapshot=_save_exchange_snapshot,
+            status_store=status_store,
+        )
+
+    strict_initial_mode = (
+        cast(TradingMode, startup_environment)
+        if startup_environment != "paper"
+        and (exchange_adapter_mode is not None or exchange_adapter_factory is not None)
+        else exchange_adapter_mode
+    )
+    environment_runtime = EnvironmentRuntimeManager(
+        initial_environment=startup_environment,
+        initial_adapter=gate_adapter,
+        strict_adapter_mode=strict_initial_mode,
+        adapter_factory=exchange_adapter_factory,
+        initial_public_service=market_websocket_service,
+        public_service_factory=_public_websocket_factory,
+        initial_private_service=private_websocket_service,
+        private_service_factory=_private_websocket_factory,
+        initial_private_state_store=private_stream_state_store,
+        persist_snapshot=_persist_raw_snapshot,
+        invalidate_snapshot=exchange_repository.invalidate_snapshot,
+        reset_market_data=normalized_market_data.reset,
+        activate_public_rest=public_rest_runtime.activate,
+    )
+    gate_adapter = EnvironmentBoundGateIoAdapter(environment_runtime)
     pinned_market_targets = set(
         market_subscription_registry.snapshot()[1]
         if market_subscription_registry is not None
@@ -788,9 +868,10 @@ def create_app(
             targets.add(GateMarketTarget(item.symbol))
         market_subscription_registry.replace(tuple(targets))
 
-    contract_rule_lookup = (
-        contract_rules_provider
-        or (_mock_contract_rules if isinstance(gate_adapter, MockGateIoAdapter) else GateContractRulesProvider())
+    contract_rule_lookup = contract_rules_provider or (
+        _mock_contract_rules
+        if isinstance(environment_runtime.current_adapter, MockGateIoAdapter)
+        else public_rest_runtime.contract_rules
     )
     test_adapter_factory = credential_test_adapter_factory or (
         lambda mode: configured_gate_adapter(
@@ -800,6 +881,21 @@ def create_app(
         )
     )
 
+    def _restore_mock_adapter_state() -> None:
+        active_adapter = environment_runtime.current_adapter
+        if not isinstance(active_adapter, MockGateIoAdapter):
+            return
+        active_mode = environment_runtime.active_adapter_mode
+        restore_modes: tuple[TradingMode, ...] = (
+            (active_mode,) if active_mode is not None else ("testnet", "live")
+        )
+        for mode in restore_modes:
+            persisted = exchange_repository.adapter_state(mode)
+            if persisted is None:
+                continue
+            restored = MockGateIoAdapter.from_state(persisted)
+            active_adapter.__dict__.update(restored.__dict__)
+
     @asynccontextmanager
     async def lifespan(app_instance: FastAPI) -> AsyncIterator[None]:
         apply_migrations(database_url)
@@ -807,16 +903,24 @@ def create_app(
         if restored_state:
             exchange_repository.invalidate_snapshot("testnet")
             exchange_repository.invalidate_snapshot("live")
-        if isinstance(gate_adapter, MockGateIoAdapter):
-            for mode in ("testnet", "live"):
-                persisted = exchange_repository.adapter_state(mode)
-                if persisted is not None:
-                    restored = MockGateIoAdapter.from_state(persisted)
-                    gate_adapter.__dict__.update(restored.__dict__)
+        activation = environment_activation_repository.get()
+        if activation is not None:
+            try:
+                await environment_runtime.switch(
+                    activation.environment,
+                    confirmation=(
+                        "SWITCH TO LIVE" if activation.environment == "live" else ""
+                    ),
+                )
+            except EnvironmentTransitionError as error:
+                _LOGGER.warning(
+                    "Failed to restore confirmed environment %s: %s",
+                    activation.environment,
+                    error.code,
+                )
+        _restore_mock_adapter_state()
         repository.record_started()
-        event_publisher.publish(
-            category="engine", action="started", resource="/health"
-        )
+        event_publisher.publish(category="engine", action="started", resource="/health")
         _sync_market_subscriptions()
         stop_heartbeat = asyncio.Event()
         heartbeat_task = asyncio.create_task(
@@ -826,22 +930,7 @@ def create_app(
                 database_maintenance_lock,
             )
         )
-        stop_market_websocket = asyncio.Event()
-        market_websocket_task = (
-            asyncio.create_task(
-                market_websocket_service.run(stop_market_websocket)
-            )
-            if market_websocket_service is not None
-            else None
-        )
-        stop_private_websocket = asyncio.Event()
-        private_websocket_task = (
-            asyncio.create_task(
-                private_websocket_service.run(stop_private_websocket)
-            )
-            if private_websocket_service is not None
-            else None
-        )
+        await environment_runtime.start()
         strategy_runtime_runner = getattr(
             app_instance.state, "strategy_runtime_runner", None
         )
@@ -858,14 +947,9 @@ def create_app(
                 category="engine", action="stopping", resource="/health"
             )
             stop_heartbeat.set()
-            stop_market_websocket.set()
-            stop_private_websocket.set()
             stop_strategy_runtime.set()
             await heartbeat_task
-            if market_websocket_task is not None:
-                await market_websocket_task
-            if private_websocket_task is not None:
-                await private_websocket_task
+            await environment_runtime.stop()
             if strategy_runtime_task is not None:
                 await strategy_runtime_task
 
@@ -886,9 +970,7 @@ def create_app(
     app.state.historical_market_data_provider = historical_market_data
     app.state.market_data_manager = normalized_market_data
     app.state.market_subscription_registry = market_subscription_registry
-    app.state.market_websocket_service = market_websocket_service
-    app.state.private_stream_state_store = private_stream_status
-    app.state.private_websocket_service = private_websocket_service
+    app.state.environment_runtime = environment_runtime
     app.state.backup_manager = backup_manager
     app.state.support_log_exporter = support_log_exporter
     app.state.event_publisher = event_publisher
@@ -1061,7 +1143,9 @@ def create_app(
 
         enriched_positions = []
         for position in snapshot.positions:
-            identity = _position_identity(snapshot.mode, position.contract, position.side)
+            identity = _position_identity(
+                snapshot.mode, position.contract, position.side
+            )
             ownership = strategy_instance_repository.trade_ownership(
                 "position", identity
             )
@@ -1131,16 +1215,16 @@ def create_app(
         )
 
     def _persist_mock_state(mode: TradingMode) -> None:
-        if isinstance(gate_adapter, MockGateIoAdapter):
-            exchange_repository.save_adapter_state(mode, gate_adapter.export_state())
+        active_adapter = environment_runtime.current_adapter
+        if isinstance(
+            active_adapter, MockGateIoAdapter
+        ) and environment_runtime.active_adapter_mode in {None, mode}:
+            exchange_repository.save_adapter_state(mode, active_adapter.export_state())
 
     def _credentials_changed(mode: TradingMode) -> None:
         exchange_repository.invalidate_snapshot(mode)
-        if (
-            private_websocket_service is not None
-            and private_stream_status.snapshot().mode == mode
-        ):
-            private_websocket_service.request_reconnect()
+        if environment_runtime.active_adapter_mode == mode:
+            environment_runtime.request_private_reconnect()
 
     def _managed_operation(
         mode: TradingMode, kind: str, operation: Callable[[], ExchangeOperationResult]
@@ -1162,12 +1246,13 @@ def create_app(
         return result.model_copy(update={"client_request_id": client_request_id})
 
     def _mock_adapter() -> MockGateIoAdapter:
-        if not isinstance(gate_adapter, MockGateIoAdapter):
+        active_adapter = environment_runtime.current_adapter
+        if not isinstance(active_adapter, MockGateIoAdapter):
             raise HTTPException(
                 status_code=503,
                 detail="مسار التشغيل التلقائي المحلي متاح في Mock فقط.",
             )
-        return gate_adapter
+        return active_adapter
 
     def _snapshot_revision_payload(snapshot: object) -> str:
         payload = cast(
@@ -1184,6 +1269,24 @@ def create_app(
         environment: Literal["paper", "testnet", "live"],
         origin: OrderOrigin,
     ) -> OrderAccountContext:
+        if environment_runtime.transition_state != "ready":
+            return OrderAccountContext(
+                environment=environment,
+                account_ready=False,
+                adapter_mode_matches=False,
+                credentials_configured=False,
+                available_balance=Decimal("0"),
+                existing_position_quantity=Decimal("0"),
+                one_way_confirmed=False,
+                daily_risk_allowed=False,
+                emergency_stop=False,
+                reconciliation_ready=False,
+                protection_ready=False,
+                account_revision=(
+                    f"{environment}-environment-transition-"
+                    f"{environment_runtime.transition_state}"
+                ),
+            )
         if environment == "paper":
             try:
                 account = paper_repository.get()
@@ -1229,15 +1332,14 @@ def create_app(
             )
 
         mode = cast(TradingMode, environment)
-        adapter_mode_matches = (
-            exchange_adapter_mode is None or exchange_adapter_mode == mode
+        active_adapter_mode = environment_runtime.active_adapter_mode
+        adapter_mode_matches = not environment_runtime.strict_mode or (
+            environment_runtime.active_environment == environment
+            and active_adapter_mode == mode
         )
-        credentials_configured = (
-            load_gate_credentials(mode) is not None
-            or (
-                isinstance(gate_adapter, MockGateIoAdapter)
-                and origin != "manual"
-            )
+        credentials_configured = load_gate_credentials(mode) is not None or (
+            isinstance(environment_runtime.current_adapter, MockGateIoAdapter)
+            and origin != "manual"
         )
         if not adapter_mode_matches:
             return OrderAccountContext(
@@ -1253,7 +1355,8 @@ def create_app(
                 reconciliation_ready=False,
                 protection_ready=False,
                 account_revision=(
-                    f"{environment}-adapter-mode-{exchange_adapter_mode}"
+                    f"{environment}-adapter-mode-{active_adapter_mode}-"
+                    f"active-{environment_runtime.active_environment}"
                 ),
             )
         reconciliation_succeeded = False
@@ -1310,9 +1413,7 @@ def create_app(
             existing_position_quantity=snapshot.position_quantity,
             one_way_confirmed=snapshot.one_way_confirmed,
             daily_risk_allowed=(
-                snapshot.risk_ready
-                and snapshot.daily_baseline_ready
-                and risk_allowed
+                snapshot.risk_ready and snapshot.daily_baseline_ready and risk_allowed
             ),
             emergency_stop=exchange_repository.emergency_stop(mode),
             reconciliation_ready=reconciliation_ready,
@@ -1324,6 +1425,12 @@ def create_app(
         environment: Literal["paper", "testnet", "live"],
         request: ExchangeEntryRequest,
     ) -> ExchangeOperationResult:
+        if environment_runtime.transition_state != "ready":
+            return ExchangeOperationResult(
+                accepted=False,
+                client_request_id=request.client_request_id,
+                message_ar="جارٍ تبديل بيئة RangeBot؛ لم يُرسل أي Order.",
+            )
         if environment == "paper":
             market = normalized_market_data.snapshot(request.symbol)
             rules = _order_contract_rules(request.symbol, "paper")
@@ -1358,7 +1465,10 @@ def create_app(
                 message_ar="تم تنفيذ أمر Paper Market بعد التحقق المركزي.",
             )
         mode = cast(TradingMode, environment)
-        if exchange_adapter_mode is not None and exchange_adapter_mode != mode:
+        if environment_runtime.strict_mode and (
+            environment_runtime.active_environment != environment
+            or environment_runtime.active_adapter_mode != mode
+        ):
             return ExchangeOperationResult(
                 accepted=False,
                 client_request_id=request.client_request_id,
@@ -1410,7 +1520,8 @@ def create_app(
                 trailing_stop_distance=request.trailing_stop_distance,
                 trailing_state=(
                     "active"
-                    if environment == "paper" and request.trailing_stop_distance is not None
+                    if environment == "paper"
+                    and request.trailing_stop_distance is not None
                     else "desired"
                     if request.trailing_stop_distance is not None
                     else None
@@ -1591,12 +1702,8 @@ def create_app(
                     symbol=request.symbol,
                     last_price=mock_quote.last_price,
                     mark_price=mock_quote.last_price,
-                    best_bid=(
-                        mock_quote.bids[0].price if mock_quote.bids else None
-                    ),
-                    best_ask=(
-                        mock_quote.asks[0].price if mock_quote.asks else None
-                    ),
+                    best_bid=(mock_quote.bids[0].price if mock_quote.bids else None),
+                    best_ask=(mock_quote.asks[0].price if mock_quote.asks else None),
                     observed_at=mock_quote.last_price_observed_at,
                     source="gate_rest",
                 )
@@ -1684,7 +1791,7 @@ def create_app(
 
     @app.get("/v1/exchange/private-stream", response_model=PrivateStreamState)
     def private_stream_state() -> PrivateStreamState:
-        return private_stream_status.snapshot()
+        return environment_runtime.private_stream_state()
 
     @app.get(
         "/v1/exchange/{mode}/operations",
@@ -2092,9 +2199,7 @@ def create_app(
             )
         return result
 
-    @app.get(
-        "/v1/market-data/{symbol}/status", response_model=MarketDataStatus
-    )
+    @app.get("/v1/market-data/{symbol}/status", response_model=MarketDataStatus)
     def market_data_status(symbol: str) -> MarketDataStatus:
         return normalized_market_data.status(symbol)
 
@@ -2102,9 +2207,7 @@ def create_app(
         "/v1/market-data/{symbol}/candles/{timeframe_minutes}",
         response_model=MarketCandleSeries,
     )
-    def market_candles(
-        symbol: str, timeframe_minutes: int
-    ) -> MarketCandleSeries:
+    def market_candles(symbol: str, timeframe_minutes: int) -> MarketCandleSeries:
         try:
             return normalized_market_data.candle_series(symbol, timeframe_minutes)
         except LookupError as error:
@@ -2158,9 +2261,7 @@ def create_app(
         except (KeyError, TypeError, ValueError) as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
 
-    @app.post(
-        "/v1/manual-orders/preview", response_model=ManualOrderPreview
-    )
+    @app.post("/v1/manual-orders/preview", response_model=ManualOrderPreview)
     def preview_manual_order(
         request: ManualOrderPreviewRequest,
     ) -> ManualOrderPreview:
@@ -2171,9 +2272,7 @@ def create_app(
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
 
-    @app.post(
-        "/v1/manual-orders", response_model=ManualOrderSubmissionResult
-    )
+    @app.post("/v1/manual-orders", response_model=ManualOrderSubmissionResult)
     def submit_manual_order(
         submission: ManualOrderSubmissionRequest,
     ) -> ManualOrderSubmissionResult:
@@ -2234,7 +2333,9 @@ def create_app(
     ) -> StrategyInstance:
         _strategy_instance_or_404(instance_id)
         try:
-            deployment = strategy_workflow_repository.deployment_for_instance(instance_id)
+            deployment = strategy_workflow_repository.deployment_for_instance(
+                instance_id
+            )
             deployment_action = {
                 "running": "start",
                 "paused": "pause",
@@ -2292,18 +2393,14 @@ def create_app(
         except Exception as error:
             raise _workflow_http_exception(error) from error
 
-    @app.get(
-        "/v1/strategy-templates/{template_id}", response_model=StrategyTemplate
-    )
+    @app.get("/v1/strategy-templates/{template_id}", response_model=StrategyTemplate)
     def strategy_template(template_id: str) -> StrategyTemplate:
         try:
             return strategy_workflow_repository.get_template(template_id)
         except Exception as error:
             raise _workflow_http_exception(error) from error
 
-    @app.put(
-        "/v1/strategy-templates/{template_id}", response_model=StrategyTemplate
-    )
+    @app.put("/v1/strategy-templates/{template_id}", response_model=StrategyTemplate)
     def update_strategy_template(
         template_id: str, change: StrategyTemplateUpdate
     ) -> StrategyTemplate:
@@ -2536,18 +2633,14 @@ def create_app(
         except Exception as error:
             raise _workflow_http_exception(error) from error
 
-    @app.get(
-        "/v1/opportunities/{opportunity_id}", response_model=StrategyOpportunity
-    )
+    @app.get("/v1/opportunities/{opportunity_id}", response_model=StrategyOpportunity)
     def opportunity(opportunity_id: str) -> StrategyOpportunity:
         try:
             return strategy_workflow_repository.get_opportunity(opportunity_id)
         except Exception as error:
             raise _workflow_http_exception(error) from error
 
-    @app.put(
-        "/v1/opportunities/{opportunity_id}", response_model=StrategyOpportunity
-    )
+    @app.put("/v1/opportunities/{opportunity_id}", response_model=StrategyOpportunity)
     def update_opportunity(
         opportunity_id: str, change: OpportunityStatusUpdate
     ) -> StrategyOpportunity:
@@ -2579,9 +2672,7 @@ def create_app(
     def bot_deployments() -> list[BotDeployment]:
         return strategy_workflow_repository.list_deployments()
 
-    @app.get(
-        "/v1/bot-deployments/{deployment_id}", response_model=BotDeployment
-    )
+    @app.get("/v1/bot-deployments/{deployment_id}", response_model=BotDeployment)
     def bot_deployment(deployment_id: str) -> BotDeployment:
         try:
             return strategy_workflow_repository.get_deployment(deployment_id)
@@ -2653,9 +2744,7 @@ def create_app(
         except LookupError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
-    @app.get(
-        "/v1/strategies/{instance_id}/runs", response_model=list[StrategyRun]
-    )
+    @app.get("/v1/strategies/{instance_id}/runs", response_model=list[StrategyRun])
     def strategy_runs(instance_id: str) -> list[StrategyRun]:
         try:
             return strategy_instance_repository.runs(instance_id)
@@ -2735,7 +2824,9 @@ def create_app(
             identity_kind, external_identity
         )
         if ownership is None:
-            raise HTTPException(status_code=404, detail="Trade ownership is not recorded.")
+            raise HTTPException(
+                status_code=404, detail="Trade ownership is not recorded."
+            )
         return ownership
 
     @app.get("/v1/strategy-types", response_model=list[StrategyTypeMetadata])
@@ -2789,17 +2880,13 @@ def create_app(
         except ConnectionError as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
 
-    @app.post(
-        "/v1/backtests/portfolio/readiness", response_model=BacktestReadiness
-    )
+    @app.post("/v1/backtests/portfolio/readiness", response_model=BacktestReadiness)
     def portfolio_backtest_readiness(
         request: BacktestPortfolioRequest,
     ) -> BacktestReadiness:
         return historical_backtests.readiness(request)
 
-    @app.post(
-        "/v1/backtests/portfolio", response_model=StoredPortfolioBacktestRun
-    )
+    @app.post("/v1/backtests/portfolio", response_model=StoredPortfolioBacktestRun)
     def run_portfolio_backtest(
         request: BacktestPortfolioRequest,
         background_tasks: BackgroundTasks,
@@ -2814,16 +2901,12 @@ def create_app(
                     # The service already persisted a sanitized failed state.
                     return
 
-            background_tasks.add_task(
-                execute_persisted_backtest
-            )
+            background_tasks.add_task(execute_persisted_backtest)
             return stored
         except (LookupError, RuntimeError, ValueError) as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
 
-    @app.get(
-        "/v1/backtests/portfolio", response_model=list[StoredPortfolioBacktestRun]
-    )
+    @app.get("/v1/backtests/portfolio", response_model=list[StoredPortfolioBacktestRun])
     def list_portfolio_backtests(limit: int = 50) -> list[StoredPortfolioBacktestRun]:
         try:
             return historical_backtests.list(limit)
@@ -2849,9 +2932,7 @@ def create_app(
         change: BacktestPostTestNotesUpdate,
     ) -> StoredPortfolioBacktestRun:
         try:
-            return historical_backtests.update_notes(
-                backtest_id, change.observations
-            )
+            return historical_backtests.update_notes(backtest_id, change.observations)
         except LookupError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
@@ -2908,6 +2989,113 @@ def create_app(
         except RuntimeError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
+    def _environment_state() -> EnvironmentRuntimeState:
+        configured = cast(
+            ApplicationEnvironment,
+            settings_repository.get().environment,
+        )
+        return environment_runtime.snapshot(configured)
+
+    def _runtime_state_with_environment() -> RuntimeState:
+        return repository.get_state().model_copy(
+            update={"environment": _environment_state()}
+        )
+
+    def _assert_environment_switch_safe() -> None:
+        active_instances = [
+            instance
+            for instance in strategy_instance_repository.list()
+            if instance.status != "stopped"
+        ]
+        if active_instances:
+            raise EnvironmentTransitionError(
+                "active_strategies_present",
+                "أوقف كل Strategy Instances قبل تبديل بيئة التداول.",
+            )
+        active_environment = environment_runtime.active_environment
+        if active_environment == "paper":
+            try:
+                account = paper_repository.get()
+            except LookupError:
+                return
+            if account.position_quantity != 0 or account.pending_entry:
+                raise EnvironmentTransitionError(
+                    "paper_exposure_present",
+                    "أغلق Paper Position وألغِ أي Order معلّق قبل تبديل البيئة.",
+                )
+            return
+        active_mode = cast(TradingMode, active_environment)
+        snapshot = exchange_repository.get_snapshot(active_mode)
+        if snapshot is None:
+            raise EnvironmentTransitionError(
+                "account_snapshot_unavailable",
+                "لا توجد لقطة موثوقة للحساب الحالي. حدّث المزامنة قبل تبديل البيئة.",
+            )
+        if snapshot.reconciliation_error:
+            raise EnvironmentTransitionError(
+                "reconciliation_failed",
+                "مزامنة Gate.io الحالية غير مكتملة. عالج الخطأ قبل تبديل البيئة.",
+            )
+        if snapshot.unmanaged_state:
+            raise EnvironmentTransitionError(
+                "unmanaged_exchange_state",
+                "توجد حالة غير مُدارة في Gate.io. عالجها قبل تبديل البيئة.",
+            )
+        if snapshot.position_quantity != 0 or snapshot.open_orders:
+            raise EnvironmentTransitionError(
+                "exchange_exposure_present",
+                "أغلق كل Positions وألغِ كل Orders قبل تبديل بيئة التداول.",
+            )
+
+    @app.get("/v1/runtime/environment", response_model=EnvironmentRuntimeState)
+    def runtime_environment() -> EnvironmentRuntimeState:
+        return _environment_state()
+
+    @app.post(
+        "/v1/runtime/environment/switch",
+        response_model=EnvironmentRuntimeState,
+    )
+    async def switch_runtime_environment(
+        request: EnvironmentSwitchRequest,
+    ) -> EnvironmentRuntimeState | JSONResponse:
+        try:
+            _assert_environment_switch_safe()
+            await environment_runtime.switch(
+                request.environment,
+                confirmation=request.confirmation,
+            )
+        except EnvironmentTransitionError as error:
+            state = _environment_state()
+            content = jsonable_encoder(state.model_dump(mode="json"))
+            content["failure_code"] = error.code
+            content["message_ar"] = error.message_ar
+            content["restart_required"] = (
+                state.restart_required or error.restart_required
+            )
+            content["activated"] = False
+            return JSONResponse(status_code=409, content=content)
+
+        environment_activation_repository.save(request.environment)
+        current = settings_repository.get()
+        saved = settings_repository.save(
+            ApplicationSettingsUpdate(
+                environment=request.environment,
+                ui_language=current.ui_language,
+                dashboard_layout=current.dashboard_layout,
+                dashboard_filters=current.dashboard_filters,
+                sidebar_preferences=current.sidebar_preferences,
+                application_preferences=current.application_preferences,
+            )
+        )
+        event_publisher.publish(
+            category="settings",
+            action="environment_switched",
+            resource="/v1/runtime/environment",
+        )
+        return environment_runtime.snapshot(
+            cast(ApplicationEnvironment, saved.environment)
+        )
+
     @app.get("/v1/settings", response_model=ApplicationSettings)
     def application_settings() -> ApplicationSettings:
         return settings_repository.get()
@@ -2933,6 +3121,15 @@ def create_app(
     def update_application_settings(
         settings: ApplicationSettingsUpdate,
     ) -> ApplicationSettings:
+        current = settings_repository.get()
+        if settings.environment != current.environment:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "تغيير بيئة التداول يحتاج مسار التبديل المخصص؛ "
+                    "لم يتم تفعيل البيئة المطلوبة."
+                ),
+            )
         return settings_repository.save(settings)
 
     @app.get("/v1/backups", response_model=list[BackupRecord])
@@ -2963,9 +3160,7 @@ def create_app(
         )
 
     @app.post("/v1/backups/{name}/restore", response_model=BackupRestoreResult)
-    def restore_backup(
-        name: str, request: BackupRestoreRequest
-    ) -> BackupRestoreResult:
+    def restore_backup(name: str, request: BackupRestoreRequest) -> BackupRestoreResult:
         if request.confirmation != "RESTORE RANGEBOT":
             raise HTTPException(
                 status_code=422,
@@ -2990,7 +3185,7 @@ def create_app(
                 raise HTTPException(status_code=409, detail=str(error)) from error
 
             _enforce_post_restore_safety()
-            reconciled_mode = exchange_adapter_mode
+            reconciled_mode = environment_runtime.active_adapter_mode
             reconciliation_succeeded = reconciled_mode is None
             if reconciled_mode is not None:
                 try:
@@ -3026,11 +3221,11 @@ def create_app(
 
     @app.get("/health", response_model=RuntimeState)
     def health() -> RuntimeState:
-        return repository.get_state()
+        return _runtime_state_with_environment()
 
     @app.get("/v1/runtime-state", response_model=RuntimeState)
     def runtime_state() -> RuntimeState:
-        return repository.get_state()
+        return _runtime_state_with_environment()
 
     @app.get("/v1/paper-account", response_model=PaperAccountSnapshot)
     def paper_account() -> PaperAccountSnapshot:
@@ -3654,7 +3849,11 @@ def create_app(
 def _resolve_frontend_dist(explicit: str | Path | None) -> Path | None:
     if explicit is not None:
         resolved = Path(explicit).resolve()
-        return resolved if resolved.is_dir() and (resolved / "index.html").is_file() else None
+        return (
+            resolved
+            if resolved.is_dir() and (resolved / "index.html").is_file()
+            else None
+        )
 
     candidates: list[Path] = []
     bundled_root = getattr(sys, "_MEIPASS", None)

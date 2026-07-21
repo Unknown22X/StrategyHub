@@ -61,7 +61,7 @@ class ApplicationSettingsUpdate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    environment: Literal["paper", "testnet", "live"] = "live"
+    environment: Literal["paper", "testnet", "live"] = "paper"
     ui_language: Literal["ar", "en"] = "ar"
     dashboard_layout: dict[str, JsonValue] = Field(default_factory=dict)
     dashboard_filters: dict[str, JsonValue] = Field(default_factory=dict)
@@ -77,7 +77,9 @@ class ApplicationSettingsUpdate(BaseModel):
             self.application_preferences,
         )
         if any(_contains_secret_material(value) for value in persisted_values):
-            raise ValueError("Application settings must not contain credentials or secrets.")
+            raise ValueError(
+                "Application settings must not contain credentials or secrets."
+            )
         return self
 
 

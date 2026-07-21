@@ -8,7 +8,7 @@ from rangebot.engine.api import create_app
 def test_application_settings_persist_after_engine_restart(tmp_path) -> None:
     database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
     payload = {
-        "environment": "testnet",
+        "environment": "paper",
         "ui_language": "ar",
         "dashboard_layout": {
             "order": ["summary", "orders", "activity"],
@@ -31,9 +31,9 @@ def test_application_settings_persist_after_engine_restart(tmp_path) -> None:
         saved = client.put("/v1/settings", json=payload)
 
     assert initial.status_code == 200
-    assert initial.json()["environment"] == "live"
+    assert initial.json()["environment"] == "paper"
     assert saved.status_code == 200
-    assert saved.json()["environment"] == "testnet"
+    assert saved.json()["environment"] == "paper"
     assert saved.json()["dashboard_layout"] == payload["dashboard_layout"]
     assert saved.json()["revision"] == 1
 
@@ -41,26 +41,60 @@ def test_application_settings_persist_after_engine_restart(tmp_path) -> None:
         restored = restarted_client.get("/v1/settings")
 
     assert restored.status_code == 200
-    assert restored.json()["environment"] == "testnet"
+    assert restored.json()["environment"] == "paper"
     assert restored.json()["dashboard_filters"] == payload["dashboard_filters"]
     assert restored.json()["sidebar_preferences"] == payload["sidebar_preferences"]
-    assert restored.json()["application_preferences"] == payload[
-        "application_preferences"
-    ]
+    assert (
+        restored.json()["application_preferences"] == payload["application_preferences"]
+    )
     assert restored.json()["revision"] == 1
+
+
+def test_generic_settings_api_does_not_claim_runtime_environment_changed(
+    tmp_path,
+) -> None:
+    database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
+    payload = {
+        "environment": "testnet",
+        "ui_language": "ar",
+        "dashboard_layout": {},
+        "dashboard_filters": {},
+        "sidebar_preferences": {},
+        "application_preferences": {},
+    }
+
+    with TestClient(create_app(database_url, initial_environment="paper")) as client:
+        changed = client.put("/v1/settings", json=payload)
+        unrelated = client.put(
+            "/v1/settings",
+            json={
+                **payload,
+                "environment": "paper",
+                "dashboard_layout": {"density": "compact"},
+            },
+        )
+        runtime = client.get("/v1/runtime/environment")
+        stored = client.get("/v1/settings")
+
+    assert changed.status_code == 409
+    assert unrelated.status_code == 200
+    assert runtime.json()["active_engine_environment"] == "paper"
+    assert runtime.json()["exchange_adapter_environment"] is None
+    assert runtime.json()["transition_state"] == "ready"
+    assert runtime.json()["activated"] is True
+    assert stored.json()["environment"] == "paper"
+    assert stored.json()["dashboard_layout"] == {"density": "compact"}
 
 
 def test_application_settings_reject_credential_material(tmp_path) -> None:
     database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
     payload = {
-        "environment": "live",
+        "environment": "paper",
         "ui_language": "ar",
         "dashboard_layout": {},
         "dashboard_filters": {},
         "sidebar_preferences": {},
-        "application_preferences": {
-            "credential_reference": "sensitive-value"
-        },
+        "application_preferences": {"credential_reference": "sensitive-value"},
     }
 
     with TestClient(create_app(database_url)) as client:
@@ -97,7 +131,7 @@ def test_settings_overview_keeps_safety_state_typed_and_separate(tmp_path) -> No
 
     assert overview.status_code == 200
     body = overview.json()
-    assert body["application"]["environment"] == "live"
+    assert body["application"]["environment"] == "paper"
     assert body["paper_emergency_stop"]["active"] is True
     assert body["paper_risk"]["settings"]["daily_loss_limit"] == "100.00000000"
     assert Decimal(body["account_risk_policy"]["daily_loss_limit"]) == Decimal("100")

@@ -1,10 +1,15 @@
 """Gate.io USDT perpetual contract-rule retrieval for central order validation."""
 
 from decimal import Decimal
+from typing import Literal
 
 import httpx
 
 from rangebot.domain.orders import FuturesContractRules
+from rangebot.engine.gate_websocket import LIVE_REST_URL, TESTNET_REST_URL
+
+
+GateContractEnvironment = Literal["live", "testnet"]
 
 
 class GateContractRulesMapper:
@@ -28,9 +33,7 @@ class GateContractRulesMapper:
             minimum_quantity=Decimal(str(payload["order_size_min"])),
             minimum_notional=Decimal(str(payload.get("order_value_min", "0"))),
             maximum_quantity=Decimal(str(payload["order_size_max"])),
-            maximum_market_quantity=(
-                maximum_market if maximum_market > 0 else None
-            ),
+            maximum_market_quantity=(maximum_market if maximum_market > 0 else None),
             price_step=Decimal(str(payload["order_price_round"])),
             maximum_leverage=int(Decimal(str(payload["leverage_max"]))),
             maintenance_rate=Decimal(str(payload["maintenance_rate"])),
@@ -43,14 +46,18 @@ class GateContractRulesMapper:
 class GateContractRulesProvider:
     """Read one contract from Gate's public USDT futures endpoint."""
 
-    BASE_URL = "https://api.gateio.ws/api/v4/futures/usdt"
+    BASE_URL = LIVE_REST_URL
 
     def __init__(
         self,
-        base_url: str = BASE_URL,
+        base_url: str | None = None,
         transport: httpx.BaseTransport | None = None,
+        *,
+        environment: GateContractEnvironment = "live",
     ) -> None:
-        self._base_url = base_url.rstrip("/")
+        self._base_url = (
+            base_url or (LIVE_REST_URL if environment == "live" else TESTNET_REST_URL)
+        ).rstrip("/")
         self._transport = transport
 
     def __call__(self, symbol: str) -> FuturesContractRules:

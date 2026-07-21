@@ -3,15 +3,17 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 import re
-from typing import Protocol
+from typing import Literal, Protocol
 
 import httpx
 
 from rangebot.domain.market import PublicContract, PublicMarketSnapshot
 from rangebot.domain.analysis import Candle
+from rangebot.engine.gate_websocket import LIVE_REST_URL, TESTNET_REST_URL
 
 
 PUBLIC_CONTRACT_SYMBOL_PATTERN = re.compile(r"^[A-Z0-9_]+$")
+GatePublicEnvironment = Literal["live", "testnet"]
 
 
 class PublicMarketProvider(Protocol):
@@ -83,12 +85,18 @@ class GatePublicMarketAdapter:
 class GatePublicMarketProvider:
     """Read-only Gate.io public futures market provider."""
 
-    BASE_URL = "https://api.gateio.ws/api/v4/futures/usdt"
+    BASE_URL = LIVE_REST_URL
 
     def __init__(
-        self, base_url: str = BASE_URL, transport: httpx.BaseTransport | None = None
+        self,
+        base_url: str | None = None,
+        transport: httpx.BaseTransport | None = None,
+        *,
+        environment: GatePublicEnvironment = "live",
     ) -> None:
-        self._base_url = base_url.rstrip("/")
+        self._base_url = (
+            base_url or (LIVE_REST_URL if environment == "live" else TESTNET_REST_URL)
+        ).rstrip("/")
         self._transport = transport
 
     def eligible_contracts(self) -> list[PublicContract]:

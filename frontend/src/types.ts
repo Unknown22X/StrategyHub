@@ -24,11 +24,38 @@ export type RemoteData<T> =
   | { status: "ready"; data: T }
   | { status: "error"; message: string };
 
+export type EnvironmentTransitionState =
+  | "ready"
+  | "switching"
+  | "restart_required"
+  | "failed"
+  | "mismatch";
+
+export interface EnvironmentRuntimeState {
+  configured_environment: Environment;
+  requested_environment: Environment;
+  active_engine_environment: Environment;
+  exchange_adapter_environment: "testnet" | "live" | null;
+  public_rest_environment: "testnet" | "live" | null;
+  public_websocket_environment: "testnet" | "live" | null;
+  private_websocket_environment: "testnet" | "live" | null;
+  credential_profile: "testnet" | "live" | null;
+  transition_state: EnvironmentTransitionState;
+  restart_required: boolean;
+  activated: boolean;
+  transition_started_at: string | null;
+  transition_completed_at: string | null;
+  failure_code: string | null;
+  message_ar: string | null;
+  revision: number;
+}
+
 export interface RuntimeState {
   lifecycle: string;
   started_at: string;
   last_heartbeat_at: string;
   state_revision: number;
+  environment: EnvironmentRuntimeState | null;
 }
 
 export interface ApplicationSettings {

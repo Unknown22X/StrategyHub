@@ -50,8 +50,7 @@ class GateHistoricalMarketDataProvider:
         if timeout_seconds <= 0:
             raise ValueError("Gate historical REST timeout must be positive.")
         self._base_url = (
-            base_url
-            or (LIVE_REST_URL if environment == "live" else TESTNET_REST_URL)
+            base_url or (LIVE_REST_URL if environment == "live" else TESTNET_REST_URL)
         ).rstrip("/")
         self._transport = transport
         self._timeout_seconds = timeout_seconds
@@ -71,7 +70,9 @@ class GateHistoricalMarketDataProvider:
 
         contract_payload = self._get_json("contracts")
         ticker_payload = self._get_json("tickers")
-        if not isinstance(contract_payload, list) or not isinstance(ticker_payload, list):
+        if not isinstance(contract_payload, list) or not isinstance(
+            ticker_payload, list
+        ):
             raise LookupError("Gate contract universe response is malformed.")
 
         active_names = {
@@ -183,10 +184,7 @@ class GateHistoricalMarketDataProvider:
                 },
             )
             for candle in self._parse_candles(payload, timeframe_minutes):
-                if (
-                    start <= candle.opened_at < end
-                    and candle.closed_at <= now
-                ):
+                if start <= candle.opened_at < end and candle.closed_at <= now:
                     by_opened_at[candle.opened_at] = candle
             cursor = chunk_end + interval
         return tuple(by_opened_at[key] for key in sorted(by_opened_at))
@@ -218,7 +216,9 @@ class GateHistoricalMarketDataProvider:
             end=exited_at,
         )
         direction_sign = Decimal("1") if direction == "long" else Decimal("-1")
-        return notional * sum((rate for _, rate in rates), Decimal("0")) * direction_sign
+        return (
+            notional * sum((rate for _, rate in rates), Decimal("0")) * direction_sign
+        )
 
     def cost(
         self,
@@ -307,7 +307,9 @@ class GateHistoricalMarketDataProvider:
             response.raise_for_status()
             return response.json()
         except (httpx.HTTPError, ValueError) as error:
-            raise ConnectionError(f"Gate historical REST request failed: {path}") from error
+            raise ConnectionError(
+                f"Gate historical REST request failed: {path}"
+            ) from error
 
     @staticmethod
     def _interval(timeframe_minutes: int) -> str:
@@ -341,12 +343,13 @@ class GateHistoricalMarketDataProvider:
                     high=_required_positive_decimal(item.get("h"), "high"),
                     low=_required_positive_decimal(item.get("l"), "low"),
                     close=_required_positive_decimal(item.get("c"), "close"),
-                    volume=_optional_nonnegative_decimal(item.get("v"))
-                    or Decimal("0"),
+                    volume=_optional_nonnegative_decimal(item.get("v")) or Decimal("0"),
                     closed=True,
                 )
             except (KeyError, TypeError, ValueError) as error:
-                raise LookupError("Gate historical candle contains invalid fields.") from error
+                raise LookupError(
+                    "Gate historical candle contains invalid fields."
+                ) from error
             candles.append(candle)
         candles.sort(key=lambda candle: candle.opened_at)
         return candles

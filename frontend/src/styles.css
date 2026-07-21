@@ -355,6 +355,64 @@ button:disabled {
   justify-content: flex-end;
 }
 
+.environment-selector {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.environment-selector-buttons {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.environment-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 5px 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.environment-option:hover:not(:disabled),
+.environment-option.active {
+  border-color: rgba(96, 165, 250, 0.35);
+  background: rgba(96, 165, 250, 0.12);
+  color: var(--text);
+}
+
+.environment-option.live-option:hover:not(:disabled),
+.environment-option.live-option.active {
+  border-color: rgba(251, 113, 133, 0.38);
+  background: rgba(251, 113, 133, 0.12);
+  color: var(--negative);
+}
+
+.environment-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.environment-status-message {
+  max-width: 300px;
+  color: var(--warning);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
 .status-text {
   color: var(--muted);
   font-size: 11px;
@@ -961,6 +1019,29 @@ tbody tr:hover {
   border-color: rgba(251, 113, 133, 0.25);
   background: rgba(251, 113, 133, 0.075);
   color: var(--negative);
+}
+
+.environment-banner.paper {
+  border-color: rgba(96, 165, 250, 0.28);
+  background: rgba(96, 165, 250, 0.08);
+  color: var(--info);
+}
+
+.environment-banner.testnet {
+  border-color: rgba(251, 191, 36, 0.28);
+  background: rgba(251, 191, 36, 0.075);
+  color: var(--warning);
+}
+
+.environment-blocker {
+  margin: 0 18px 12px;
+}
+
+.credential-profile-note {
+  margin: -4px 0 2px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
 }
 
 .alert-warning {

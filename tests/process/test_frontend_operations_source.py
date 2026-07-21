@@ -18,22 +18,26 @@ def test_frontend_operations_use_backend_endpoints_and_no_live_lock_contract() -
     detail = (FRONTEND / "components" / "StrategyDetailPage.tsx").read_text(
         encoding="utf-8"
     )
-    customize = (
-        FRONTEND / "components" / "DashboardCustomizeDrawer.tsx"
-    ).read_text(encoding="utf-8")
-    layout = (FRONTEND / "dashboardLayout.ts").read_text(encoding="utf-8")
-    filters = (FRONTEND / "dashboardFilters.ts").read_text(encoding="utf-8")
-    filter_bar = (
-        FRONTEND / "components" / "DashboardFilterBar.tsx"
-    ).read_text(encoding="utf-8")
-    chart = (FRONTEND / "components" / "StrategyChart.tsx").read_text(
+    customize = (FRONTEND / "components" / "DashboardCustomizeDrawer.tsx").read_text(
         encoding="utf-8"
     )
-    trade_history = (
-        FRONTEND / "components" / "TradeHistoryPage.tsx"
-    ).read_text(encoding="utf-8")
-    risk_management = (
-        FRONTEND / "components" / "RiskManagementDrawer.tsx"
+    layout = (FRONTEND / "dashboardLayout.ts").read_text(encoding="utf-8")
+    filters = (FRONTEND / "dashboardFilters.ts").read_text(encoding="utf-8")
+    filter_bar = (FRONTEND / "components" / "DashboardFilterBar.tsx").read_text(
+        encoding="utf-8"
+    )
+    chart = (FRONTEND / "components" / "StrategyChart.tsx").read_text(encoding="utf-8")
+    trade_history = (FRONTEND / "components" / "TradeHistoryPage.tsx").read_text(
+        encoding="utf-8"
+    )
+    risk_management = (FRONTEND / "components" / "RiskManagementDrawer.tsx").read_text(
+        encoding="utf-8"
+    )
+    manual_trade = (FRONTEND / "components" / "ManualTradeDrawer.tsx").read_text(
+        encoding="utf-8"
+    )
+    environment_selector = (
+        FRONTEND / "components" / "EnvironmentSelector.tsx"
     ).read_text(encoding="utf-8")
     dashboard_hook = (FRONTEND / "hooks" / "useDashboard.ts").read_text(
         encoding="utf-8"
@@ -50,8 +54,16 @@ def test_frontend_operations_use_backend_endpoints_and_no_live_lock_contract() -
     assert "/v1/exchange/credentials" in api
     assert "/credentials/test" in api
     assert "removeCredentials" in connection
-    assert "autoComplete=\"new-password\"" in connection
+    assert 'autoComplete="new-password"' in connection
+    assert "Credential Profile" in connection
     assert "localStorage" not in connection
+    assert "/v1/runtime/environment/switch" in api
+    assert "switchRuntimeEnvironment" in api + app
+    assert "active_engine_environment" in types + app + environment_selector
+    assert "public_rest_environment" in types
+    assert "exchange_adapter_environment" in types + manual_trade
+    assert "LIVE — REAL FUNDS" in environment_selector + manual_trade
+    assert "environmentReady" in manual_trade
     assert "/duplicate" in api
     assert "StrategyConfigurationFields" in detail
     assert "loadStrategyRuns" in detail
@@ -167,9 +179,7 @@ def test_frontend_does_not_persist_critical_state_in_browser_storage() -> None:
 
 def test_frontend_exposes_distinct_strategy_workflow_destinations() -> None:
     app = (FRONTEND / "App.tsx").read_text(encoding="utf-8")
-    pages = (FRONTEND / "components" / "WorkflowPages.tsx").read_text(
-        encoding="utf-8"
-    )
+    pages = (FRONTEND / "components" / "WorkflowPages.tsx").read_text(encoding="utf-8")
     workflow_api = (FRONTEND / "workflowApi.ts").read_text(encoding="utf-8")
     types = (FRONTEND / "types.ts").read_text(encoding="utf-8")
 

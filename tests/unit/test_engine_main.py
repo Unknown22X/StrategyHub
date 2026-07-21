@@ -18,7 +18,7 @@ def test_engine_cli_defaults_to_application_sqlite_database(
     assert arguments.database_url.startswith("sqlite:///")
     assert database_path.parent.name == "data"
     assert database_path.name == "rangebot.db"
-    assert arguments.mode == "live"
+    assert arguments.mode == "paper"
 
 
 def test_live_mode_accepts_explicit_local_sqlite_database(
@@ -42,15 +42,16 @@ def test_live_mode_accepts_explicit_local_sqlite_database(
     monkeypatch.setattr(
         engine_main,
         "CredentialReloadingGateIoAdapter",
-        lambda *args, **kwargs: calls.update(adapter_arguments=(args, kwargs)) or adapter,
+        lambda *args, **kwargs: (
+            calls.update(adapter_arguments=(args, kwargs)) or adapter
+        ),
     )
     monkeypatch.setattr(
         engine_main,
         "create_app",
-        lambda supplied_url, **kwargs: calls.update(
-            database_url=supplied_url, **kwargs
-        )
-        or "app",
+        lambda supplied_url, **kwargs: (
+            calls.update(database_url=supplied_url, **kwargs) or "app"
+        ),
     )
     monkeypatch.setattr(
         engine_main.uvicorn,
@@ -61,8 +62,12 @@ def test_live_mode_accepts_explicit_local_sqlite_database(
     engine_main.main()
 
     assert calls["database_url"] == database_url
-    assert calls["exchange_adapter_mode"] == "live"
+    assert calls["initial_environment"] == "live"
+    assert calls["enable_public_websocket"] is False
     assert calls["enable_private_websocket"] is False
+    adapter_factory = calls["exchange_adapter_factory"]
+    assert callable(adapter_factory)
+    assert adapter_factory("live") is adapter  # type: ignore[operator]
     adapter_args, adapter_kwargs = calls["adapter_arguments"]
     assert adapter_args == ("live",)
     assert adapter_kwargs == {

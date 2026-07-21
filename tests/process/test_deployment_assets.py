@@ -14,6 +14,8 @@ def test_winsw_service_is_automatic_restartable_and_separate_from_ui() -> None:
     assert '<onfailure action="restart"' in xml
     assert "<pattern>yyyyMMdd</pattern>" in xml
     assert "<stoptimeout>30 sec</stoptimeout>" in xml
+    assert "--mode paper" in xml
+    assert "--mode live" not in xml
     assert "--enable-order-submission" in xml
     assert "--enable-public-websocket" in xml
     assert "--enable-private-websocket" in xml
@@ -25,10 +27,10 @@ def test_winsw_service_is_automatic_restartable_and_separate_from_ui() -> None:
     assert "RANGEBOT_DATABASE_URL" not in xml
 
 
-def test_service_installer_uses_passwordless_local_service_without_writing_credentials() -> None:
-    installer = (ROOT / "deploy" / "install-service.ps1").read_text(
-        encoding="utf-8"
-    )
+def test_service_installer_uses_passwordless_local_service_without_writing_credentials() -> (
+    None
+):
+    installer = (ROOT / "deploy" / "install-service.ps1").read_text(encoding="utf-8")
 
     assert "PSCredential" not in installer
     assert "Get-Credential" not in installer
@@ -46,7 +48,7 @@ def test_service_installer_uses_passwordless_local_service_without_writing_crede
     assert "GetOwner" in installer
     assert "ProfileList\\$interactiveUserSid" in installer
     assert '"*${interactiveUserSid}:(OI)(CI)(F)"' in installer
-    assert "SetAttribute(\"value\", $resolvedDataRoot)" in installer
+    assert 'SetAttribute("value", $resolvedDataRoot)' in installer
     assert "$serviceXml.Save($configuration)" in installer
     assert "& $winsw stop" in installer
     assert "& $winsw uninstall" in installer
@@ -76,7 +78,9 @@ def test_service_uninstaller_fails_closed_if_the_engine_cannot_be_removed() -> N
     assert '$ErrorActionPreference = "Continue"' not in uninstaller
 
 
-def test_packaging_and_operations_assets_exclude_credentials_and_legacy_database_tools() -> None:
+def test_packaging_and_operations_assets_exclude_credentials_and_legacy_database_tools() -> (
+    None
+):
     engine_spec = (ROOT / "deploy" / "engine.spec").read_text(encoding="utf-8")
     ui_spec = (ROOT / "deploy" / "ui.spec").read_text(encoding="utf-8")
     installer = (ROOT / "deploy" / "RangeBot.iss").read_text(encoding="utf-8")
@@ -85,9 +89,9 @@ def test_packaging_and_operations_assets_exclude_credentials_and_legacy_database
     assert ".env" not in engine_spec + ui_spec + installer
     assert "bot-engine" in engine_spec
     assert '"frontend/dist"' in engine_spec
-    assert "frontend_dist / \"index.html\"" in engine_spec
+    assert 'frontend_dist / "index.html"' in engine_spec
     assert 'name="RangeBot"' in ui_spec
-    assert 'console=True' in engine_spec
+    assert "console=True" in engine_spec
     assert 'hide_console="hide-early"' in engine_spec
     assert "console=False" in ui_spec
     assert "backup-postgresql" not in installer + operations

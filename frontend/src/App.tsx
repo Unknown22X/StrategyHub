@@ -6,11 +6,13 @@ import {
   loadAccountPerformance,
   loadStrategyDecisions,
   saveApplicationSettings,
+  switchRuntimeEnvironment,
   transitionStrategy,
 } from "./api";
 import { DashboardCustomizeDrawer } from "./components/DashboardCustomizeDrawer";
 import { DashboardFilterBar } from "./components/DashboardFilterBar";
 import { DiscoveryLabPage } from "./components/DiscoveryLabPage";
+import { EnvironmentSelector } from "./components/EnvironmentSelector";
 import { GateConnectionDrawer } from "./components/GateConnectionDrawer";
 import { Icon, type IconName } from "./components/Icon";
 import { ManualTradeDrawer } from "./components/ManualTradeDrawer";
@@ -56,6 +58,7 @@ import type {
   AccountPerformanceSeries,
   ActivityEvent,
   Environment,
+  EnvironmentRuntimeState,
   ExchangeOpenOrderSnapshot,
   ExchangePositionSnapshot,
   JsonValue,
@@ -112,10 +115,14 @@ export default function App() {
   const dashboardFiltersInitialized = useRef(false);
 
   const settings = readyData(bundle.settings);
+  const runtimeState = readyData(bundle.runtime);
+  const runtimeEnvironment = runtimeState?.environment ?? null;
   const strategies = readyData(bundle.strategies) ?? [];
   const strategyOverview = readyData(bundle.strategyOverview) ?? [];
   const strategyTypes = readyData(bundle.strategyTypes) ?? [];
-  const environment = settings?.environment ?? null;
+  const environment = runtimeEnvironment?.active_engine_environment ?? null;
+  const environmentOperational = runtimeEnvironment?.transition_state === "ready"
+    && runtimeEnvironment.activated;
   const modeState = environment === "live"
     ? readyData(bundle.liveState)
     : environment === "testnet"
@@ -277,17 +284,47 @@ export default function App() {
     }
   }
 
+  async function handleEnvironmentSwitch(next: Environment) {
+    let confirmation = "";
+    if (next === "live") {
+      const accepted = window.confirm(
+        "تفعيل LIVE سيستخدم أموال Gate.io الحقيقية بعد اجتياز فحوص الأمان. هل تريد المتابعة؟",
+      );
+      if (!accepted) return;
+      confirmation = "SWITCH TO LIVE";
+    }
+    setActionBusy("environment-switch");
+    setActionError(null);
+    try {
+      await switchRuntimeEnvironment(next, confirmation);
+      setManualTradeOpen(false);
+      setStrategyCreateOpen(false);
+      await refresh();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "تعذر تبديل بيئة التداول.");
+      await refresh();
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
   function openManualTrade() {
-    if (!environment) {
-      setActionError("لا يمكن فتح التداول اليدوي قبل تحميل بيئة المحرك.");
+    if (!environment || !environmentOperational) {
+      setActionError(
+        runtimeEnvironment?.message_ar
+          ?? "بيئة المحرك غير جاهزة. أكمل تبديل البيئة قبل فتح التداول اليدوي.",
+      );
       return;
     }
     setManualTradeOpen(true);
   }
 
   function openStrategyCreate(typeId: string | null = null) {
-    if (!environment) {
-      setActionError("لا يمكن إنشاء استراتيجية قبل تحميل بيئة المحرك.");
+    if (!environment || !environmentOperational) {
+      setActionError(
+        runtimeEnvironment?.message_ar
+          ?? "بيئة المحرك غير جاهزة. أكمل تبديل البيئة قبل إنشاء Strategy Instance.",
+      );
       return;
     }
     setStrategyCreateTypeId(typeId);
@@ -425,6 +462,8 @@ export default function App() {
       <main className="main-content">
         <TopStatusBar
           environment={environment}
+          environmentRuntime={runtimeEnvironment}
+          environmentBusy={actionBusy === "environment-switch"}
           modeState={modeState}
           privateStream={bundle.privateStream}
           activeStrategy={activeStrategy}
@@ -433,6 +472,7 @@ export default function App() {
           refreshing={refreshing}
           onRefresh={() => void refresh()}
           onOpenTrade={openManualTrade}
+          onSwitchEnvironment={(next) => void handleEnvironmentSwitch(next)}
         />
 
         {actionError && (
@@ -571,6 +611,7 @@ export default function App() {
           <ManualTradeDrawer
             open={manualTradeOpen}
             environment={environment}
+            environmentRuntime={runtimeEnvironment}
             defaultSymbol={activeStrategy?.symbol ?? readyData(bundle.watchlist)?.items.find((item) => item.is_active)?.symbol ?? "BTC_USDT"}
             onClose={() => setManualTradeOpen(false)}
             onSubmitted={() => void refresh()}
@@ -731,6 +772,8 @@ function SidebarLink({
 
 interface TopStatusBarProps {
   environment: Environment | null;
+  environmentRuntime: EnvironmentRuntimeState | null;
+  environmentBusy: boolean;
   modeState: ModeState | null;
   privateStream: RemoteData<PrivateStreamState>;
   activeStrategy: StrategyInstance | null;
@@ -739,10 +782,13 @@ interface TopStatusBarProps {
   refreshing: boolean;
   onRefresh: () => void;
   onOpenTrade: () => void;
+  onSwitchEnvironment: (environment: Environment) => void;
 }
 
 function TopStatusBar({
   environment,
+  environmentRuntime,
+  environmentBusy,
   modeState,
   privateStream,
   activeStrategy,
@@ -751,16 +797,18 @@ function TopStatusBar({
   refreshing,
   onRefresh,
   onOpenTrade,
+  onSwitchEnvironment,
 }: TopStatusBarProps) {
   const snapshot = modeState?.snapshot;
-  const live = environment === "live";
+  const environmentReady = environmentRuntime?.transition_state === "ready"
+    && environmentRuntime.activated;
   return (
     <header className="top-status-bar">
       <div className="top-status-primary">
-        <StatusPill
-          label={environmentLabel(environment)}
-          tone={live ? "negative" : environment === "testnet" ? "warning" : "info"}
-          pulse={live}
+        <EnvironmentSelector
+          runtime={environmentRuntime}
+          busy={environmentBusy}
+          onChange={onSwitchEnvironment}
         />
         <StateView value={runtime} compact>
           {(state) => (
@@ -801,7 +849,13 @@ function TopStatusBar({
         {modeState?.emergency_stop && (
           <StatusPill label="إيقاف الطوارئ مفعّل" tone="negative" pulse />
         )}
-        <button className="top-action-button" type="button" onClick={onOpenTrade}>
+        <button
+          className="top-action-button"
+          type="button"
+          disabled={!environmentReady}
+          title={environmentReady ? "فتح التداول اليدوي" : "أكمل تبديل البيئة أولاً"}
+          onClick={onOpenTrade}
+        >
           <Icon name="trade" size={16} />
           تداول يدوي
         </button>

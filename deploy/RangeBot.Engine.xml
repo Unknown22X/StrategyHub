@@ -11,7 +11,7 @@
   </serviceaccount>
   <executable>%BASE%\..\engine\bot-engine.exe</executable>
   <env name="RANGEBOT_HOME" value="__RANGEBOT_DATA_ROOT__" />
-  <arguments>--mode live --enable-read-only-exchange --enable-order-submission --enable-public-websocket --enable-private-websocket --host 127.0.0.1 --port 8765</arguments>
+  <arguments>--mode paper --enable-read-only-exchange --enable-order-submission --enable-public-websocket --enable-private-websocket --host 127.0.0.1 --port 8765</arguments>
   <logpath>__RANGEBOT_LOG_ROOT__</logpath>
   <log mode="roll-by-size-time"><sizeThreshold>10485760</sizeThreshold><pattern>yyyyMMdd</pattern><keepFiles>10</keepFiles></log>
   <onfailure action="restart" delay="10 sec" />

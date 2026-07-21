@@ -5,6 +5,7 @@ import { previewManualOrder, submitManualOrder } from "../api";
 import { formatDecimal, formatMoney, formatPercent } from "../lib/format";
 import type {
   Environment,
+  EnvironmentRuntimeState,
   ManualOrderPreview,
   ManualOrderRequest,
   ManualOrderResult,
@@ -18,6 +19,7 @@ import { StatusPill } from "./StateView";
 interface ManualTradeDrawerProps {
   open: boolean;
   environment: Environment;
+  environmentRuntime: EnvironmentRuntimeState | null;
   defaultSymbol?: string;
   onClose: () => void;
   onSubmitted: () => void;
@@ -28,6 +30,7 @@ const percentageOptions = ["10", "25", "50", "75", "100"] as const;
 export function ManualTradeDrawer({
   open,
   environment,
+  environmentRuntime,
   defaultSymbol = "BTC_USDT",
   onClose,
   onSubmitted,
@@ -46,6 +49,15 @@ export function ManualTradeDrawer({
   const [result, setResult] = useState<ManualOrderResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const environmentReady = environmentRuntime?.transition_state === "ready"
+    && environmentRuntime.activated
+    && environmentRuntime.active_engine_environment === environment
+    && (
+      environment === "paper"
+      || environmentRuntime.exchange_adapter_environment === environment
+    );
+  const environmentBlockMessage = environmentRuntime?.message_ar
+    ?? "بيئة التداول غير جاهزة. أكمل التبديل وانتظر تأكيد المحرك قبل المعاينة.";
 
   const request = useMemo<ManualOrderRequest>(() => {
     const base: ManualOrderRequest = {
@@ -107,6 +119,11 @@ export function ManualTradeDrawer({
 
   async function handlePreview(event: FormEvent) {
     event.preventDefault();
+    if (!environmentReady) {
+      setPreview(null);
+      setError(environmentBlockMessage);
+      return;
+    }
     setBusy(true);
     setError(null);
     setResult(null);
@@ -121,6 +138,10 @@ export function ManualTradeDrawer({
   }
 
   async function handleSubmit() {
+    if (!environmentReady) {
+      setError(environmentBlockMessage);
+      return;
+    }
     if (!preview || !preview.can_submit) {
       return;
     }
@@ -159,13 +180,30 @@ export function ManualTradeDrawer({
           </button>
         </header>
 
-        {environment === "live" && (
-          <div className="live-funds-warning" role="alert">
+        <div className={`live-funds-warning environment-banner ${environment}`} role="status">
+          <Icon name={environment === "live" ? "alert" : "shield"} />
+          <div>
+            <strong>
+              {environment === "live"
+                ? "LIVE — REAL FUNDS"
+                : environment === "testnet"
+                  ? "TESTNET"
+                  : "PAPER"}
+            </strong>
+            <span>
+              {environment === "live"
+                ? "أي Order مقبول سيستخدم رصيد Gate.io الحقيقي."
+                : environment === "testnet"
+                  ? "كل Orders تُرسل إلى Gate.io Futures Testnet فقط."
+                  : "كل Orders محاكاة محلية ولا تستخدم أموالاً حقيقية."}
+            </span>
+          </div>
+        </div>
+
+        {!environmentReady && (
+          <div className="inline-alert error-alert environment-blocker" role="alert">
             <Icon name="alert" />
-            <div>
-              <strong>LIVE — أموال حقيقية</strong>
-              <span>أي أمر مقبول سيستخدم رصيد Gate.io الحقيقي.</span>
-            </div>
+            <span>{environmentBlockMessage}</span>
           </div>
         )}
 
@@ -343,7 +381,7 @@ export function ManualTradeDrawer({
             </div>
           )}
 
-          <button className="primary-button preview-button" type="submit" disabled={busy}>
+          <button className="primary-button preview-button" type="submit" disabled={busy || !environmentReady}>
             <Icon name="shield" />
             {busy ? "جارٍ التحقق…" : "معاينة وفحص الأمر"}
           </button>
@@ -398,7 +436,7 @@ export function ManualTradeDrawer({
             <button
               className={preview.uses_real_funds ? "danger-button submit-order" : "primary-button submit-order"}
               type="button"
-              disabled={busy || !preview.can_submit}
+              disabled={busy || !environmentReady || !preview.can_submit}
               onClick={handleSubmit}
             >
               <Icon name="trade" />

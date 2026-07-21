@@ -12,7 +12,7 @@ import sys
 LOCAL_ENGINE_PORT = 8765
 _ENGINE_ARGUMENTS = (
     "--mode",
-    "live",
+    "paper",
     "--enable-read-only-exchange",
     "--enable-order-submission",
     "--enable-public-websocket",
@@ -43,7 +43,10 @@ def bundled_engine() -> tuple[Path, Path] | None:
 
     launcher_directory = Path(sys.executable).resolve().parent
     candidates = (
-        (launcher_directory.parent / "engine" / "bot-engine.exe", launcher_directory.parent),
+        (
+            launcher_directory.parent / "engine" / "bot-engine.exe",
+            launcher_directory.parent,
+        ),
         (
             launcher_directory.parent / "bot-engine" / "bot-engine.exe",
             launcher_directory.parent.parent,
@@ -65,7 +68,9 @@ def bundled_service_wrapper() -> Path | None:
     return wrapper if wrapper.is_file() else None
 
 
-def _run_service_command(wrapper: Path, action: str) -> subprocess.CompletedProcess[str] | None:
+def _run_service_command(
+    wrapper: Path, action: str
+) -> subprocess.CompletedProcess[str] | None:
     try:
         return subprocess.run(
             [str(wrapper), action],
@@ -109,7 +114,7 @@ def _start_detached_fallback(executable: Path, root: Path) -> bool:
 
 
 def start_bundled_engine_if_needed() -> bool:
-    """Recover the service first, then use a detached Live-configured fallback."""
+    """Recover the service first, then use a detached Paper-configured fallback."""
     if _localhost_engine_is_listening():
         return False
 

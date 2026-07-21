@@ -4,6 +4,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
+from rangebot.domain.environment import EnvironmentRuntimeState
+
 
 class RuntimeState(BaseModel):
     """A persisted snapshot of the engine lifecycle, not trading state."""
@@ -14,3 +16,4 @@ class RuntimeState(BaseModel):
     started_at: datetime
     last_heartbeat_at: datetime
     state_revision: int
+    environment: EnvironmentRuntimeState | None = None

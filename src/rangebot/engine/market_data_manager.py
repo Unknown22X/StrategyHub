@@ -57,6 +57,13 @@ class MarketDataManager:
         self._candles: dict[tuple[str, int], _StoredCandles] = {}
         self._lock = RLock()
 
+    def reset(self) -> None:
+        """Discard every environment-specific market snapshot before reconnecting."""
+        with self._lock:
+            self._markets.clear()
+            self._statuses.clear()
+            self._candles.clear()
+
     def track(self, symbol: str) -> MarketDataStatus:
         """Register a symbol before the first subscription/snapshot arrives."""
         with self._lock:
@@ -104,7 +111,9 @@ class MarketDataManager:
     def mark_reconnecting(self, symbol: str) -> MarketDataStatus:
         return self._mark_state(symbol, "reconnecting", "websocket_reconnecting")
 
-    def mark_unavailable(self, symbol: str, reason: str = "market_data_unavailable") -> MarketDataStatus:
+    def mark_unavailable(
+        self, symbol: str, reason: str = "market_data_unavailable"
+    ) -> MarketDataStatus:
         return self._mark_state(symbol, "unavailable", reason)
 
     def refresh_freshness(self, symbol: str | None = None) -> None:
@@ -115,7 +124,10 @@ class MarketDataManager:
                 stored = self._markets.get(current_symbol)
                 if stored is None:
                     continue
-                if stored.state == "fresh" and now - stored.received_at > self._freshness_threshold:
+                if (
+                    stored.state == "fresh"
+                    and now - stored.received_at > self._freshness_threshold
+                ):
                     stored.state = "stale"
                     stored.state_reason = "freshness_timeout"
                     self._refresh_status_locked(current_symbol, now=now)
@@ -350,9 +362,7 @@ class MarketDataManager:
             state=stored.state,
             state_reason=stored.state_reason,
             sequence_gap=stored.sequence_gap,
-            last_update_age_seconds=self._age_seconds(
-                current_time, stored.received_at
-            ),
+            last_update_age_seconds=self._age_seconds(current_time, stored.received_at),
         )
 
     def _refresh_status_locked(
@@ -367,9 +377,7 @@ class MarketDataManager:
             source=stored.update.source,
             sequence_gap=stored.sequence_gap,
             last_update_at=stored.received_at,
-            last_update_age_seconds=self._age_seconds(
-                current_time, stored.received_at
-            ),
+            last_update_age_seconds=self._age_seconds(current_time, stored.received_at),
         )
 
     def _candle_series_locked(
@@ -379,9 +387,7 @@ class MarketDataManager:
         return MarketCandleSeries(
             symbol=symbol,
             timeframe_minutes=timeframe_minutes,
-            candles=tuple(
-                stored.candles[key] for key in sorted(stored.candles)
-            ),
+            candles=tuple(stored.candles[key] for key in sorted(stored.candles)),
             source=stored.source,
             updated_at=stored.updated_at,
         )
@@ -389,13 +395,14 @@ class MarketDataManager:
     def _now(self) -> datetime:
         value = self._clock()
         if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError("Market Data Manager clock must return timezone-aware values.")
+            raise ValueError(
+                "Market Data Manager clock must return timezone-aware values."
+            )
         return value
 
     @staticmethod
     def _age_seconds(now: datetime, then: datetime) -> Decimal:
         delta = max(now - then, timedelta(0))
-        return (
-            Decimal(delta.days * 86400 + delta.seconds)
-            + (Decimal(delta.microseconds) / Decimal("1000000"))
+        return Decimal(delta.days * 86400 + delta.seconds) + (
+            Decimal(delta.microseconds) / Decimal("1000000")
         )

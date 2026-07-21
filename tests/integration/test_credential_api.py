@@ -59,15 +59,20 @@ def test_status_remove_and_read_only_validation_operations(
             credential_test_adapter_factory=lambda mode: adapter,
         )
     ) as client:
+        runtime_before = client.get("/v1/runtime/environment")
         status = client.get("/v1/exchange/testnet/credentials")
         tested = client.post("/v1/exchange/testnet/credentials/test")
         deleted = client.delete("/v1/exchange/testnet/credentials")
+        runtime_after = client.get("/v1/runtime/environment")
 
     assert status.json() == {"mode": "testnet", "configured": True}
     assert tested.status_code == 200
     assert tested.json()["valid"] is True
     assert deleted.json() == {"mode": "testnet", "configured": False}
     assert removed == ["testnet"]
+    assert runtime_before.json()["active_engine_environment"] == "paper"
+    assert runtime_after.json()["active_engine_environment"] == "paper"
+    assert runtime_after.json()["requested_environment"] == "paper"
 
 
 def test_validation_requires_saved_credential_material(tmp_path, monkeypatch) -> None:

@@ -33,7 +33,7 @@ def test_backup_api_creates_lists_restores_and_deletes_safely(tmp_path) -> None:
     ) as client:
         saved = client.put(
             "/v1/settings",
-            json={"environment": "live", "ui_language": "en"},
+            json={"environment": "paper", "ui_language": "en"},
         )
         strategy = client.post("/v1/strategies", json=_strategy_payload()).json()
         authorize_existing_strategy_instance(client.app, strategy["instance_id"])
@@ -69,7 +69,7 @@ def test_backup_api_creates_lists_restores_and_deletes_safely(tmp_path) -> None:
     assert restored.json()["reconciled_mode"] == "live"
     assert restored.json()["reconciliation_succeeded"] is True
     assert restored.json()["emergency_stop_active"] is True
-    assert settings.json()["environment"] == "live"
+    assert settings.json()["environment"] == "paper"
     assert settings.json()["ui_language"] == "en"
     assert strategies.json()[0]["status"] == "stopped"
     assert live_state.json()["emergency_stop"] is True
@@ -88,9 +88,7 @@ def test_invalid_restore_does_not_change_strategy_or_emergency_state(tmp_path) -
             "/v1/backups/rangebot-manual-missing.db/restore",
             json={"confirmation": "RESTORE RANGEBOT"},
         )
-        current_strategy = client.get(
-            f"/v1/strategies/{strategy['instance_id']}"
-        )
+        current_strategy = client.get(f"/v1/strategies/{strategy['instance_id']}")
         live_state = client.get("/v1/exchange/live/state")
 
     assert invalid.status_code == 404

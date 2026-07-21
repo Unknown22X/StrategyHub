@@ -12,6 +12,7 @@ import type {
   BackupRecord,
   BackupRestoreResult,
   DashboardBundle,
+  EnvironmentRuntimeState,
   ExchangeCredentialStatus,
   ExchangeCredentialTestResult,
   FixedPriceLadderPreview,
@@ -90,13 +91,19 @@ async function request<T>(
       ? body as Record<string, unknown>
       : null;
     const detail = errorBody && "detail" in errorBody ? errorBody.detail : body;
-    const code = errorBody && typeof errorBody.code === "string" ? errorBody.code : null;
+    const code = errorBody && typeof errorBody.code === "string"
+      ? errorBody.code
+      : errorBody && typeof errorBody.failure_code === "string"
+        ? errorBody.failure_code
+        : null;
     const context = errorBody && typeof errorBody.context === "object" && errorBody.context !== null
       ? errorBody.context as Record<string, unknown>
       : {};
     const message = typeof detail === "string"
       ? detail
-      : `تعذر إكمال الطلب (${response.status})`;
+      : errorBody && typeof errorBody.message_ar === "string"
+        ? errorBody.message_ar
+        : `تعذر إكمال الطلب (${response.status})`;
     throw new ApiError(response.status, message, detail, code, context);
   }
   return body as T;
@@ -286,6 +293,16 @@ export function saveApplicationSettings(
   return request<ApplicationSettings>("/v1/settings", {
     method: "PUT",
     body: JSON.stringify(settings),
+  });
+}
+
+export function switchRuntimeEnvironment(
+  environment: "paper" | "testnet" | "live",
+  confirmation = "",
+): Promise<EnvironmentRuntimeState> {
+  return request<EnvironmentRuntimeState>("/v1/runtime/environment/switch", {
+    method: "POST",
+    body: JSON.stringify({ environment, confirmation }),
   });
 }
 
