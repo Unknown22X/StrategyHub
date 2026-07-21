@@ -1,7 +1,7 @@
 """Central preview, validation, and submission boundary for futures orders."""
 
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, ROUND_DOWN
 import hashlib
 import json
@@ -53,6 +53,9 @@ class StaleOrderPreviewError(RuntimeError):
 class OrderManager:
     """The only engine component allowed to turn a manual request into submission."""
 
+    _PAPER_PREVIEW_DRIFT_PERCENTAGE = Decimal("0.30")
+    _PAPER_PREVIEW_MAX_AGE = timedelta(seconds=10)
+
     def __init__(
         self,
         *,
@@ -67,6 +70,9 @@ class OrderManager:
         self._account_context = account_context
         self._executor = executor
         self._record_ownership = record_ownership
+        self._preview_cache: dict[
+            str, tuple[ManualOrderPreview, OrderSubmissionContext]
+        ] = {}
 
     def preview(
         self,
@@ -201,7 +207,7 @@ class OrderManager:
             },
         )
         uses_real_funds = request.environment == "live"
-        return ManualOrderPreview(
+        preview = ManualOrderPreview(
             request=request,
             generated_at=generated_at,
             last_price=market.last_price,
@@ -237,6 +243,10 @@ class OrderManager:
             ),
             safety_fingerprint=fingerprint,
         )
+        self._preview_cache[fingerprint] = (preview, submission_context)
+        if len(self._preview_cache) > 128:
+            self._preview_cache.pop(next(iter(self._preview_cache)))
+        return preview
 
     def submit(
         self,
@@ -245,11 +255,15 @@ class OrderManager:
         context: OrderSubmissionContext | None = None,
     ) -> ManualOrderSubmissionResult:
         submission_context = context or OrderSubmissionContext()
+        submitted_preview = self._preview_cache.get(submission.preview_fingerprint)
         preview = self.preview(submission.request, context=submission_context)
         if preview.safety_fingerprint != submission.preview_fingerprint:
-            raise StaleOrderPreviewError(
-                "Order preview is stale; generate a new preview."
-            )
+            if not self._paper_preview_drift_is_safe(
+                submitted_preview, preview, submission.request, submission_context
+            ):
+                raise StaleOrderPreviewError(
+                    "Order preview is stale; generate a new preview."
+                )
         if not preview.can_submit:
             raise OrderValidationError(preview)
 
@@ -302,6 +316,48 @@ class OrderManager:
             message_ar=result.message_ar,
             preview=preview,
         )
+
+    @classmethod
+    def _paper_preview_drift_is_safe(
+        cls,
+        submitted_preview: tuple[ManualOrderPreview, OrderSubmissionContext] | None,
+        current_preview: ManualOrderPreview,
+        request: ManualOrderPreviewRequest,
+        context: OrderSubmissionContext,
+    ) -> bool:
+        if submitted_preview is None or request.environment != "paper":
+            return False
+        previous, previous_context = submitted_preview
+        if (
+            previous_context.model_dump(mode="json")
+            != context.model_dump(mode="json")
+            or previous.request.model_dump(mode="json")
+            != request.model_dump(mode="json")
+            or request.order_type != "market"
+            or request.size_mode != "quantity"
+            or request.reduce_only
+            or not previous.can_submit
+            or not current_preview.can_submit
+            or previous.market_data_state != "fresh"
+            or current_preview.market_data_state != "fresh"
+            or previous.available_balance != current_preview.available_balance
+            or previous.estimated_quantity != current_preview.estimated_quantity
+            or previous.estimated_fee_rate != current_preview.estimated_fee_rate
+            or previous.quantity_step != current_preview.quantity_step
+            or previous.contract_multiplier != current_preview.contract_multiplier
+            or previous.maximum_leverage != current_preview.maximum_leverage
+        ):
+            return False
+        if datetime.now(UTC) - previous.generated_at > cls._PAPER_PREVIEW_MAX_AGE:
+            return False
+        if previous.reference_price <= 0:
+            return False
+        drift = (
+            abs(current_preview.reference_price - previous.reference_price)
+            / previous.reference_price
+            * Decimal("100")
+        )
+        return drift <= cls._PAPER_PREVIEW_DRIFT_PERCENTAGE
 
     def submit_automatic(
         self,

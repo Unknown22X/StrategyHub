@@ -403,6 +403,46 @@ def test_preview_survives_same_price_market_tick_without_becoming_stale() -> Non
     assert submitted.accepted is True
 
 
+def test_paper_preview_allows_small_price_drift_but_rechecks_safety_inputs() -> None:
+    harness = Harness()
+    harness.account = _account(environment="paper", credentials_configured=False)
+    request = ManualOrderPreviewRequest(
+        environment="paper",
+        symbol="BTC_USDT",
+        direction="long",
+        order_type="market",
+        size_mode="quantity",
+        quantity=Decimal("2"),
+        leverage=5,
+        time_in_force="ioc",
+    )
+    preview = harness.manager.preview(request)
+
+    harness.manager._market_data.apply_websocket_update(
+        MarketPriceUpdate(
+            symbol="BTC_USDT",
+            last_price=Decimal("65050"),
+            mark_price=Decimal("65040"),
+            best_bid=Decimal("65049.5"),
+            best_ask=Decimal("65050.5"),
+            volume_24h=Decimal("100000000"),
+            funding_rate=Decimal("0.0001"),
+            observed_at=NOW.replace(second=1),
+            source="gate_websocket",
+            sequence=11,
+        )
+    )
+
+    submitted = harness.manager.submit(
+        ManualOrderSubmissionRequest(
+            request=request,
+            preview_fingerprint=preview.safety_fingerprint,
+        )
+    )
+
+    assert submitted.accepted is True
+
+
 def test_submission_never_calls_executor_when_central_validation_fails() -> None:
     harness = Harness()
     harness.account = _account(emergency_stop=True)
