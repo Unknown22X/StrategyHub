@@ -4,8 +4,11 @@ import sqlite3
 from alembic import command
 from alembic.config import Config
 
-from rangebot.engine.database import create_database_engine
+from rangebot.engine.database import apply_migrations, create_database_engine
 from rangebot.engine.environment_activation import EnvironmentActivationRepository
+from rangebot.engine.api import create_app
+from rangebot.engine.exchange import MockGateIoAdapter
+from fastapi.testclient import TestClient
 
 
 def _alembic_config(database_url: str) -> Config:
@@ -54,3 +57,25 @@ def test_confirmed_environment_is_persisted_separately_from_settings(tmp_path) -
     assert second.environment == "live"
     assert second.revision == 2
     assert restored == second
+
+
+def test_existing_live_activation_cannot_become_paper_ready_on_paper_startup(
+    tmp_path,
+) -> None:
+    database_url = f"sqlite:///{tmp_path / 'rangebot.db'}"
+    apply_migrations(database_url)
+    EnvironmentActivationRepository(create_database_engine(database_url)).save("live")
+
+    with TestClient(
+        create_app(
+            database_url,
+            initial_environment="paper",
+            exchange_adapter=MockGateIoAdapter(),
+        )
+    ) as client:
+        runtime = client.get("/v1/runtime/environment").json()
+
+    assert runtime["configured_environment"] == "paper"
+    assert runtime["requested_environment"] == "live"
+    assert runtime["activated"] is False
+    assert runtime["transition_state"] in {"restart_required", "mismatch"}
