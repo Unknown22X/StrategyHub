@@ -25,7 +25,7 @@ controls at unnecessary risk.
    is `%LOCALAPPDATA%\RangeBot`; tests and non-Windows development may use the
    explicit `RANGEBOT_HOME` override.
 3. Use SQLite as the installed application's local database for Paper, Testnet,
-   and Live modes unless an explicit database URL is supplied.
+   and Live modes. The installed product does not require or configure PostgreSQL.
 4. Back up an existing SQLite database before every migration and retain the ten
    newest pre-migration backups.
 5. Introduce backend-owned application settings before replacing the visible UI.
@@ -63,5 +63,5 @@ configuration or create competing sources of truth.
 
 Rejected for the locally installed single-user product because it adds an
 end-user dependency and conflicts with the no-developer-tools installation
-requirement. An explicit alternate SQLAlchemy URL remains available for
-controlled deployments.
+requirement. Controlled deployments are outside the supported installed-demo
+path.

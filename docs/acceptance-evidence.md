@@ -12,7 +12,7 @@ Automated release gate executed on 2026-07-13:
 
 No credential was loaded by the test suite, no external network transport was used,
 and no Testnet or Live order was submitted. “Implemented” below means code and local
-mock acceptance are complete; real Gate.io, VPS, WinSW, PostgreSQL, RDP, and Arabic
+mock acceptance are complete; real Gate.io, VPS, WinSW, RDP, and Arabic
 font validation remain explicit final external checks.
 
 | Criterion | Automated or documented evidence |
@@ -67,5 +67,5 @@ font validation remain explicit final external checks.
 - Real Gate.io Testnet REST/WebSocket authentication and exchange behavior.
 - Any Live activation or Testnet/Live order submission.
 - WinSW installation/restart and RDP disconnect on the target VPS.
-- PostgreSQL backup/restore against the target database.
+- Target-machine SQLite backup/restore and service restart validation.
 - Final Arabic glyph rendering with the operator-selected font on the VPS.
