@@ -46,6 +46,10 @@
 
 سياسة Limits مشتركة بين Testnet وLIVE، لذلك يتطلب إضعاف أي Limit مفعّل العبارة `DISABLE LIVE RISK LIMITS` حتى عند فتح الإعدادات من Paper أو Testnet. هذا يمنع تجاوز تأكيد الأموال الحقيقية عبر تبديل البيئة أولاً. ولا يتجاوز التعطيل Environment Matching أو Credentials أو Fresh Account Data أو sufficient Balance أو valid Quantity أو unmanaged-state protection أو Protection-Order validation.
 
+## Paper and Testnet verification
+
+تشغيل دورة Paper/Testnet الآلية وخطوات Gate.io Testnet اليدوية الآمنة موثقة في [`PAPER_TESTNET_VERIFICATION.md`](PAPER_TESTNET_VERIFICATION.md). لا تستخدم هذه العملية LIVE credentials أو LIVE Orders أو أموالاً حقيقية.
+
 ## نقل بيانات RangeBot إلى القرص D بأمان
 
 1. فعّل Emergency Stop وأوقف أي بوتات نشطة، ثم أوقف خدمة `RangeBotEngine`.
