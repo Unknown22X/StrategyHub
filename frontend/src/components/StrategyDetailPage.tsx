@@ -4,6 +4,8 @@ import {
   archiveStrategy,
   deleteStrategy,
   duplicateStrategy,
+  loadDashboard,
+  loadMarketSnapshot,
   loadStrategyConfigurationVersions,
   loadStrategyDecisions,
   loadStrategyDeletionReadiness,
@@ -25,7 +27,13 @@ import {
   strategyStatusLabel,
 } from "../lib/format";
 import type {
+  ActivityEvent,
+  DashboardBundle,
+  ExchangeOpenOrderSnapshot,
+  ExchangePositionSnapshot,
   JsonValue,
+  MarketDataSnapshot,
+  PaperPosition,
   RemoteData,
   StrategyConfigurationVersion,
   StrategyDecision,
@@ -78,6 +86,8 @@ export function StrategyDetailPage({
   const [versions, setVersions] = useState<RemoteData<StrategyConfigurationVersion[]>>({ status: "loading" });
   const [tradeSummary, setTradeSummary] = useState<RemoteData<TradeHistorySummary>>({ status: "loading" });
   const [tradeFills, setTradeFills] = useState<RemoteData<TradeFill[]>>({ status: "loading" });
+  const [marketSnapshot, setMarketSnapshot] = useState<RemoteData<MarketDataSnapshot>>({ status: "loading" });
+  const [operations, setOperations] = useState<RemoteData<DashboardBundle>>({ status: "loading" });
   const [name, setName] = useState(strategy.name);
   const [environment, setEnvironment] = useState(strategy.environment);
   const [symbol, setSymbol] = useState(strategy.symbol);
@@ -94,6 +104,14 @@ export function StrategyDetailPage({
   const runDuration = activeRun
     ? formatDuration(Math.max(0, Date.now() - new Date(activeRun.started_at).getTime()) / 1000)
     : "—";
+  const operationsData = operations.status === "ready" ? operations.data : null;
+  const attributedPosition = resolveAttributedPosition(strategy, operationsData);
+  const attributedOrders = resolveAttributedOrders(strategy, operationsData);
+  const recentActivity = resolveRecentActivity(strategy, operationsData);
+  const realizedDrawdown = tradeFills.status === "ready"
+    ? calculateRealizedDrawdown(tradeFills.data)
+    : null;
+  const currentHealth = strategyHealth(strategy, startReadiness);
 
   const analysisRows = useMemo(() => {
     if (!latestDecision) {
@@ -164,6 +182,31 @@ export function StrategyDetailPage({
       });
     return () => controller.abort();
   }, [strategy.instance_id, strategy.revision]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setMarketSnapshot({ status: "loading" });
+    setOperations({ status: "loading" });
+    loadMarketSnapshot(strategy.symbol, controller.signal)
+      .then((data) => setMarketSnapshot({ status: "ready", data }))
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        setMarketSnapshot({
+          status: "error",
+          message: error instanceof Error ? error.message : "Live price غير متاح.",
+        });
+      });
+    loadDashboard(controller.signal)
+      .then((data) => setOperations({ status: "ready", data }))
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        setOperations({
+          status: "error",
+          message: error instanceof Error ? error.message : "تعذر تحميل حالة Position وOrders.",
+        });
+      });
+    return () => controller.abort();
+  }, [strategy.instance_id, strategy.symbol, strategy.environment, strategy.revision]);
 
   async function handleLifecycle(action: "start" | "monitor" | "pause" | "stop") {
     let confirmation: string | undefined;
@@ -407,6 +450,108 @@ export function StrategyDetailPage({
         </div>
       )}
 
+      <section className="panel strategy-command-panel" aria-label="Strategy performance and operations">
+        <div className="panel-header strategy-command-header">
+          <div>
+            <span className="eyebrow">Strategy command center</span>
+            <h2>Performance and live operations</h2>
+            <p>الأرقام هنا من Trades وPosition وOrders المنسوبة فعلياً إلى هذه Strategy.</p>
+          </div>
+          <div className="readiness-summary">
+            <StatusPill label={currentHealth.label} tone={currentHealth.tone} />
+            <StateView value={marketSnapshot} unavailableLabel="Live price unavailable">
+              {(market) => (
+                <StatusPill
+                  label={`${formatMoney(market.last_price)} · ${market.state}`}
+                  tone={market.state === "fresh" ? "positive" : "warning"}
+                />
+              )}
+            </StateView>
+          </div>
+        </div>
+        <div className="strategy-performance-grid strategy-command-metrics">
+          <DetailFact
+            label="Realized PnL"
+            value={tradeSummary.status === "ready" ? formatMoney(tradeSummary.data.realized_pnl ?? "0") : "—"}
+            mono
+          />
+          <DetailFact
+            label="Win Rate"
+            value={tradeSummary.status === "ready" ? formatPercent(tradeSummary.data.win_rate_percentage) : "—"}
+            mono
+          />
+          <DetailFact
+            label="Realized Drawdown"
+            value={realizedDrawdown === null ? "—" : formatMoney(realizedDrawdown)}
+            mono
+          />
+          <DetailFact
+            label="Trades"
+            value={tradeSummary.status === "ready" ? String(tradeSummary.data.fills) : "—"}
+            mono
+          />
+          <DetailFact
+            label="Fees"
+            value={tradeSummary.status === "ready" ? formatMoney(tradeSummary.data.fees) : "—"}
+            mono
+          />
+          <DetailFact label="Run duration" value={runDuration} mono />
+        </div>
+      </section>
+
+      <div className="strategy-operations-grid">
+        <section className="panel strategy-position-panel">
+          <div className="panel-header">
+            <div><h2>Current Position</h2><p>Only ownership attributed to this Strategy is shown.</p></div>
+          </div>
+          {attributedPosition ? (
+            <div className="detail-facts-grid compact-operation-facts">
+              <DetailFact label="Direction" value={positionDirection(attributedPosition)} />
+              <DetailFact label="Quantity" value={positionQuantity(attributedPosition)} mono />
+              <DetailFact label="Entry" value={positionEntry(attributedPosition)} mono />
+              <DetailFact label="Unrealized PnL" value={positionUnrealizedPnl(attributedPosition)} mono />
+            </div>
+          ) : (
+            <div className="analysis-empty">لا توجد Position منسوبة إلى هذه Strategy.</div>
+          )}
+        </section>
+
+        <section className="panel strategy-orders-panel">
+          <div className="panel-header">
+            <div><h2>Open Orders</h2><p>Pending exchange Orders owned by this Strategy.</p></div>
+            <StatusPill label={`${attributedOrders.length} open`} tone={attributedOrders.length ? "warning" : "neutral"} />
+          </div>
+          {attributedOrders.length ? (
+            <div className="history-list compact-order-list">
+              {attributedOrders.slice(0, 5).map((order) => (
+                <div className="history-row" key={order.order_id}>
+                  <div><strong>{order.order_type.toUpperCase()} · {order.side}</strong><span>{order.contract}</span></div>
+                  <div><strong className="numeric">{order.quantity}</strong><span>{order.price ? formatMoney(order.price) : "Market"}</span></div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="analysis-empty">لا توجد Orders مفتوحة منسوبة إلى هذه Strategy.</div>
+          )}
+        </section>
+
+        <section className="panel strategy-recent-activity-panel">
+          <div className="panel-header"><div><h2>Recent activity</h2><p>Latest decisions, Orders, risk, and lifecycle events.</p></div></div>
+          {recentActivity.length ? (
+            <div className="history-list">
+              {recentActivity.slice(0, 6).map((event) => (
+                <div className="history-row" key={event.event_id}>
+                  <div><strong>{event.title_ar}</strong><span>{event.detail_ar}</span></div>
+                  <time>{formatDateTime(event.occurred_at)}</time>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="analysis-empty">لا يوجد activity منسوب بعد.</div>
+          )}
+        </section>
+      </div>
+
       <section className="panel strategy-readiness-panel" aria-label="Strategy start readiness">
         <div className="panel-header">
           <div>
@@ -638,6 +783,88 @@ export function StrategyDetailPage({
       )}
     </div>
   );
+}
+
+type AttributedPosition = PaperPosition | ExchangePositionSnapshot;
+
+function resolveAttributedPosition(
+  strategy: StrategyInstance,
+  dashboard: DashboardBundle | null,
+): AttributedPosition | null {
+  if (!dashboard) return null;
+  if (strategy.environment === "paper") {
+    if (dashboard.paperPosition.status !== "ready") return null;
+    const position = dashboard.paperPosition.data;
+    return position?.instance_id === strategy.instance_id ? position : null;
+  }
+  const state = strategy.environment === "live" ? dashboard.liveState : dashboard.testnetState;
+  if (state.status !== "ready" || !state.data.snapshot) return null;
+  return state.data.snapshot.positions.find((position) => position.instance_id === strategy.instance_id) ?? null;
+}
+
+function resolveAttributedOrders(
+  strategy: StrategyInstance,
+  dashboard: DashboardBundle | null,
+): ExchangeOpenOrderSnapshot[] {
+  if (!dashboard || strategy.environment === "paper") return [];
+  const state = strategy.environment === "live" ? dashboard.liveState : dashboard.testnetState;
+  if (state.status !== "ready" || !state.data.snapshot) return [];
+  return state.data.snapshot.open_orders.filter((order) => order.instance_id === strategy.instance_id);
+}
+
+function resolveRecentActivity(
+  strategy: StrategyInstance,
+  dashboard: DashboardBundle | null,
+): ActivityEvent[] {
+  if (!dashboard || dashboard.activity.status !== "ready") return [];
+  return dashboard.activity.data.filter(
+    (event) => event.strategy_instance_id === strategy.instance_id,
+  );
+}
+
+function calculateRealizedDrawdown(fills: TradeFill[]): number {
+  let cumulative = 0;
+  let peak = 0;
+  let maximumDrawdown = 0;
+  const ordered = [...fills].sort(
+    (left, right) => new Date(left.occurred_at).getTime() - new Date(right.occurred_at).getTime(),
+  );
+  for (const fill of ordered) {
+    cumulative += Number(fill.realized_pnl ?? 0);
+    peak = Math.max(peak, cumulative);
+    maximumDrawdown = Math.max(maximumDrawdown, peak - cumulative);
+  }
+  return maximumDrawdown;
+}
+
+function strategyHealth(
+  strategy: StrategyInstance,
+  readiness: RemoteData<StrategyStartReadiness>,
+): { label: string; tone: "positive" | "warning" | "negative" | "neutral" } {
+  if (strategy.status === "error") return { label: "Health · Error", tone: "negative" };
+  if (strategy.status === "running") return { label: "Health · Running", tone: "positive" };
+  if (readiness.status === "ready" && readiness.data.blocker_codes.length > 0) {
+    return { label: "Health · Needs attention", tone: "warning" };
+  }
+  if (strategy.status === "monitoring") return { label: "Health · Monitoring", tone: "positive" };
+  if (strategy.status === "paused") return { label: "Health · Paused", tone: "warning" };
+  return { label: "Health · Stopped", tone: "neutral" };
+}
+
+function positionDirection(position: AttributedPosition): string {
+  return "side" in position ? position.side : position.direction;
+}
+
+function positionQuantity(position: AttributedPosition): string {
+  return position.quantity;
+}
+
+function positionEntry(position: AttributedPosition): string {
+  return formatMoney(position.entry_price ?? "0");
+}
+
+function positionUnrealizedPnl(position: AttributedPosition): string {
+  return "unrealized_pnl" in position ? formatMoney(position.unrealized_pnl) : "Not available in Paper snapshot";
 }
 
 function DetailFact({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {

@@ -62,6 +62,13 @@ Instances have an explicit user lifecycle:
   archived. Migration `0035_strategy_instance_lifecycle` adds these fields without
   changing existing IDs or revisions.
 
+The Strategy Instance page is an operations page before it is a settings page. Its
+first sections show authoritative live price/freshness, health, attributed Realized
+PnL, Win Rate, realized Drawdown, Trades, fees, current Position, open Orders, and
+recent activity. Missing attribution is displayed as unavailable rather than being
+inferred. Start readiness follows these operational facts. Editable configuration,
+revision history, and other advanced details remain in secondary tabs.
+
 ### Strategy Coin Setup
 
 A configured use of one user Preset revision, backed by its compatible immutable
