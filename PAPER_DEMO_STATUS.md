@@ -218,15 +218,19 @@ Verified:
 - The Strategy begins in `warming_up/history` because a fresh live process has limited candle history. Use Running state and recent activity; do not promise an immediate Position.
 - A new Backtest or scan still depends on public internet/Gate.io availability. Use the prepared records during recording.
 - The attempted non-elevated service-root change was blocked by Windows Program Files permissions before changing the service XML. The dedicated port-8876 launcher avoids UAC and leaves the installed service untouched.
-- Creating a Windows COM desktop shortcut directly through the WSL bridge was unreliable. The installer creates the shortcut normally, and the repository `.cmd` launcher is already double-clickable.
+- Creating a Windows COM desktop shortcut directly through the WSL bridge was unreliable. The installer is configured to create the shortcut during a normal elevated install, and the repository `.cmd` launcher is already double-clickable. Interactive installer acceptance remains manual.
 
 ## Tests and verification run
 
 Focused source suites:
 
-- `tests/unit/test_ui_engine_bootstrap.py` — 6 passed.
-- `tests/unit/test_strategy_runtime_runner.py` plus `tests/integration/test_strategy_runtime_lifespan.py` — 10 passed.
-- Ruff check and format check for both focused Python fixes — passed.
+- Launcher fallback unit suite — 6 passed.
+- Strategy runtime fix and lifespan suite — 10 passed.
+- Paper Order, Preview, Position, protection, closing, and Order Manager regressions — 40 passed.
+- Strategy direct start, runtime, immutable snapshots, lifecycle, and migration regressions — 24 passed.
+- Opportunities, Backtesting, Risk Management, environment, and market-data regressions — 27 passed.
+- Release assets, deployment assets, Paper-demo assets, and focused Ruff/format checks — 22 passed.
+- One attempted regression command referenced two nonexistent filenames and therefore ran zero tests; it was corrected to the actual current test inventory. This was not a code failure.
 
 Prepared packaged demo checks:
 
@@ -238,22 +242,41 @@ Prepared packaged demo checks:
 - rebuilt Strategy evaluator with no new `context_unavailable:*` — passed;
 - Opportunities public scan — passed;
 - real historical Backtest — passed;
-- Risk Management and Emergency Stop/Resume — passed.
+- Risk Management and Emergency Stop/Resume — passed;
+- final prepared-state, preserved-profile hash, fresh market, Backtest, Opportunity, and installer-integrity verifier — passed;
+- Inno Setup final installer compilation — passed.
 
 ## Commits
 
 - `48968edde45bd256e80950105ba7de3fdf1b65d3` — isolate packaged fallback data root.
 - `ec70b3b7f9445f6bd86845b62b07d391a863bc31` — fix Strategy runtime registry metadata access.
+- `c74b96db9cf15c1f1cdf2dcde8e5fbb71e229a7c` — add the isolated Paper launcher, installer shortcuts, tests, and status handoff.
+- `b1296a4c24c463b1a46f4bbb82bb4c3f702ad897` — make optional release documentation nonblocking.
+- `0918be7a86e15b7b4f0fd038a745bc52c7b21a4d` — keep the status report outside the installer checksum boundary.
 
-The final demo-assets/status commit is listed in the final report after it is created.
+Latest implementation/release commit used to build the installer:
+
+`0918be7a86e15b7b4f0fd038a745bc52c7b21a4d`
+
+The final status-only commit containing these exact artifact details is reported in the final response.
 
 ## Installer
 
-A rebuild is required because the packaged engine and launcher safety behavior changed. Final path, size, and SHA-256 are updated after compilation.
+The installer was rebuilt because both the packaged engine and launcher safety behavior changed.
 
-Expected path:
+Path:
 
 `D:\codes\projects\RangeBot\release\RangeBot-Setup.exe`
+
+Size:
+
+`38,507,906 bytes`
+
+SHA-256:
+
+`aec73df6b0deb798a4bbaaa5aa294a670143db7561fb9009c5a0b4a22131c544`
+
+The installer contains the rebuilt engine, rebuilt launcher, isolated Paper-demo scripts, and separate Start-menu/optional Desktop shortcuts. Installing it still requires normal Windows elevation because the standard Windows service is installed under Program Files.
 
 ## Shortest reliable demo route
 
@@ -284,7 +307,7 @@ If public Gate.io data is temporarily unavailable:
 
 ## Exact next action if work stops early
 
-1. Commit the three `demo` launcher files, installer shortcut entry, this status file, and their source-contract test.
-2. Rebuild the packaged UI launcher and installer from the clean commit.
-3. Verify installer checksum and packaged Paper engine smoke.
-4. Confirm the Git working tree is clean.
+1. Double-click `D:\codes\projects\RangeBot\demo\StrategyHub-Paper-Demo.cmd`.
+2. Confirm the browser opens `http://127.0.0.1:8876/app/` and the badge says `PAPER`.
+3. Follow the shortest reliable demo route above.
+4. Install `D:\codes\projects\RangeBot\release\RangeBot-Setup.exe` later with Windows elevation if the installer shortcuts are needed; the repository launcher already works without changing the normal service profile.
